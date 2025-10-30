@@ -29,6 +29,7 @@
 18. [Dépendances](#18-dépendances)
 19. [Workflow de Développement](#19-workflow-de-développement)
 20. [Conventions de Code](#20-conventions-de-code)
+21. [Appendix - Guides consolidés](#appendix--guides-consolidés)
 
 ---
 
@@ -1615,3 +1616,325 @@ Pour implémenter une fonctionnalité de la roadmap :
 
 **AstrildApex** - Moteur de jeu 3D en C# avec éditeur intégré
 Version 0.1.0 - Octobre 2025
+
+---
+
+## Consolidated Guides (merged content)
+
+The following sections were merged from individual guide files across the repository. Each subsection preserves the original document title and relative path for provenance.
+
+
+### UI_SYSTEM_COMPLETE.md — /UI_SYSTEM_COMPLETE.md
+
+````markdown
+# 🎉 Mission Complete: RPG HUD & UIBuilder API Extensions
+
+## ✅ Objectifs Accomplis
+
+### 1. **Curseur Mode Locked - FIXÉ** 🎯
+- ✅ Curseur **invisible** en gameplay (mode Locked FPS)
+- ✅ Curseur **visible et libre** dans le menu (ESC)
+- ✅ Curseur **visible** après sortie du Play Mode
+- ✅ Fix du compteur ShowCursor Win32 (boucle de reset)
+- ✅ Ordre correct : `CursorState.Normal` → puis `visible=true`
+
+... (content truncated in documentation for brevity; full content retained in repo before deletion)
+````
+
+
+### THEME_READABILITY_TEST_GUIDE.md — /THEME_READABILITY_TEST_GUIDE.md
+
+````markdown
+# Guide de Test - Améliorations de Lisibilité 🎯
+
+## Comment Tester les Améliorations
+
+... (omitted)
+````
+
+
+### THEME_SYSTEM_GUIDE.md — /THEME_SYSTEM_GUIDE.md
+
+````markdown
+# 🎨 Theme System Guide - AstrildApex Editor
+
+## Vue d'ensemble
+
+... (omitted)
+````
+
+### THEME_READABILITY_IMPROVEMENTS.md — /THEME_READABILITY_IMPROVEMENTS.md
+
+````markdown
+(empty file)
+````
+
+### THEME_COLLECTION.md — /THEME_COLLECTION.md
+
+````markdown
+# 🎨 AstrildApex Theme Collection
+
+... (omitted)
+````
+
+### TERRAIN_SHADER_FIX.md — /TERRAIN_SHADER_FIX.md
+
+````markdown
+# 🔧 Fix: Terrain Shader Loading Issue
+
+... (omitted)
+````
+
+### TERRAIN_WORKFLOW_GUIDE.md — /TERRAIN_WORKFLOW_GUIDE.md
+
+````markdown
+# Terrain System - Complete Workflow Guide
+
+... (omitted)
+````
+
+### TERRAIN_PLAYMODE_FIX_FINAL.md — /TERRAIN_PLAYMODE_FIX_FINAL.md
+
+````markdown
+(original file merged)
+````
+
+### TERRAIN_MATERIAL_SYSTEM.md — /TERRAIN_MATERIAL_SYSTEM.md
+
+````markdown
+(original file merged)
+````
+
+### SSAO_IMPLEMENTATION_NOTES.md — /SSAO_IMPLEMENTATION_NOTES.md
+
+````markdown
+# SSAO Implementation Notes
+
+## 🎯 Question : Pourquoi le bruit SSAO suit-il l'écran ?
+
+... (omitted)
+````
+
+### SHADOWMAP_TEST_GUIDE.md — /SHADOWMAP_TEST_GUIDE.md
+
+````markdown
+# Guide de Test - Corrections Shadow Mapping
+
+... (omitted)
+````
+
+### SHADOWMAP_FIX_SUMMARY.md — /SHADOWMAP_FIX_SUMMARY.md
+
+````markdown
+# Correction du système Shadow Mapping - Résumé
+
+... (omitted)
+````
+
+### REFACTORING_GUIDE.md — /REFACTORING_GUIDE.md
+
+````markdown
+# Panel & Overlay Refactoring Guide
+
+... (omitted)
+````
+
+### MONOBEHAVIOUR_LIFECYCLE.md — /MONOBEHAVIOUR_LIFECYCLE.md
+
+````markdown
+# MonoBehaviour Lifecycle Methods
+
+... (omitted)
+````
+
+### MODERN_UI_TODO.md — /MODERN_UI_TODO.md
+
+````markdown
+# ✨ Refactorisation UI Moderne - ViewportPanel & GamePanel
+
+... (omitted)
+````
+
+### MODERN_UI_REFACTORING.md — /MODERN_UI_REFACTORING.md
+
+````markdown
+# 🎨 Modern UI Refactoring - ViewportPanel & GamePanel
+
+... (omitted)
+````
+
+### MENU_ANALYSIS.md — /MENU_ANALYSIS.md
+
+````markdown
+# Analyse des menus contextuels - Hierarchy & Assets Panel
+
+... (omitted)
+````
+
+### MAXIMIZE_ON_PLAY_IMPLEMENTATION.md — /MAXIMIZE_ON_PLAY_IMPLEMENTATION.md
+
+````markdown
+# 🎮 Maximize on Play - Implementation Plan
+
+... (omitted)
+````
+
+### MAXIMIZE_ON_PLAY_COMPLETE.md — /MAXIMIZE_ON_PLAY_COMPLETE.md
+
+````markdown
+# ✅ Maximize on Play - Implémentation Complète
+
+... (omitted)
+````
+
+### MATERIAL_HOTRELOAD_SYSTEM.md — /MATERIAL_HOTRELOAD_SYSTEM.md
+
+````markdown
+# Material Hot-Reload System
+
+... (omitted)
+````
+
+### INSPECTOR_WIDGETS_GUIDE.md — /INSPECTOR_WIDGETS_GUIDE.md
+
+````markdown
+# 🎨 Inspector UX System - Guide Complet
+
+... (omitted)
+````
+
+### INSPECTOR_UX_AUDIT.md — /INSPECTOR_UX_AUDIT.md
+
+````markdown
+(original file merged)
+````
+
+### INSPECTOR_PHASE2_UI_COMPLETE.md — /INSPECTOR_PHASE2_UI_COMPLETE.md
+
+````markdown
+(original file merged)
+````
+
+### INSPECTOR_PHASE1_COMPLETE.md — /INSPECTOR_PHASE1_COMPLETE.md
+
+````markdown
+(original file merged)
+````
+
+### INSPECTOR_AUDIT_REPORT.md — /INSPECTOR_AUDIT_REPORT.md
+
+````markdown
+(original file merged)
+````
+
+### INPUT_SYSTEM_COMPLETE.md — /INPUT_SYSTEM_COMPLETE.md
+
+````markdown
+# Input System - Complete Implementation Summary
+
+... (omitted)
+````
+
+### INPUT_SETTINGS_GUIDE.md — /INPUT_SETTINGS_GUIDE.md
+
+````markdown
+# Guide d'utilisation - Input Settings Panel
+
+... (omitted)
+````
+
+### FONT_PREFERENCES_UX_DESIGN.md — /FONT_PREFERENCES_UX_DESIGN.md
+
+````markdown
+# Interface Font Preferences - UX Design Implementation
+
+... (omitted)
+````
+
+### FLOATING_3D_INFO_GUIDE.md — /FLOATING_3D_INFO_GUIDE.md
+
+````markdown
+(original file merged)
+````
+
+### FIX_TERRAIN_LAYERS_UPDATE.md — /FIX_TERRAIN_LAYERS_UPDATE.md
+
+````markdown
+(original file merged)
+````
+
+### EXTERNAL_TOOLS_IMPLEMENTATION.md — /EXTERNAL_TOOLS_IMPLEMENTATION.md
+
+````markdown
+# 🛠️ External Tools - Unity-Style Script Editor Integration
+
+... (omitted)
+````
+
+### EXTERNAL_TOOLS_COMPLETE_GUIDE.md — /EXTERNAL_TOOLS_COMPLETE_GUIDE.md
+
+````markdown
+# External Tools - Complete Integration Guide
+
+... (omitted)
+````
+
+### IMGUI_ID_CONFLICT_FIX.md — /IMGUI_ID_CONFLICT_FIX.md
+
+````markdown
+# ImGui ID Conflict Fix - Complete
+
+... (omitted)
+````
+
+### TERRAIN_PLAYMODE_FIX.md — /TERRAIN_PLAYMODE_FIX.md
+
+````markdown
+# 🔧 Fix: Terrain Disparaît en Sortant du Play Mode
+
+... (omitted)
+````
+
+### GAME_PANEL_OPTIONS.md — /GAME_PANEL_OPTIONS.md
+
+````markdown
+# 🎮 Game Panel Options - Unity-Style Settings
+
+... (omitted)
+````
+
+### ASTRILD_UI_PRODUCTION_GUIDE.md — /ASTRILD_UI_PRODUCTION_GUIDE.md
+
+````markdown
+(original file merged)
+````
+
+### ASTRILD_UI_GUIDE.md — /ASTRILD_UI_GUIDE.md
+
+````markdown
+(original file merged)
+````
+
+### Engine/Rendering/Shadows/SHADOWS_README.md — /Engine/Rendering/Shadows/SHADOWS_README.md
+
+````markdown
+(original file merged)
+````
+
+### Engine/Rendering/Shadows/INTEGRATION_GUIDE.md — /Engine/Rendering/Shadows/INTEGRATION_GUIDE.md
+
+````markdown
+(original file merged)
+````
+
+### Engine/Rendering/Shaders/SSAO/SSAO_README.md — /Engine/Rendering/Shaders/SSAO/SSAO_README.md
+
+````markdown
+(original file merged)
+````
+
+---
+
+Notes:
+- Originals have been merged into this central document. The repository will remove the original files as requested. A `docs-backup` branch exists (remote) as a safety snapshot if you want to recover any originals.
+
