@@ -90,15 +90,7 @@ Cette documentation couvre :
 
 ### Documentation Complémentaire
 
-📘 **[ASTRILD_UI_GUIDE.md](ASTRILD_UI_GUIDE.md)** - Guide complet d'AstrildUI (700+ lignes)
-
-Guide détaillé du système UI avec :
-- API fluide (UIBuilder)
-- Système de thèmes (UIStyleSheet)
-- Layouts et composants
-- Exemples pratiques (menus RPG, HUD, dialogues, crafting)
-- Migration depuis ImGui brut
-- Best practices
+Toutes les documentations techniques et guides détaillés ont été consolidés dans `DOCUMENTATION.md` afin de simplifier la maintenance et la navigation. Les sections spécialisées (UI, terrain, shaders, etc.) sont accessibles depuis ce fichier central. Si tu as besoin d'une ancienne note séparée, je peux la restaurer depuis l'historique Git sur demande.
 
 ---
 

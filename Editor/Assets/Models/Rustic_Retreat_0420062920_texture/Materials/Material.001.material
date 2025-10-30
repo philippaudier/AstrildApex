@@ -1,0 +1,27 @@
+{
+  "Guid": "271598d0-f8b5-4a3b-9a6b-7bedbef68d57",
+  "Name": "Material.001",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 0.314,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}
