@@ -12,9 +12,7 @@
 [Oo]bj/
 UserSettings/
 MemoryCaptures/
-*.csproj
 *.unityproj
-*.sln
 *.suo
 *.user
 *.userprefs
