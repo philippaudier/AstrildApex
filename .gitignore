@@ -78,3 +78,21 @@ Editor/Assets/Models/**/*.lwo
 Editor/Assets/Models/**/*.lws
 Editor/Assets/Models/**/*.fbx.meta
 Editor/Assets/Models/**/*.meshasset.meta
+
+# ---- Project-local sensitive files (added)
+# User requested: ignore local sensitive files and editor/run outputs
+rapport.ps1
+editor_run.txt
+.claude/
+
+# Common local / secret patterns (helpful defaults)
+# Environment files, local settings, keys, tokens
+.env
+*.local
+*.local.json
+*.secret
+*.key
+*.pem
+*.p12
+secrets.json
+credentials.json
