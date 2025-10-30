@@ -1,0 +1,1363 @@
+using System;
+using System.Linq;
+using ImGuiNET;
+using Engine.Components;
+using Engine.Scene;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+
+namespace Editor.Panels
+{
+    /// <summary>
+    /// Panel for managing Terrain components with terrain generation settings
+    /// </summary>
+    public static class TerrainGeneratorPanel
+    {
+        /// <summary>
+        /// Draw the Terrain inspector UI for a specific terrain instance
+        /// Used by the Inspector panel when a Terrain component is selected
+        /// </summary>
+        public static void DrawForInspector(Terrain terrain)
+        {
+            if (terrain == null) return;
+
+            ImGui.PushID("TerrainInspector");
+            // Quick visible tessellation toggle (top of panel) + logging so user can see/toggle in current UI
+            try { Console.WriteLine($"[TerrainGeneratorPanel] DrawForInspector called for terrain hash {terrain.GetHashCode()}"); } catch { }
+            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.8f, 0.2f, 1f), "Tessellation (debug)");
+            bool useTessTop = terrain.UseTessellation;
+            if (ImGui.Button(useTessTop ? "Tessellation: ON" : "Tessellation: OFF", new System.Numerics.Vector2(-1, 0)))
+            {
+                terrain.UseTessellation = !terrain.UseTessellation;
+                Console.WriteLine($"[TerrainGeneratorPanel] Tessellation toggled -> {terrain.UseTessellation}");
+            }
+            ImGui.Separator();
+            // Debugging: force triangle draw even when tessellation is enabled
+            bool dbgForce = terrain.DebugForceTriangles;
+            if (ImGui.Checkbox("Debug: Force Triangles (ignore tessellation)", ref dbgForce))
+            {
+                terrain.DebugForceTriangles = dbgForce;
+                Console.WriteLine($"[TerrainGeneratorPanel] DebugForceTriangles -> {terrain.DebugForceTriangles}");
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("If enabled, the terrain will be drawn with GL.Triangles even when tessellation is on. Useful to test whether Patches/TES path is failing.");
+            // Header
+            ImGui.Text("Terrain Settings");
+            ImGui.Separator();
+
+            // Terrain Size Settings
+            DrawTerrainSettings(terrain);
+            
+            ImGui.Separator();
+            
+            // Heightmap Settings
+            DrawHeightmapSettings(terrain);
+            
+            ImGui.Separator();
+            
+            // Material Settings
+            DrawMaterialSettings(terrain);
+
+            ImGui.Separator();
+
+            // Terrain Layers
+            DrawTerrainLayers(terrain);
+
+            ImGui.Separator();
+            // Water preview (editor-only)
+            DrawWaterPreviewSettings(terrain);
+
+            ImGui.Separator();
+            
+            // LOD Settings
+            DrawLODSettings(terrain);
+            
+            ImGui.Separator();
+            
+            // Generation Controls
+            DrawGenerationControls(terrain);
+
+            ImGui.PopID();
+        }
+
+        /// <summary>
+        /// Draw terrain size and resolution settings
+        /// </summary>
+        private static void DrawTerrainSettings(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Terrain Size & Resolution", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Terrain Width
+                float terrainWidth = terrain.TerrainWidth;
+                if (ImGui.DragFloat("Terrain Width", ref terrainWidth, 1f, 1f, 10000f))
+                {
+                    terrain.TerrainWidth = Math.Max(1f, terrainWidth);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Width of the terrain in world units.");
+                }
+
+                // Terrain Length
+                float terrainLength = terrain.TerrainLength;
+                if (ImGui.DragFloat("Terrain Length", ref terrainLength, 1f, 1f, 10000f))
+                {
+                    terrain.TerrainLength = Math.Max(1f, terrainLength);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Length of the terrain in world units.");
+                }
+
+                // Terrain Height
+                float terrainHeight = terrain.TerrainHeight;
+                if (ImGui.DragFloat("Terrain Height", ref terrainHeight, 1f, 1f, 1000f))
+                {
+                    terrain.TerrainHeight = Math.Max(1f, terrainHeight);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Maximum height of the terrain in world units.");
+                }
+
+                // Mesh Resolution with Unity-style presets
+                ImGui.Text("Mesh Resolution");
+                int[] resolutionOptions = { 33, 65, 129, 257, 513, 1025, 2049, 4097, 8193 };
+                string[] resolutionLabels = { "33 (32x32)", "65 (64x64)", "129 (128x128)", "257 (256x256)",
+                                            "513 (512x512)", "1025 (1024x1024)", "2049 (2048x2048)",
+                                            "4097 (4096x4096)", "8193 (8192x8192)" };
+
+                int currentIndex = Array.IndexOf(resolutionOptions, terrain.MeshResolution);
+                if (currentIndex == -1) currentIndex = 4; // Default to 513 if not found
+
+                if (ImGui.Combo("##MeshResGen", ref currentIndex, resolutionLabels, resolutionLabels.Length))
+                {
+                    terrain.MeshResolution = resolutionOptions[currentIndex];
+                }
+
+                ImGui.SameLine();
+                ImGui.TextDisabled($"({terrain.MeshResolution})");
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Mesh resolution (vertices per side). Unity-style presets: power of 2 + 1 for optimal tessellation.\nHigher = more detail but slower generation and more memory usage.");
+                }
+
+                // Base Height
+                float baseHeight = terrain.BaseHeight;
+                if (ImGui.DragFloat("Base Height", ref baseHeight, 0.1f, -100f, 100f))
+                {
+                    terrain.BaseHeight = baseHeight;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Base height for flat terrain when no heightmap is provided.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw heightmap configuration settings
+        /// </summary>
+        private static void DrawHeightmapSettings(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Heightmap Settings"))
+            {
+                DrawHeightmapTextureField(terrain);
+
+                // Heightmap Scale
+                float heightmapScale = terrain.HeightmapScale;
+                if (ImGui.DragFloat("Heightmap Scale", ref heightmapScale, 0.1f, 0.1f, 10f))
+                {
+                    terrain.HeightmapScale = Math.Max(0.1f, heightmapScale);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Scale factor for heightmap values. Higher = more pronounced height differences.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw material settings
+        /// </summary>
+        private static void DrawMaterialSettings(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Material Settings"))
+            {
+                DrawMaterialField(terrain);
+
+                // Splatmap input field
+                ImGui.Separator();
+                ImGui.Text("Manual Splatmap:");
+
+                // Ensure array exists
+                terrain.SplatmapGuids ??= new Guid?[2];
+
+                string splatmapName = "None";
+                var buttonColor = new System.Numerics.Vector4(0.2f, 0.2f, 0.2f, 1f);
+
+                if (terrain.SplatmapGuids.Length > 0 && terrain.SplatmapGuids[0].HasValue && terrain.SplatmapGuids[0].Value != Guid.Empty)
+                {
+                    if (Engine.Assets.AssetDatabase.TryGet(terrain.SplatmapGuids[0].Value, out var record))
+                    {
+                        splatmapName = System.IO.Path.GetFileNameWithoutExtension(record.Path);
+                        buttonColor = new System.Numerics.Vector4(0.3f, 0.4f, 0.3f, 1f);
+                    }
+                    else
+                    {
+                        splatmapName = "Missing";
+                        buttonColor = new System.Numerics.Vector4(0.5f, 0.2f, 0.2f, 1f);
+                    }
+                }
+
+                ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+                bool splatClicked = ImGui.Button($"{splatmapName}##SplatmapField", new System.Numerics.Vector2(-1, 30));
+                ImGui.PopStyleColor(3);
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
+                    unsafe
+                    {
+                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
+                        {
+                            try
+                            {
+                                var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
+                                var droppedGuid = new Guid(span);
+                                if (Engine.Assets.AssetDatabase.TryGet(droppedGuid, out var record) && string.Equals(record.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    terrain.SplatmapGuids[0] = droppedGuid;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (splatClicked)
+                {
+                    ImGui.OpenPopup("SelectSplatmap");
+                }
+
+                if (ImGui.BeginPopup("SelectSplatmap"))
+                {
+                    if (ImGui.Selectable("None"))
+                    {
+                        terrain.SplatmapGuids[0] = null;
+                        ImGui.CloseCurrentPopup();
+                    }
+
+                    var textureAssets = Engine.Assets.AssetDatabase.All()
+                        .Where(a => string.Equals(a.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                        .ToArray();
+
+                    foreach (var asset in textureAssets)
+                    {
+                        string displayName = System.IO.Path.GetFileNameWithoutExtension(asset.Path);
+                        bool isSelected = terrain.SplatmapGuids.Length > 0 && terrain.SplatmapGuids[0] == asset.Guid;
+
+                        if (ImGui.Selectable(displayName, isSelected))
+                        {
+                            terrain.SplatmapGuids[0] = asset.Guid;
+                            ImGui.CloseCurrentPopup();
+                        }
+                    }
+                    ImGui.EndPopup();
+                }
+
+                if (terrain.SplatmapGuids.Length > 0 && terrain.SplatmapGuids[0].HasValue && terrain.SplatmapGuids[0].Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("Clear##ClearSplatmap"))
+                    {
+                        terrain.SplatmapGuids[0] = null;
+                    }
+                }
+
+                // Splatmap Resolution
+                int res = terrain.SplatmapResolution;
+                if (ImGui.DragInt("Splatmap Resolution", ref res, 16, 32, 4096))
+                {
+                    terrain.SplatmapResolution = Math.Max(32, Math.Min(4096, res));
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Resolution for generated splatmaps");
+                }
+            }
+        }
+
+        private static void BakeProceduralSplatmaps(Terrain terrain)
+        {
+            // Need a material with TerrainLayers
+            if (!terrain.TerrainMaterialGuid.HasValue) return;
+            if (!Engine.Assets.AssetDatabase.TryGet(terrain.TerrainMaterialGuid.Value, out var rec)) return;
+
+            var mat = Engine.Assets.AssetDatabase.LoadMaterial(terrain.TerrainMaterialGuid.Value);
+            var layers = mat.TerrainLayers ?? Array.Empty<Engine.Assets.TerrainLayer>();
+            if (layers.Length == 0) return;
+
+            int res = Math.Max(32, Math.Min(4096, terrain.SplatmapResolution <= 0 ? 512 : terrain.SplatmapResolution));
+
+            // We'll create up to 2 RGBA splat textures covering up to 8 layers
+            int neededSplatMaps = (int)Math.Ceiling(layers.Length / 4.0);
+            neededSplatMaps = Math.Min(2, Math.Max(1, neededSplatMaps));
+
+            var createdGuids = new Guid?[neededSplatMaps];
+
+                for (int si = 0; si < neededSplatMaps; si++)
+            {
+                using var img = new Image<Rgba32>(res, res);
+
+                for (int y = 0; y < res; y++)
+                {
+                    for (int x = 0; x < res; x++)
+                    {
+                        float u = x / (float)(res - 1);
+                        float v = y / (float)(res - 1);
+
+                        // Map UV to world coords (centered terrain)
+                        float worldX = -terrain.TerrainWidth * 0.5f + u * terrain.TerrainWidth;
+                        float worldZ = -terrain.TerrainLength * 0.5f + v * terrain.TerrainLength;
+
+                        // Compute height and slope
+                        float h = terrain.GetHeight(worldX, worldZ);
+                        float eps = Math.Max(terrain.TerrainWidth, terrain.TerrainLength) / terrain.MeshResolution;
+                        float hpx = terrain.GetHeight(worldX + eps, worldZ);
+                        float hmx = terrain.GetHeight(worldX - eps, worldZ);
+                        float hpz = terrain.GetHeight(worldX, worldZ + eps);
+                        float hmz = terrain.GetHeight(worldX, worldZ - eps);
+                        // approximate normal
+                        var nx = hpx - hmx;
+                        var nz = hpz - hmz;
+                        float slope = (float)(Math.Atan(Math.Sqrt(nx * nx + nz * nz) / eps) * 180.0 / Math.PI); // degrees
+
+                        // accumulate up to 4 channels for this splatmap
+                        float[] chan = new float[4];
+                        for (int li = 0; li < 4; li++)
+                        {
+                            int layerIndex = si * 4 + li;
+                            if (layerIndex >= layers.Length) { chan[li] = 0f; continue; }
+                            var L = layers[layerIndex];
+                            // Height blend (smoothstep between min and max)
+                            float ht = 0f;
+                            if (L.HeightMax > L.HeightMin)
+                                ht = SmoothStep(L.HeightMin, L.HeightMax, h);
+                            else ht = (h >= L.HeightMin) ? 1f : 0f;
+
+                            // Slope blend (convert degrees to 0..1 by /90)
+                            float smin = L.SlopeMinDeg / 90f; float smax = L.SlopeMaxDeg / 90f;
+                            float st = 0f;
+                            float slopeNorm = Math.Clamp(slope / 90f, 0f, 1f);
+                            if (smax > smin)
+                                st = SmoothStep(smin, smax, slopeNorm);
+                            else st = (slopeNorm >= smin) ? 1f : 0f;
+
+                            chan[li] = ht * st * L.Strength;
+                        }
+
+                        // Normalize across all layers in this splatmap group (we will normalize globally later across maps)
+                        float sum = chan[0] + chan[1] + chan[2] + chan[3];
+                        if (sum <= 0f) sum = 1f;
+                        for (int c = 0; c < 4; c++) chan[c] = Math.Clamp(chan[c] / sum, 0f, 1f);
+
+                        var pxCol = new SixLabors.ImageSharp.PixelFormats.Rgba32(
+                            (byte)(chan[0] * 255f),
+                            (byte)(chan[1] * 255f),
+                            (byte)(chan[2] * 255f),
+                            (byte)(chan[3] * 255f));
+                        img[x, y] = pxCol;
+                    }
+                }
+
+                // Save image to Assets/Textures with unique name
+                string folder = System.IO.Path.Combine(Engine.Assets.AssetDatabase.AssetsRoot, "Textures");
+                System.IO.Directory.CreateDirectory(folder);
+                var guid = Guid.NewGuid();
+                string baseName = $"terrain_splat_{terrain.GetHashCode()}_{si}";
+                string outPath = System.IO.Path.Combine(folder, baseName + ".png");
+                int idx = 1; while (System.IO.File.Exists(outPath)) outPath = System.IO.Path.Combine(folder, baseName + $"_{idx++}.png");
+                // Save as PNG
+                using (var fs = System.IO.File.OpenWrite(outPath)) img.SaveAsPng(fs);
+
+                // Create .meta sidecar with our guid and type
+                var meta = new Engine.Assets.AssetDatabase.MetaData { guid = guid, type = "Texture2D" };
+                var metaJson = System.Text.Json.JsonSerializer.Serialize(meta, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                System.IO.File.WriteAllText(outPath + Engine.Assets.AssetDatabase.MetaExt, metaJson);
+
+                createdGuids[si] = guid;
+            }
+
+            // Refresh asset DB to pick new textures
+            Engine.Assets.AssetDatabase.Refresh();
+
+            // Assign to terrain
+            terrain.SplatmapGuids = new Guid?[2];
+            for (int i = 0; i < createdGuids.Length; i++) terrain.SplatmapGuids[i] = createdGuids[i];
+        }
+
+        private static float SmoothStep(float a, float b, float t)
+        {
+            if (b <= a) return t >= a ? 1f : 0f;
+            float x = Math.Clamp((t - a) / (b - a), 0f, 1f);
+            return x * x * (3f - 2f * x);
+        }
+
+        /// <summary>
+        /// Draw terrain layers management UI
+        /// </summary>
+        private static void DrawTerrainLayers(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Layers", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Layer count and management
+                ImGui.Text($"Layers: {terrain.TerrainLayers.Count}/8");
+                ImGui.SameLine();
+
+                if (ImGui.Button("Add Layer") && terrain.TerrainLayers.Count < 8)
+                {
+                    var newLayer = new Engine.Assets.TerrainLayer
+                    {
+                        Name = $"Layer {terrain.TerrainLayers.Count + 1}",
+                        Priority = terrain.TerrainLayers.Count
+                    };
+                    terrain.TerrainLayers.Add(newLayer);
+                    // Auto-update preview
+                    UpdateTerrainPreview(terrain);
+                }
+
+                ImGui.SameLine();
+
+                // Live preview toggle
+                bool livePreview = true; // We'll make this always on for better UX
+                if (ImGui.Checkbox("Live Preview", ref livePreview))
+                {
+                    if (livePreview)
+                    {
+                        UpdateTerrainPreview(terrain);
+                    }
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Update terrain in real-time as you modify layers");
+                }
+
+                ImGui.SameLine();
+
+                if (ImGui.Button("Generate & Save Splatmap"))
+                {
+                    SaveSplatmapToAssets(terrain);
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Generate and save splatmap to Assets folder");
+                }
+
+                ImGui.Separator();
+
+                // Display each layer
+                for (int i = 0; i < terrain.TerrainLayers.Count; i++)
+                {
+                    var layer = terrain.TerrainLayers[i];
+                    ImGui.PushID($"Layer{i}");
+
+                    // Layer header with collapse and remove button
+                    bool layerOpen = ImGui.CollapsingHeader($"{layer.Name}##LayerHeader{i}", ImGuiTreeNodeFlags.DefaultOpen);
+
+                    ImGui.SameLine();
+                    ImGui.SetCursorPosX(ImGui.GetWindowWidth() - 60);
+                    if (ImGui.Button($"Remove##RemoveLayer{i}"))
+                    {
+                        terrain.TerrainLayers.RemoveAt(i);
+                        UpdateTerrainPreview(terrain);
+                        ImGui.PopID();
+                        break;
+                    }
+
+                    if (layerOpen)
+                    {
+                        ImGui.Indent();
+
+                        // Layer name
+                        string layerName = layer.Name;
+                        if (ImGui.InputText("Name", ref layerName, 256))
+                        {
+                            layer.Name = layerName;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Priority
+                        int priority = layer.Priority;
+                        if (ImGui.DragInt("Priority", ref priority, 1, 0, 100))
+                        {
+                            layer.Priority = priority;
+                            UpdateTerrainPreview(terrain);
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("Higher priority layers are applied later");
+                        }
+
+                        // Albedo texture
+                        Guid? albedoTexture = layer.AlbedoTexture;
+                        bool albedoChanged = DrawTextureField("Albedo Texture", ref albedoTexture);
+                        if (albedoChanged)
+                        {
+                            layer.AlbedoTexture = albedoTexture;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Normal texture
+                        Guid? normalTexture = layer.NormalTexture;
+                        bool normalChanged = DrawTextureField("Normal Texture", ref normalTexture);
+                        if (normalChanged)
+                        {
+                            layer.NormalTexture = normalTexture;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Tiling
+                        float[] tiling = layer.Tiling ?? new float[] { 1f, 1f };
+                        var tilingVec = new System.Numerics.Vector2(tiling[0], tiling[1]);
+                        if (ImGui.DragFloat2("Tiling", ref tilingVec, 0.1f, 0.1f, 100f))
+                        {
+                            layer.Tiling = new float[] { tilingVec.X, tilingVec.Y };
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Offset
+                        float[] offset = layer.Offset ?? new float[] { 0f, 0f };
+                        var offsetVec = new System.Numerics.Vector2(offset[0], offset[1]);
+                        if (ImGui.DragFloat2("Offset", ref offsetVec, 0.01f, -10f, 10f))
+                        {
+                            layer.Offset = new float[] { offsetVec.X, offsetVec.Y };
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Material properties
+                        float metallic = layer.Metallic;
+                        if (ImGui.SliderFloat("Metallic", ref metallic, 0f, 1f))
+                        {
+                            layer.Metallic = metallic;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        float smoothness = layer.Smoothness;
+                        if (ImGui.SliderFloat("Smoothness", ref smoothness, 0f, 1f))
+                        {
+                            layer.Smoothness = smoothness;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Height range
+                        float heightMin = layer.HeightMin;
+                        float heightMax = layer.HeightMax;
+                        if (ImGui.DragFloatRange2("Height Range", ref heightMin, ref heightMax, 1f, -1000f, 1000f))
+                        {
+                            layer.HeightMin = heightMin;
+                            layer.HeightMax = heightMax;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        float heightBlend = layer.HeightBlendDistance;
+                        if (ImGui.DragFloat("Height Blend Distance", ref heightBlend, 0.1f, 0f, 100f))
+                        {
+                            layer.HeightBlendDistance = heightBlend;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Slope range (in degrees)
+                        float slopeMin = layer.SlopeMinDeg;
+                        float slopeMax = layer.SlopeMaxDeg;
+                        if (ImGui.DragFloatRange2("Slope Range (degrees)", ref slopeMin, ref slopeMax, 1f, 0f, 90f))
+                        {
+                            layer.SlopeMinDeg = slopeMin;
+                            layer.SlopeMaxDeg = slopeMax;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        float slopeBlend = layer.SlopeBlendDistance;
+                        if (ImGui.DragFloat("Slope Blend Distance", ref slopeBlend, 0.1f, 0f, 45f))
+                        {
+                            layer.SlopeBlendDistance = slopeBlend;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Layer strength
+                        float strength = layer.Strength;
+                        if (ImGui.SliderFloat("Strength", ref strength, 0f, 2f))
+                        {
+                            layer.Strength = strength;
+                            UpdateTerrainPreview(terrain);
+                        }
+
+                        // Blend mode
+                        var blendMode = layer.BlendMode;
+                        if (ImGui.BeginCombo("Blend Mode", blendMode.ToString()))
+                        {
+                            foreach (var mode in Enum.GetValues<Engine.Assets.TerrainLayerBlendMode>())
+                            {
+                                bool isSelected = blendMode == mode;
+                                if (ImGui.Selectable(mode.ToString(), isSelected))
+                                {
+                                    layer.BlendMode = mode;
+                                    UpdateTerrainPreview(terrain);
+                                }
+                                if (isSelected)
+                                {
+                                    ImGui.SetItemDefaultFocus();
+                                }
+                            }
+                            ImGui.EndCombo();
+                        }
+
+                        ImGui.Unindent();
+                        ImGui.Separator();
+                    }
+
+                    ImGui.PopID();
+                }
+
+                if (terrain.TerrainLayers.Count == 0)
+                {
+                    ImGui.TextDisabled("No layers defined. Add layers to see terrain blending.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw texture field with drag & drop support
+        /// </summary>
+        private static bool DrawTextureField(string label, ref Guid? textureGuid)
+        {
+            ImGui.Text(label + ":");
+            bool changed = false;
+
+            string textureName = "None";
+            var buttonColor = new System.Numerics.Vector4(0.2f, 0.2f, 0.2f, 1f);
+
+            if (textureGuid.HasValue && textureGuid.Value != Guid.Empty)
+            {
+                if (Engine.Assets.AssetDatabase.TryGet(textureGuid.Value, out var record))
+                {
+                    textureName = System.IO.Path.GetFileNameWithoutExtension(record.Path);
+                    buttonColor = new System.Numerics.Vector4(0.3f, 0.4f, 0.3f, 1f);
+                }
+                else
+                {
+                    textureName = "Missing";
+                    buttonColor = new System.Numerics.Vector4(0.5f, 0.2f, 0.2f, 1f);
+                }
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+            bool clicked = ImGui.Button($"{textureName}##{label}Field", new System.Numerics.Vector2(-1, 25));
+            ImGui.PopStyleColor(3);
+
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
+                    {
+                        try
+                        {
+                            var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
+                            var droppedGuid = new Guid(span);
+                            if (Engine.Assets.AssetDatabase.TryGet(droppedGuid, out var record) &&
+                                string.Equals(record.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                            {
+                                textureGuid = droppedGuid;
+                                changed = true;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            if (clicked)
+            {
+                ImGui.OpenPopup($"Select{label}");
+            }
+
+            if (ImGui.BeginPopup($"Select{label}"))
+            {
+                if (ImGui.Selectable("None"))
+                {
+                    textureGuid = null;
+                    changed = true;
+                    ImGui.CloseCurrentPopup();
+                }
+
+                var textureAssets = Engine.Assets.AssetDatabase.All()
+                    .Where(a => string.Equals(a.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+                foreach (var asset in textureAssets)
+                {
+                    string displayName = System.IO.Path.GetFileNameWithoutExtension(asset.Path);
+                    bool isSelected = textureGuid == asset.Guid;
+
+                    if (ImGui.Selectable(displayName, isSelected))
+                    {
+                        textureGuid = asset.Guid;
+                        changed = true;
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+                ImGui.EndPopup();
+            }
+
+            if (textureGuid.HasValue && textureGuid.Value != Guid.Empty)
+            {
+                ImGui.SameLine();
+                if (ImGui.Button($"Clear##{label}Clear"))
+                {
+                    textureGuid = null;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        }
+
+        /// <summary>
+        /// Draw heightmap texture selection field with drag & drop support
+        /// </summary>
+        private static void DrawHeightmapTextureField(Terrain terrain)
+        {
+            ImGui.Text("Heightmap Texture:");
+
+            // Get current texture info
+            string textureName = "None";
+            System.Numerics.Vector4 buttonColor = new(0.2f, 0.2f, 0.2f, 1f);
+            
+            if (terrain.HeightmapTextureGuid.HasValue && terrain.HeightmapTextureGuid != Guid.Empty)
+            {
+                if (Engine.Assets.AssetDatabase.TryGet(terrain.HeightmapTextureGuid.Value, out var record))
+                {
+                    textureName = System.IO.Path.GetFileNameWithoutExtension(record.Path);
+                    buttonColor = new(0.3f, 0.4f, 0.3f, 1f); // Green tint for assigned texture
+                }
+                else
+                {
+                    textureName = "Missing";
+                    buttonColor = new(0.5f, 0.2f, 0.2f, 1f); // Red tint for missing texture
+                }
+            }
+
+            // Texture selection button
+            ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+            
+            bool textureClicked = ImGui.Button($"{textureName}##HeightmapField", new System.Numerics.Vector2(-1, 30));
+            
+            ImGui.PopStyleColor(3);
+            
+            // Handle drag & drop from Assets panel
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
+                    {
+                        try
+                        {
+                            var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
+                            var droppedTextureGuid = new Guid(span);
+                            
+                            // Check if it's a texture asset
+                            if (Engine.Assets.AssetDatabase.TryGet(droppedTextureGuid, out var record) && 
+                                string.Equals(record.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                            {
+                                terrain.HeightmapTextureGuid = droppedTextureGuid;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error handling dropped texture: {ex.Message}");
+                        }
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            // Texture selection popup (when button is clicked)
+            if (textureClicked)
+            {
+                ImGui.OpenPopup("SelectHeightmapTexture");
+            }
+
+            if (ImGui.BeginPopup("SelectHeightmapTexture"))
+            {
+                ImGui.Text("Select Heightmap Texture:");
+                ImGui.Separator();
+
+                // Option to clear texture
+                if (ImGui.Selectable("None"))
+                {
+                    terrain.HeightmapTextureGuid = null;
+                    ImGui.CloseCurrentPopup();
+                }
+
+                // List available texture assets
+                var textureAssets = Engine.Assets.AssetDatabase.All()
+                    .Where(a => string.Equals(a.Type, "Texture2D", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+                foreach (var asset in textureAssets)
+                {
+                    string displayName = System.IO.Path.GetFileNameWithoutExtension(asset.Path);
+                    bool isSelected = terrain.HeightmapTextureGuid == asset.Guid;
+                    
+                    if (ImGui.Selectable(displayName, isSelected))
+                    {
+                        terrain.HeightmapTextureGuid = asset.Guid;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip($"Path: {asset.Path}");
+                    }
+                }
+
+                ImGui.EndPopup();
+            }
+
+            // Clear button (if texture is assigned)
+            if (terrain.HeightmapTextureGuid.HasValue && terrain.HeightmapTextureGuid != Guid.Empty)
+            {
+                ImGui.SameLine();
+                if (ImGui.Button("Clear"))
+                {
+                    terrain.HeightmapTextureGuid = null;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Clear the heightmap texture");
+                }
+            }
+
+            // Drag & drop hint
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Click to select a texture, or drag & drop a texture from the Assets panel");
+            }
+        }
+
+        /// <summary>
+        /// Draw material selection field with drag & drop support
+        /// </summary>
+        private static void DrawMaterialField(Terrain terrain)
+        {
+            ImGui.Text("Terrain Material:");
+
+            // Get current material info
+            string materialName = "None";
+            System.Numerics.Vector4 buttonColor = new(0.2f, 0.2f, 0.2f, 1f);
+            
+            if (terrain.TerrainMaterialGuid.HasValue && terrain.TerrainMaterialGuid != Guid.Empty)
+            {
+                if (Engine.Assets.AssetDatabase.TryGet(terrain.TerrainMaterialGuid.Value, out var record))
+                {
+                    materialName = System.IO.Path.GetFileNameWithoutExtension(record.Path);
+                    buttonColor = new(0.3f, 0.4f, 0.3f, 1f); // Green tint for assigned material
+                }
+                else
+                {
+                    materialName = "Missing";
+                    buttonColor = new(0.5f, 0.2f, 0.2f, 1f); // Red tint for missing material
+                }
+            }
+
+            // Material selection button
+            ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+            
+            bool materialClicked = ImGui.Button($"{materialName}##MaterialField", new System.Numerics.Vector2(-1, 30));
+            
+            ImGui.PopStyleColor(3);
+            
+            // Handle drag & drop from Assets panel
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
+                    {
+                        try
+                        {
+                            var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
+                            var droppedMaterialGuid = new Guid(span);
+                            
+                            // Check if it's a material asset
+                            if (Engine.Assets.AssetDatabase.TryGet(droppedMaterialGuid, out var record) && 
+                                string.Equals(record.Type, "Material", StringComparison.OrdinalIgnoreCase))
+                            {
+                                terrain.TerrainMaterialGuid = droppedMaterialGuid;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error handling dropped material: {ex.Message}");
+                        }
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
+            // Material selection popup (when button is clicked)
+            if (materialClicked)
+            {
+                ImGui.OpenPopup("SelectTerrainMaterial");
+            }
+
+            if (ImGui.BeginPopup("SelectTerrainMaterial"))
+            {
+                ImGui.Text("Select Terrain Material:");
+                ImGui.Separator();
+
+                // Option to clear material
+                if (ImGui.Selectable("None"))
+                {
+                    terrain.TerrainMaterialGuid = null;
+                    ImGui.CloseCurrentPopup();
+                }
+
+                // List available material assets
+                var materialAssets = Engine.Assets.AssetDatabase.All()
+                    .Where(a => string.Equals(a.Type, "Material", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+
+                foreach (var asset in materialAssets)
+                {
+                    string displayName = System.IO.Path.GetFileNameWithoutExtension(asset.Path);
+                    bool isSelected = terrain.TerrainMaterialGuid == asset.Guid;
+                    
+                    if (ImGui.Selectable(displayName, isSelected))
+                    {
+                        terrain.TerrainMaterialGuid = asset.Guid;
+                        ImGui.CloseCurrentPopup();
+                    }
+                    
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip($"Path: {asset.Path}");
+                    }
+                }
+
+                ImGui.EndPopup();
+            }
+
+            // Clear button (if material is assigned)
+            if (terrain.TerrainMaterialGuid.HasValue && terrain.TerrainMaterialGuid != Guid.Empty)
+            {
+                ImGui.SameLine();
+                if (ImGui.Button("Clear"))
+                {
+                    terrain.TerrainMaterialGuid = null;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Clear the terrain material");
+                }
+            }
+
+            // Drag & drop hint
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Click to select a material, or drag & drop a material from the Assets panel");
+            }
+        }
+
+        /// <summary>
+        /// Draw Level of Detail (LOD) settings
+        /// </summary>
+        private static void DrawLODSettings(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Level of Detail (LOD)"))
+            {
+                // Enable LOD
+                bool enableLOD = terrain.EnableLOD;
+                if (ImGui.Checkbox("Enable LOD", ref enableLOD))
+                {
+                    terrain.EnableLOD = enableLOD;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Enable mesh Level of Detail system for performance optimization.");
+                }
+
+                if (terrain.EnableLOD)
+                {
+                    // LOD Count
+                    int lodCount = terrain.LODCount;
+                    if (ImGui.SliderInt("LOD Levels", ref lodCount, 1, 5))
+                    {
+                        terrain.LODCount = Math.Max(1, lodCount);
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("Number of LOD levels to generate.");
+                    }
+
+                    // LOD Distances
+                    ImGui.Text("LOD Distances:");
+                    var lodDistances = terrain.LODDistances;
+                    bool distancesChanged = false;
+
+                    for (int i = 0; i < Math.Min(lodDistances.Length, terrain.LODCount); i++)
+                    {
+                        float distance = lodDistances[i];
+                        if (ImGui.DragFloat($"LOD {i} Distance", ref distance, 1f, 1f, 1000f))
+                        {
+                            lodDistances[i] = Math.Max(1f, distance);
+                            distancesChanged = true;
+                        }
+                    }
+
+                    if (distancesChanged)
+                    {
+                        terrain.LODDistances = lodDistances;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw terrain generation control buttons
+        /// </summary>
+        private static void DrawGenerationControls(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Generation Controls", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Generation Info
+                ImGui.Text("Terrain Status:");
+                ImGui.SameLine();
+                ImGui.TextColored(new System.Numerics.Vector4(0.5f, 1f, 0.5f, 1f), "Ready");
+
+                ImGui.Separator();
+
+                // Generate Terrain Button
+                if (ImGui.Button("Generate Terrain", new System.Numerics.Vector2(150, 30)))
+                {
+                    terrain.GenerateTerrain();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Generate or regenerate the terrain mesh based on current settings.");
+                }
+
+                ImGui.SameLine();
+
+                // Clear Terrain Button
+                if (ImGui.Button("Clear Terrain", new System.Numerics.Vector2(150, 30)))
+                {
+                    terrain.ClearTerrain();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Clear all terrain data and GPU resources.");
+                }
+
+                // Flatten Terrain Button (sets all heights to base height)
+                if (ImGui.Button("Flatten Terrain"))
+                {
+                    // Reset to base height and regenerate
+                    terrain.HeightmapTextureGuid = null;
+                    terrain.GenerateTerrain();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Create a flat terrain at the base height.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw water preview settings (editor only)
+        /// </summary>
+        private static void DrawWaterPreviewSettings(Terrain terrain)
+        {
+            if (ImGui.CollapsingHeader("Water Preview", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Enabled
+                bool enabled = terrain.WaterPreviewEnabled;
+                if (ImGui.Checkbox("Enable Water Preview", ref enabled))
+                {
+                    terrain.WaterPreviewEnabled = enabled;
+                }
+
+                // Material picker (drag & drop)
+                ImGui.Text("Water Material:");
+                string materialName = "None";
+                var buttonColor = new System.Numerics.Vector4(0.2f, 0.2f, 0.2f, 1f);
+                if (terrain.WaterMaterialGuid.HasValue && terrain.WaterMaterialGuid.Value != Guid.Empty)
+                {
+                    if (Engine.Assets.AssetDatabase.TryGet(terrain.WaterMaterialGuid.Value, out var rec))
+                    {
+                        materialName = System.IO.Path.GetFileNameWithoutExtension(rec.Path);
+                        buttonColor = new System.Numerics.Vector4(0.3f, 0.4f, 0.3f, 1f);
+                    }
+                    else
+                    {
+                        materialName = "Missing";
+                        buttonColor = new System.Numerics.Vector4(0.5f, 0.2f, 0.2f, 1f);
+                    }
+                }
+
+                ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+                bool clicked = ImGui.Button($"{materialName}##WaterMaterial", new System.Numerics.Vector2(-1, 26));
+                ImGui.PopStyleColor(3);
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
+                    unsafe
+                    {
+                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
+                        {
+                            try
+                            {
+                                var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
+                                var droppedGuid = new Guid(span);
+                                if (Engine.Assets.AssetDatabase.TryGet(droppedGuid, out var rec) && string.Equals(rec.Type, "Material", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    terrain.WaterMaterialGuid = droppedGuid;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (clicked)
+                {
+                    ImGui.OpenPopup("SelectWaterMaterial");
+                }
+
+                if (ImGui.BeginPopup("SelectWaterMaterial"))
+                {
+                    if (ImGui.Selectable("None")) { terrain.WaterMaterialGuid = null; ImGui.CloseCurrentPopup(); }
+                    var mats = Engine.Assets.AssetDatabase.All().Where(a => string.Equals(a.Type, "Material", StringComparison.OrdinalIgnoreCase)).ToArray();
+                    foreach (var m in mats)
+                    {
+                        string name = System.IO.Path.GetFileNameWithoutExtension(m.Path);
+                        bool sel = terrain.WaterMaterialGuid.HasValue && terrain.WaterMaterialGuid.Value == m.Guid;
+                        if (ImGui.Selectable(name, sel)) { terrain.WaterMaterialGuid = m.Guid; ImGui.CloseCurrentPopup(); }
+                    }
+                    ImGui.EndPopup();
+                }
+
+                // Sea level slider
+                float sea = terrain.SeaLevel;
+                if (ImGui.DragFloat("Sea Level", ref sea, 0.1f, -1000f, 1000f))
+                {
+                    terrain.SeaLevel = sea;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Draw a standalone Terrain panel window
+        /// This can be used as a separate editor window
+        /// </summary>
+        public static void DrawPanel()
+        {
+            ImGui.Begin("Terrain Generator", ImGuiWindowFlags.None);
+
+            var scene = EditorUI.MainViewport.Renderer?.Scene;
+            if (scene == null)
+            {
+                ImGui.TextDisabled("No scene available");
+                ImGui.End();
+                return;
+            }
+
+            // Find terrain component in the scene
+            var terrainEntity = scene.Entities.FirstOrDefault(e => e.HasComponent<Terrain>());
+            
+            if (terrainEntity == null)
+            {
+                ImGui.TextDisabled("No Terrain component found in scene.");
+                ImGui.Text("Add a Terrain component to an entity to use this panel.");
+                
+                if (ImGui.Button("Create Terrain Entity"))
+                {
+                    CreateTerrainEntity(scene);
+                }
+            }
+            else
+            {
+                var terrain = terrainEntity.GetComponent<Terrain>();
+                if (terrain != null)
+                {
+                    DrawForInspector(terrain);
+                }
+            }
+
+            ImGui.End();
+        }
+
+        /// <summary>
+        /// Create a new entity with Terrain component
+        /// </summary>
+        private static void CreateTerrainEntity(Scene scene)
+        {
+            var entity = new Entity();
+            entity.Name = "Terrain";
+            entity.AddComponent<Terrain>();
+
+            // Add to scene entities list
+            scene.Entities.Add(entity);
+        }
+
+        /// <summary>
+        /// Update terrain preview in real-time
+        /// </summary>
+        private static void UpdateTerrainPreview(Terrain terrain)
+        {
+            if (terrain == null) return;
+
+            try
+            {
+                // Regenerate splatmaps in memory (no saving to disk)
+                terrain.RegenerateSplatmap();
+                // Regenerate terrain mesh with new splatmap data
+                terrain.GenerateTerrain();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error updating terrain preview: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Save the generated splatmap to Assets folder
+        /// </summary>
+        private static void SaveSplatmapToAssets(Terrain terrain)
+        {
+            if (terrain == null || terrain.TerrainLayers.Count == 0) return;
+
+            try
+            {
+                // Generate splatmaps
+                terrain.RegenerateSplatmap();
+
+                // Access the generated splatmaps
+                var splatmapGLIds = terrain.SplatmapGLIds;
+                if (splatmapGLIds == null || splatmapGLIds.Length == 0)
+                {
+                    Console.WriteLine("No splatmaps were generated");
+                    return;
+                }
+
+                // Create Assets/Textures directory if it doesn't exist
+                string assetsRoot = Engine.Assets.AssetDatabase.AssetsRoot;
+                string texturesFolder = System.IO.Path.Combine(assetsRoot, "Textures");
+                System.IO.Directory.CreateDirectory(texturesFolder);
+
+                // Save each splatmap
+                for (int i = 0; i < splatmapGLIds.Length; i++)
+                {
+                    if (splatmapGLIds[i] == 0) continue;
+
+                    // Generate unique filename
+                    string baseName = $"terrain_splatmap_{terrain.GetHashCode()}_{i}";
+                    string fileName = baseName + ".png";
+                    string fullPath = System.IO.Path.Combine(texturesFolder, fileName);
+
+                    // Ensure unique filename
+                    int counter = 1;
+                    while (System.IO.File.Exists(fullPath))
+                    {
+                        fileName = $"{baseName}_{counter}.png";
+                        fullPath = System.IO.Path.Combine(texturesFolder, fileName);
+                        counter++;
+                    }
+
+                    // Read texture data from GPU and save
+                    if (SaveGLTextureToFile(splatmapGLIds[i], fullPath, terrain.SplatmapResolution))
+                    {
+                        // Create .meta file for asset database
+                        var guid = Guid.NewGuid();
+                        var metaData = new Engine.Assets.AssetDatabase.MetaData
+                        {
+                            guid = guid,
+                            type = "Texture2D"
+                        };
+                        var metaJson = System.Text.Json.JsonSerializer.Serialize(metaData,
+                            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                        System.IO.File.WriteAllText(fullPath + Engine.Assets.AssetDatabase.MetaExt, metaJson);
+
+                        Console.WriteLine($"Saved splatmap: {fileName}");
+                    }
+                }
+
+                // Refresh asset database to show new textures
+                Engine.Assets.AssetDatabase.Refresh();
+
+                // Regenerate terrain with saved splatmaps
+                terrain.GenerateTerrain();
+
+                Console.WriteLine("Splatmaps saved to Assets/Textures folder");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving splatmaps: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Save GL texture to file
+        /// </summary>
+        private static bool SaveGLTextureToFile(int textureId, string filePath, int resolution)
+        {
+            try
+            {
+                // Bind texture and read pixel data
+                OpenTK.Graphics.OpenGL4.GL.BindTexture(OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D, textureId);
+
+                byte[] pixels = new byte[resolution * resolution * 4]; // RGBA
+                OpenTK.Graphics.OpenGL4.GL.GetTexImage(
+                    OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D,
+                    0,
+                    OpenTK.Graphics.OpenGL4.PixelFormat.Rgba,
+                    OpenTK.Graphics.OpenGL4.PixelType.UnsignedByte,
+                    pixels);
+
+                // Create image and save
+                using var image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgba32>(
+                    pixels, resolution, resolution);
+
+                using var fileStream = System.IO.File.Create(filePath);
+                image.SaveAsPng(fileStream);
+
+                OpenTK.Graphics.OpenGL4.GL.BindTexture(OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D, 0);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving texture to file: {ex.Message}");
+                return false;
+            }
+        }
+    }
+}

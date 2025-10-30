@@ -1,0 +1,38 @@
+#version 400 core
+
+// Tessellation Control Shader for Water
+// Controls how much to subdivide each patch
+
+layout(vertices = 4) out;
+
+in vec3 vWorldPos[];
+in vec3 vNormal[];
+in vec2 vUV[];
+
+out vec3 tcWorldPos[];
+out vec3 tcNormal[];
+out vec2 tcUV[];
+
+uniform float u_TessellationLevel;
+
+void main()
+{
+    // Pass through vertex data
+    tcWorldPos[gl_InvocationID] = vWorldPos[gl_InvocationID];
+    tcNormal[gl_InvocationID] = vNormal[gl_InvocationID];
+    tcUV[gl_InvocationID] = vUV[gl_InvocationID];
+
+    // Set tessellation levels (how many subdivisions)
+    // Higher = more detail but more expensive
+    float tessLevel = clamp(u_TessellationLevel, 1.0, 64.0);
+
+    // Outer tessellation levels (edges of the quad - 4 edges)
+    gl_TessLevelOuter[0] = tessLevel;
+    gl_TessLevelOuter[1] = tessLevel;
+    gl_TessLevelOuter[2] = tessLevel;
+    gl_TessLevelOuter[3] = tessLevel;
+
+    // Inner tessellation levels (inside the quad - U and V directions)
+    gl_TessLevelInner[0] = tessLevel;
+    gl_TessLevelInner[1] = tessLevel;
+}

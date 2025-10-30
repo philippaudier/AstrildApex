@@ -1,0 +1,121 @@
+{
+  "Guid": "fbdcaf77-c63e-40c7-b15c-43934aa18f4f",
+  "Name": "WaterMaterial",
+  "Shader": "WaterSimple",
+  "TerrainLayers": null,
+  "AlbedoTexture": "aab1de75-2777-418b-b6d2-df777dcfe149",
+  "AlbedoColor": [
+    0.7294118,
+    0.09019608,
+    1,
+    0.069264054
+  ],
+  "NormalTexture": "ae29a1e3-575f-49ba-bacb-83b0e5e3eec1",
+  "NormalStrength": 2,
+  "Metallic": 0,
+  "Roughness": 0.32,
+  "TextureTiling": [
+    10,
+    10
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 1,
+  "WaterProperties": {
+    "WaveAmplitude": 0.05,
+    "WaveFrequency": 0.1,
+    "WaveSpeed": 0.8,
+    "WaveDirection": [
+      1,
+      0
+    ],
+    "WaterColor": [
+      0.1,
+      0.3,
+      0.5,
+      0.8
+    ],
+    "Opacity": 1,
+    "AlbedoTexture": "aab1de75-2777-418b-b6d2-df777dcfe149",
+    "AlbedoColor": [
+      0.20098037,
+      0.20098037,
+      0.20098037,
+      1
+    ],
+    "AlbedoTiling": [
+      5,
+      5
+    ],
+    "AlbedoScrollSpeed": [
+      0.01,
+      -0.01
+    ],
+    "NormalTexture": null,
+    "NormalStrength": 0.38,
+    "NormalTiling": [
+      10,
+      10
+    ],
+    "NormalScrollSpeed1": [
+      0.076,
+      0
+    ],
+    "NormalScrollSpeed2": [
+      0.059,
+      -0.039
+    ],
+    "Metallic": 0,
+    "Smoothness": 0.822,
+    "NoiseTexture1": "7ec0d101-692b-455b-84a6-cda9f7ca7180",
+    "Noise1Speed": [
+      1,
+      1
+    ],
+    "Noise1Direction": [
+      0.1,
+      0.1
+    ],
+    "Noise1Tiling": [
+      1,
+      1
+    ],
+    "Noise1Strength": 0.384,
+    "NoiseTexture2": "7ec0d101-692b-455b-84a6-cda9f7ca7180",
+    "Noise2Speed": [
+      1,
+      1
+    ],
+    "Noise2Direction": [
+      0.1,
+      0
+    ],
+    "Noise2Tiling": [
+      5,
+      5
+    ],
+    "Noise2Strength": 0.4,
+    "RefractionStrength": 1.02,
+    "FresnelPower": 10,
+    "FresnelColor": [
+      0.6764706,
+      0.9429065,
+      1,
+      1
+    ],
+    "EnableReflection": true,
+    "ReflectionStrength": 1,
+    "ReflectionBlur": 1,
+    "TessellationLevel": 25,
+    "UseProceduralNoise": false,
+    "TessNearDistance": 487,
+    "TessMidDistance": 80,
+    "TessFarDistance": 200,
+    "TessNearLevel": 32,
+    "TessMidLevel": 16,
+    "TessFarLevel": 8,
+    "ReflectionUpdateInterval": 1
+  }
+}

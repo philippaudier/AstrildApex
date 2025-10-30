@@ -1,0 +1,27 @@
+{
+  "Guid": "3e681ad0-5916-43be-bf8b-debb086518a5",
+  "Name": "Cube B Mat",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "dda0c6fb-bdb6-4457-a22a-d6c648c754f8",
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": "3c31a87a-3303-467d-94aa-e50c56ff7e28",
+  "NormalStrength": 0.26,
+  "Metallic": 0,
+  "Roughness": 0.816,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

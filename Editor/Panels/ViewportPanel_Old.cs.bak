@@ -1,0 +1,1192 @@
+﻿using System;
+using System.Linq;
+using ImGuiNET;
+using System.Numerics;
+using OpenTK.Mathematics;
+using Editor.Rendering;
+using Editor.State;
+using Editor.Icons;
+namespace Editor.Panels;
+
+public class ViewportPanel
+{
+    bool _isSelecting = false, _isGizmoDragging = false;
+    System.Numerics.Vector2 _selStart, _selEnd;
+
+    // UI element interaction state
+    bool _isUIHandleDragging = false;
+    Engine.UI.UIElement? _draggedUIElement = null;
+    int _draggedHandleIndex = -1; // 0=TL, 1=TR, 2=BR, 3=BL
+    System.Numerics.Vector2 _uiDragStart;
+    Engine.UI.RectTransform? _uiDragOriginalRect = null;
+
+    // Context menu state
+    bool _showContextMenu = false;
+    System.Numerics.Vector2 _contextMenuPos;
+    System.Numerics.Vector2 _contextMenuMouseLocal; // Mouse position in viewport coordinates when menu opened
+    int _contextMenuPixelX, _contextMenuPixelY; // GL pixel coordinates for picking
+    System.Numerics.Vector2 _rightClickStartPos; // Track right-click start position to detect drag
+
+    // Pivot mode comme Unity: Center/Pivot
+    enum PivotMode { Center, Pivot }
+    PivotMode _pivotMode = PivotMode.Center; // par défaut comme Unity
+
+    // Projection mode
+    enum ProjectionMode { Perspective, Orthographic, TwoD }
+    ProjectionMode _projectionMode = ProjectionMode.Perspective;
+    float _orthoSize = 10f;
+
+    private ViewportRenderer? _renderer;
+    public ViewportRenderer? Renderer 
+    { 
+        get => _renderer;
+        set 
+        {
+            // Disconnect from previous renderer
+            if (_renderer != null)
+            {
+                _renderer.GizmoDragEnded -= OnGizmoDragEnded;
+                _renderer.EditingTouched -= OnEditingTouched;
+            }
+            
+            _renderer = value;
+            
+            // Connect to new renderer
+            if (_renderer != null)
+            {
+                _renderer.GizmoDragEnded += OnGizmoDragEnded;
+                _renderer.EditingTouched += OnEditingTouched;
+
+                // Initialize projection mode
+                _renderer.SetProjectionMode((int)_projectionMode, _orthoSize);
+
+                try
+                {
+                    var savedState = Editor.State.EditorSettings.ViewportCameraState;
+                    _yaw = savedState.Yaw;
+                    _pitch = savedState.Pitch;
+                    _dist = savedState.Distance;
+                    // Also initialize target values to prevent smoothing animation
+                    _targetYaw = savedState.Yaw;
+                    _targetPitch = savedState.Pitch;
+                    _targetDist = savedState.Distance;
+                    _renderer.ApplyOrbitCameraState(savedState);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportPanel] Failed to apply saved camera state: {ex.Message}");
+                }
+            }
+            // SSAO settings are initialized by Program.cs at startup, no need to override them here
+        }
+    }
+
+    // Perf overlay state
+    private bool _showPerfOverlay = true;
+    private bool _overlayInitialized = false;
+    private float _overlaySmoothedMs = 0.0f;
+    // HUD visibility hysteresis to avoid rapid flicker when focus briefly switches
+    private double _viewportHudLastVisibleAt = 0.0;
+    private const double VIEWPORT_HUD_HOLD_SECONDS = 0.12; // small debounce window
+    float _yaw = MathHelper.DegreesToRadians(-30f);
+    float _pitch = MathHelper.DegreesToRadians(-15f);
+    float _dist = 3.0f;
+
+    // Smoothing pour les mouvements de caméra
+    float _targetYaw = MathHelper.DegreesToRadians(-30f);
+    float _targetPitch = MathHelper.DegreesToRadians(-15f);
+    float _targetDist = 3.0f;
+
+    // Vélocités pour les arrow keys (système unifié comme Unity)
+    float _arrowVelocityX = 0f; // Left/Right
+    float _arrowVelocityY = 0f; // Forward/Backward (change la distance)
+
+    // Paramètres de caméra (configurables via UI)
+    float _arrowSpeed = 1.0f; // Vitesse uniforme pour tous les mouvements
+    float _arrowAcceleration = 5.0f;
+    float _arrowDamping = 0.85f;
+    float _smoothFactor = 0.2f;
+    bool _showCameraSettings = false;
+
+    ViewportRenderer.GizmoMode _mode = ViewportRenderer.GizmoMode.Translate;
+
+    // Snapping UI
+    bool _snapToggle = false;
+    float _snapMove = 0.5f;
+    float _snapAngle = 15f;
+    float _snapScale = 0.1f;
+
+    // Local/World gizmo space
+    bool _localSpace = false; // false=World, true=Local
+
+    uint _hoverId = 0;
+
+    // Mouse picking throttling (CRITICAL PERFORMANCE FIX)
+    private System.Numerics.Vector2 _lastPickMousePos = new System.Numerics.Vector2(-999, -999);
+    private System.Diagnostics.Stopwatch _pickThrottleTimer = System.Diagnostics.Stopwatch.StartNew();
+    private const double MIN_PICK_INTERVAL_MS = 33.0; // Max 30 picks/sec (instead of 60-144/sec)
+    private const float MIN_PICK_DISTANCE_SQ = 4.0f; // Only pick if mouse moved >2px
+    
+    // DEBUG: Count actual picks per second
+    private int _debugPickCount = 0;
+    private System.Diagnostics.Stopwatch _debugPickTimer = System.Diagnostics.Stopwatch.StartNew();
+
+    public void UpdateGizmoPivot()
+    {
+        if (Renderer == null) return;
+        var scene = Renderer.Scene;
+
+        // ✅ Utiliser Selection.Selected de manière cohérente
+        if (Selection.Selected.Count > 0)
+        {
+            // S'assurer que ActiveEntityId est dans Selected
+            if (Selection.ActiveEntityId != 0 && !Selection.Selected.Contains(Selection.ActiveEntityId))
+                Selection.Selected.Add(Selection.ActiveEntityId);
+
+            Renderer.SetGizmoVisible(true);
+
+            if (_pivotMode == PivotMode.Center)
+            {
+                var c = Selection.ComputeCenter(scene!);
+                Renderer.SetGizmoPosition(new OpenTK.Mathematics.Vector3(c.X, c.Y, c.Z));
+            }
+            else
+            {
+                // Mode Pivot : utiliser la position de l'entité active
+                var e = scene!.GetById(Selection.ActiveEntityId);
+                if (e != null)
+                {
+                    e.GetWorldTRS(out var worldPos, out _, out _);
+                    Renderer.SetGizmoPosition(worldPos);
+                }
+                else
+                {
+                    Renderer.SetGizmoPosition(OpenTK.Mathematics.Vector3.Zero);
+                }
+            }
+        }
+        else if (Selection.ActiveEntityId != 0)
+        {
+            // Cas où on a un ActiveEntityId mais pas de Selected : ajouter à la sélection
+            Selection.Selected.Add(Selection.ActiveEntityId);
+            var e = scene!.GetById(Selection.ActiveEntityId);
+            if (e != null)
+            {
+                Renderer.SetGizmoVisible(true);
+                e.GetWorldTRS(out var worldPos, out _, out _);
+                Renderer.SetGizmoPosition(worldPos);
+            }
+            else
+            {
+                Renderer.SetGizmoVisible(false);
+            }
+        }
+        else
+        {
+            // Aucune sélection
+            Renderer.SetGizmoVisible(false);
+        }
+    }
+
+    // Editor/Panels/ViewportPanel.cs
+    public void Draw()
+    {
+        ImGui.SetNextWindowSize(new System.Numerics.Vector2(800, 600), ImGuiCond.FirstUseEver);
+        ImGui.Begin("Viewport", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        var io = ImGui.GetIO();
+
+        // UI element interaction variables (used throughout the method)
+        Engine.UI.UIElement? hoveredUIElement = null;
+        int hoveredUIHandleIndex = -1;
+
+        bool focusedDock = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows | ImGuiFocusedFlags.NoPopupHierarchy | ImGuiFocusedFlags.DockHierarchy);
+        bool hoveredWindow = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
+        bool allowHotkeys = (focusedDock || hoveredWindow) && !io.WantTextInput;
+
+        if (allowHotkeys)
+        {
+            if (ImGui.IsKeyPressed(ImGuiKey.F)) { Renderer?.FrameSelection(); }
+            if (ImGui.IsKeyPressed(ImGuiKey.W)) { _mode = ViewportRenderer.GizmoMode.Translate; Renderer?.SetMode(_mode); }
+            if (ImGui.IsKeyPressed(ImGuiKey.E)) { _mode = ViewportRenderer.GizmoMode.Rotate; Renderer?.SetMode(_mode); }
+            if (ImGui.IsKeyPressed(ImGuiKey.R)) { _mode = ViewportRenderer.GizmoMode.Scale; Renderer?.SetMode(_mode); }
+        }
+
+        // Snap actif si toggle OU Ctrl
+        bool snapActive = _snapToggle || ImGui.IsKeyDown(ImGuiKey.ModCtrl);
+        Renderer?.ConfigureSnap(snapActive, _snapMove, _snapAngle, _snapScale);
+
+        // Gizmo space
+        Renderer?.SetSpaceLocal(_localSpace);
+
+        // Taille disponible + resize FBO
+        var avail = ImGui.GetContentRegionAvail();
+        int w = Math.Max(1, (int)avail.X);
+        int h = Math.Max(1, (int)avail.Y);
+        Renderer?.Resize(w, h);
+
+        // Caméra
+        if (hoveredWindow && ImGui.IsMouseDown(ImGuiMouseButton.Right))
+        {
+            Renderer?.CancelCameraAnimation();
+            _targetYaw += io.MouseDelta.X * 0.01f;
+            _targetPitch -= io.MouseDelta.Y * 0.01f;
+        }
+
+        // Arrow keys avec accélération (système unifié comme Unity)
+        if (allowHotkeys && Renderer != null)
+        {
+            float dt = io.DeltaTime;
+
+            // Input horizontal (Left/Right)
+            if (ImGui.IsKeyDown(ImGuiKey.RightArrow))
+            {
+                Renderer.CancelCameraAnimation();
+                _arrowVelocityX += _arrowAcceleration * dt;
+            }
+            else if (ImGui.IsKeyDown(ImGuiKey.LeftArrow))
+            {
+                Renderer.CancelCameraAnimation();
+                _arrowVelocityX -= _arrowAcceleration * dt;
+            }
+            else
+            {
+                _arrowVelocityX *= _arrowDamping;
+            }
+
+            // Input vertical (Up/Down = Forward/Backward)
+            if (ImGui.IsKeyDown(ImGuiKey.UpArrow))
+            {
+                Renderer.CancelCameraAnimation();
+                _arrowVelocityY += _arrowAcceleration * dt;
+            }
+            else if (ImGui.IsKeyDown(ImGuiKey.DownArrow))
+            {
+                Renderer.CancelCameraAnimation();
+                _arrowVelocityY -= _arrowAcceleration * dt;
+            }
+            else
+            {
+                _arrowVelocityY *= _arrowDamping;
+            }
+
+            // Clamp velocities pour éviter l'explosion
+            _arrowVelocityX = Math.Clamp(_arrowVelocityX, -10f, 10f);
+            _arrowVelocityY = Math.Clamp(_arrowVelocityY, -10f, 10f);
+
+            // Appliquer les mouvements (uniforme et cohérent)
+            if (MathF.Abs(_arrowVelocityX) > 0.01f)
+            {
+                // Pan horizontal - vitesse proportionnelle à la distance (comme Unity)
+                float panSpeed = _arrowSpeed * _dist * 0.01f;
+                Renderer.Pan(-_arrowVelocityX * panSpeed, 0);
+            }
+
+            if (MathF.Abs(_arrowVelocityY) > 0.01f)
+            {
+                // Forward/Backward - modifier la distance de manière additive
+                float moveSpeed = _arrowSpeed * 0.1f;
+                _targetDist = Math.Max(0.01f, _targetDist - _arrowVelocityY * moveSpeed);
+            }
+        }
+
+        // Zoom infini (pas de limite)
+        if (hoveredWindow && io.MouseWheel != 0)
+        {
+            Renderer?.CancelCameraAnimation();
+            _targetDist *= MathF.Pow(0.9f, io.MouseWheel);
+            // Pas de limite min/max, comme Unity
+        }
+
+        // Smoothing sur tous les mouvements
+        _yaw = _yaw + (_targetYaw - _yaw) * _smoothFactor;
+        _pitch = _pitch + (_targetPitch - _pitch) * _smoothFactor;
+        _dist = _dist + (_targetDist - _dist) * _smoothFactor;
+
+        if (Renderer != null)
+        {
+            // S'assurer que le ViewportPanel utilise toujours sa caméra orbitale
+            Renderer.ResetToOrbitalCamera();
+            if (Renderer.IsCameraAnimating) _dist = Renderer.Distance;
+            Renderer.SetCamera(_yaw, _pitch, _dist);
+        }
+        if (hoveredWindow && ImGui.IsMouseDown(ImGuiMouseButton.Middle))
+        {
+            Renderer?.CancelCameraAnimation();
+            Renderer?.Pan(io.MouseDelta.X, io.MouseDelta.Y);
+        }
+
+        // SSAO settings are initialized once when the renderer is assigned. UI updates will now
+        // write back to renderer.SSAOSettings (see RenderingSettingsPanel) so changes persist.
+
+        // DISABLED: Legacy UI sync - causes GL state corruption
+        // This was calling UISystem.RebuildCanvases which creates RuntimeCanvas/RuntimeElements
+        // Will be replaced by direct component rendering in the refactor
+        // IMPORTANT: Keeping this code commented out until refactor is complete
+        /*
+        if (Renderer?.Scene != null)
+        {
+            try
+            {
+                Engine.Systems.UISystem.RebuildCanvases(Renderer.Scene);
+                var canvases = Engine.UI.EventSystem.Instance.Canvases;
+                foreach (var canvas in canvases)
+                {
+                    canvas.Size = new System.Numerics.Vector2(w, h);
+                }
+            }
+            catch { }
+        }
+        */
+
+        // Render + afficher la texture
+        // OPTIMIZATION: Skip rendering in Play Mode to avoid duplicate scene rendering
+        // (GamePanel handles rendering the play scene with its own ViewportRenderer)
+        if (!PlayMode.IsInPlayMode)
+        {
+            Renderer?.RenderScene();
+        }
+        
+        if (Renderer != null)
+        {
+            // Debug: try { Console.WriteLine($"[ViewportPanel] ViewportRenderer.Instance={Renderer.GetHashCode()}, ColorTexture={Renderer.ColorTexture}"); } catch { }
+            // try {
+            //     int? gameTex = Editor.Panels.GamePanel.CurrentColorTexture;
+            //     Console.WriteLine($"[ViewportPanel] Viewport.ColorTexture={Renderer.ColorTexture}, GamePanel.ColorTexture={gameTex}");
+            // } catch { }
+            ImGui.Image((IntPtr)Renderer.ColorTexture, avail, new System.Numerics.Vector2(0, 1), new System.Numerics.Vector2(1, 0));
+            
+            // Bordure rouge en Play Mode
+            if (PlayMode.IsInPlayMode)
+            {
+                var drawList = ImGui.GetWindowDrawList();
+                var borderMin = ImGui.GetItemRectMin();
+                var borderMax = ImGui.GetItemRectMax();
+                var borderColor = PlayMode.IsPaused ? 0xFF4080FF : 0xFF4040FF; // Orange en pause, rouge en play
+                drawList.AddRect(borderMin, borderMax, borderColor, 0.0f, ImDrawFlags.None, 3.0f);
+            }
+        }
+
+        // overlay will be drawn after selection handling where itemMin/itemMax are known
+
+        // ========= Sélection (après ImGui.Image) =========
+        System.Numerics.Vector2 itemMin = ImGui.GetItemRectMin();
+        System.Numerics.Vector2 itemMax = ImGui.GetItemRectMax();
+        float imgW = itemMax.X - itemMin.X;
+        float imgH = itemMax.Y - itemMin.Y;
+
+        System.Numerics.Vector2 mouse = ImGui.GetMousePos();
+        var mouseLocal = new System.Numerics.Vector2(mouse.X - itemMin.X, mouse.Y - itemMin.Y);
+        bool inImage = (mouseLocal.X >= 0 && mouseLocal.Y >= 0 && mouseLocal.X < imgW && mouseLocal.Y < imgH);
+
+        // Track right-click start for context menu detection
+        if (hoveredWindow && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
+        {
+            _rightClickStartPos = mouse;
+        }
+
+        bool ctrl = io.KeyCtrl;
+        bool shift = io.KeyShift;
+
+        // Convert display coordinates to internal render coordinates (scaled by render scale)
+        float renderScale = Renderer?.RenderScale ?? 1.0f;
+        int pxGL(float x) => (int)MathF.Round(x * renderScale);
+        int pyGL(float y) => Renderer != null ? (int)MathF.Round(Renderer.Height - y * renderScale) : (int)MathF.Round(imgH - y);
+
+        // Hover ID (rayon 6px pour confort) - THROTTLED FOR PERFORMANCE
+        // CRITICAL FIX: Only pick when ALT key held (expensive GL.ReadPixels)
+        // This gives massive FPS boost when mouse is in viewport but not actively picking
+        bool enablePicking = io.KeyAlt; // Hold ALT to enable hover picking
+
+        // Also do a one-time pick on mouse click to properly detect entities vs empty space
+        bool forcePickOnClick = ImGui.IsMouseClicked(ImGuiMouseButton.Left);
+
+        if (Renderer != null && inImage && (enablePicking || forcePickOnClick))
+        {
+            double elapsedMs = _pickThrottleTimer.Elapsed.TotalMilliseconds;
+
+            // FIXED LOGIC: Timer ALWAYS enforced (not bypassed by mouse movement)
+            // Only pick if enough time passed (hard cap at 30Hz, ~33ms minimum interval)
+            // OR if this is a click event (force pick for selection logic)
+            bool shouldPick = elapsedMs >= MIN_PICK_INTERVAL_MS || forcePickOnClick;
+
+            if (shouldPick)
+            {
+                // CRITICAL: Scale mouse coords to match internal render resolution
+                // mouseLocal is in display space, but picking buffer is at render scale
+                // (renderScale already defined above with pxGL/pyGL functions)
+                int mx = pxGL(mouseLocal.X);
+                int my = pyGL(mouseLocal.Y);
+                _hoverId = Renderer.PickIdAtFat(mx, my, 6);
+                Renderer.SetHover(_hoverId);
+
+                _lastPickMousePos = mouse;
+                _pickThrottleTimer.Restart();
+
+                // DEBUG: Count picks
+                _debugPickCount++;
+                if (_debugPickTimer.Elapsed.TotalSeconds >= 1.0)
+                {
+                    Console.WriteLine($"[PERF] Picks/sec: {_debugPickCount} (should be ~30 max, not {(int)(1.0/_debugPickTimer.Elapsed.TotalSeconds * _debugPickCount)})");
+                    _debugPickCount = 0;
+                    _debugPickTimer.Restart();
+                }
+            }
+            else
+            {
+                // Reuse last hover ID - don't do expensive GPU readback
+                Renderer.SetHover(_hoverId);
+            }
+        }
+        else if (!forcePickOnClick) { _hoverId = 0; Renderer?.SetHover(0); }
+
+        // Clic gauche - seulement en mode édition
+        if (hoveredWindow && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !PlayMode.IsInPlayMode)
+        {
+            if (inImage)
+            {
+                if (Renderer != null && Renderer.IsGizmoId(_hoverId))
+                {
+                    _isGizmoDragging = true;
+                    switch (_mode)
+                    {
+                        case ViewportRenderer.GizmoMode.Translate: Renderer.BeginDragTranslate(_hoverId, pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+                        case ViewportRenderer.GizmoMode.Rotate: Renderer.BeginDragRotate(_hoverId, pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+                        case ViewportRenderer.GizmoMode.Scale: Renderer.BeginDragScale(_hoverId, pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+                    }
+                }
+                else if (_hoverId != 0 && Renderer != null && !Renderer.IsGizmoId(_hoverId) && Renderer.IsEntityId(_hoverId))
+                {
+                    // ✅ Entity selection logic - FIX: Ensure ActiveEntityId is properly managed
+                    if (ctrl)
+                    {
+                        Selection.Toggle(_hoverId);
+                        // Ensure we have an active ID for gizmo display
+                        if (Selection.Selected.Count > 0 && Selection.ActiveEntityId == 0)
+                            Selection.ActiveEntityId = Selection.Selected.First();
+                    }
+                    else if (shift)
+                    {
+                        Selection.AddMany(new uint[] { _hoverId });
+                        // Set the clicked entity as active when shift-clicking
+                        if (Selection.Selected.Contains(_hoverId))
+                            Selection.ActiveEntityId = _hoverId;
+                    }
+                    else
+                    {
+                        Selection.SetSingle(_hoverId);
+                    }
+                    UpdateGizmoPivot();
+                }
+                else if (_hoverId == 0 || (Renderer != null && !Renderer.IsEntityId(_hoverId))) // ✅ Vide ou pas une entité (grille OK)
+                {
+                    // démarrer rectangle (sauf si on commence un drag UI)
+                    if (hoveredUIElement == null || hoveredUIHandleIndex < 0)
+                    {
+                        _isSelecting = true;
+                        _selStart = _selEnd = mouseLocal;
+                    }
+                }
+            }
+            else
+            {
+                if (!ctrl && !shift) { Selection.Clear(); UpdateGizmoPivot(); }
+            }
+        }
+
+        // Right-click context menu - seulement en mode édition
+        // Only show menu if right-click was released without dragging (camera orbit)
+        if (hoveredWindow && ImGui.IsMouseReleased(ImGuiMouseButton.Right) && !PlayMode.IsInPlayMode)
+        {
+            if (inImage)
+            {
+                // Check if this was a drag (camera orbit) or a simple click
+                var dragDistance = (mouse - _rightClickStartPos).Length();
+                const float minDragThreshold = 3.0f; // pixels
+
+                if (dragDistance < minDragThreshold)
+                {
+                    // Simple click - show context menu
+                    _showContextMenu = true;
+                    _contextMenuPos = mouse;
+                    _contextMenuMouseLocal = mouseLocal;
+                    _contextMenuPixelX = pxGL(mouseLocal.X);
+                    _contextMenuPixelY = pyGL(mouseLocal.Y);
+                }
+            }
+        }
+
+        // Drag gizmo - seulement en mode édition
+        if (_isGizmoDragging && ImGui.IsMouseDown(ImGuiMouseButton.Left) && Renderer != null && !PlayMode.IsInPlayMode)
+        {
+            switch (_mode)
+            {
+                case ViewportRenderer.GizmoMode.Translate: Renderer.UpdateDragTranslate(pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+                case ViewportRenderer.GizmoMode.Rotate: Renderer.UpdateDragRotate(pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+                case ViewportRenderer.GizmoMode.Scale: Renderer.UpdateDragScale(pxGL(mouseLocal.X), pyGL(mouseLocal.Y)); break;
+            }
+        }
+        if (_isGizmoDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left) && Renderer != null && !PlayMode.IsInPlayMode)
+        {
+            Renderer.EndDrag(); _isGizmoDragging = false;
+        }
+
+        // Rectangle de sélection - seulement en mode édition (désactivé pendant drag UI)
+        if (!_isGizmoDragging && !_isUIHandleDragging && _isSelecting && ImGui.IsMouseDown(ImGuiMouseButton.Left) && !PlayMode.IsInPlayMode)
+        {
+            _selEnd = mouseLocal;
+            var dl = ImGui.GetForegroundDrawList();
+            var a = new System.Numerics.Vector2(Math.Min(_selStart.X, _selEnd.X), Math.Min(_selStart.Y, _selEnd.Y));
+            var b = new System.Numerics.Vector2(Math.Max(_selStart.X, _selEnd.X), Math.Max(_selStart.Y, _selEnd.Y));
+            var p0 = itemMin + a; var p1 = itemMin + b;
+            dl.AddRect(p0, p1, 0x66FFFFFF);
+            dl.AddRectFilled(p0, p1, 0x2266AAFF);
+        }
+        if (_isSelecting && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            _isSelecting = false;
+            if (Renderer != null)
+            {
+                int x0 = pxGL(_selStart.X), y0 = pyGL(_selStart.Y);
+                int x1 = pxGL(_selEnd.X), y1 = pyGL(_selEnd.Y);
+                var allIds = Renderer.PickIdsInRect(x0, y0, x1, y1);
+                if (allIds != null && allIds.Count > 0)
+                {
+                    // Filtrer pour ne garder que les vrais IDs d'entités
+                    var entityIds = allIds.Where(id => Renderer.IsEntityId(id)).ToList();
+                    
+                    if (entityIds.Count > 0)
+                    {
+                        if (ctrl) Selection.AddMany(entityIds);
+                        else if (shift) { foreach (var id in entityIds) Selection.Toggle(id); }
+                        else Selection.ReplaceMany(entityIds);
+                    }
+                    UpdateGizmoPivot();
+                }
+                else if (!ctrl && !shift) { Selection.Clear(); UpdateGizmoPivot(); }
+            }
+        }
+
+        // Clic vide => clear (seulement si pas de drag en cours)
+        if (hoveredWindow && ImGui.IsMouseReleased(ImGuiMouseButton.Left) && (!inImage || _hoverId == 0) && !ctrl && !shift && !_isGizmoDragging && !_isSelecting && !ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+        {
+            Selection.Clear(); UpdateGizmoPivot(); Renderer?.EndDrag();
+        }
+
+        // Perf overlay (top-left of the viewport image)
+        if (Renderer != null)
+        {
+            // Use actual render time from ViewportRenderer instead of io.DeltaTime
+            // for accurate FPS measurement (io.DeltaTime includes all editor overhead)
+            float msNow = Renderer.LastFrameCpuMs;
+            if (!_overlayInitialized)
+            {
+                _overlaySmoothedMs = msNow;
+                _overlayInitialized = true;
+            }
+            _overlaySmoothedMs = _overlaySmoothedMs * 0.92f + msNow * 0.08f;
+
+            // Place the overlay anchored to the bottom-left of the rendered image
+            // (use itemMin/itemMax which are the image rect in window coordinates).
+            var margin = 8.0f;
+            var desiredPos = new System.Numerics.Vector2(itemMin.X + margin, itemMax.Y - margin);
+
+            // Clamp the overlay position to remain inside the image rect (so it doesn't
+            // float across the entire editor window when dock sizes change).
+            var minOverlayPos = itemMin + new System.Numerics.Vector2(margin, margin);
+            var maxOverlayPos = itemMax - new System.Numerics.Vector2(margin, margin);
+
+            var clampedX = desiredPos.X < minOverlayPos.X ? minOverlayPos.X : (desiredPos.X > maxOverlayPos.X ? maxOverlayPos.X : desiredPos.X);
+            var clampedY = desiredPos.Y < minOverlayPos.Y ? minOverlayPos.Y : (desiredPos.Y > maxOverlayPos.Y ? maxOverlayPos.Y : desiredPos.Y);
+            var overlayPos = new System.Numerics.Vector2(clampedX, clampedY);
+
+            // Draw shared perf overlay only when this window is focused and the renderer exists.
+            if (ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) && Renderer != null)
+            {
+                Editor.Utils.PerfOverlay.Draw(itemMin, itemMax, _overlaySmoothedMs, Renderer.DrawCallsThisFrame, Renderer.TrianglesThisFrame, Renderer.RenderedObjectsThisFrame, ref _showPerfOverlay);
+            }
+        }
+
+        // Draw UI RectTransform overlays (screen-space) — toggleable
+        // Only for ScreenSpaceOverlay canvases (not WorldSpace)
+        try
+        {
+            bool showUIRects = true; // Could be bound to a setting/UI later
+            if (showUIRects && ImGui.IsWindowHovered())
+            {
+                var dl = ImGui.GetForegroundDrawList();
+                var canvases = Engine.UI.EventSystem.Instance.Canvases;
+                foreach (var c in canvases)
+                {
+                    // Skip WorldSpace canvases - they're rendered in 3D
+                    if (c.RenderMode == Engine.UI.RenderMode.WorldSpace) continue;
+
+                    var canvasSize = c.Size;
+
+                    // recursive draw with improved visuals
+                    void DrawElement(Engine.UI.UIElement el, int depth = 0)
+                    {
+                        var rect = el.Rect.GetLocalRect(canvasSize);
+                        var p0 = itemMin + new System.Numerics.Vector2(rect.Left, rect.Top);
+                        var p1 = itemMin + new System.Numerics.Vector2(rect.Right, rect.Bottom);
+
+                        // Determine color based on element type
+                        uint borderColor = 0x88FFFFFF; // Default white
+                        uint fillColor = 0x11FFFFFF;   // Default transparent white
+                        string typeIcon = "";
+
+                        // Check element type and assign colors
+                        if (el is Engine.UI.UIText)
+                        {
+                            borderColor = 0xFF88FF88; // Green for text
+                            fillColor = 0x1188FF88;
+                            typeIcon = "T";
+                        }
+                        else if (el is Engine.UI.UIImage)
+                        {
+                            borderColor = 0xFF88AAFF; // Blue for images
+                            fillColor = 0x1188AAFF;
+                            typeIcon = "I";
+                        }
+
+                        // Make borders more visible with depth (nested elements slightly dimmer)
+                        float depthFade = 1.0f - (depth * 0.1f);
+                        depthFade = Math.Max(depthFade, 0.5f);
+
+                        // Check if element is being dragged
+                        bool isDragging = _isUIHandleDragging && _draggedUIElement == el;
+
+                        // Selection highlighting
+                        bool isHovered = hoveredUIElement == el && !isDragging;
+                        if (isHovered || isDragging)
+                        {
+                            borderColor = isDragging ? 0xFFFFAA00u : 0xFFFFFF00u; // Orange when dragging, yellow on hover
+                            fillColor = isDragging ? 0x44FFAA00u : 0x33FFFF00u;
+                        }
+
+                        // Draw background fill
+                        dl.AddRectFilled(p0, p1, fillColor);
+
+                        // Draw border (thicker for better visibility)
+                        dl.AddRect(p0, p1, borderColor, 0.0f, ImDrawFlags.None, isDragging ? 2.5f : 1.5f);
+
+                        // Draw corner handles (small squares at corners)
+                        float handleSize = 8f;
+                        var corners = new System.Numerics.Vector2[] {
+                            p0,
+                            new System.Numerics.Vector2(p1.X, p0.Y),
+                            p1,
+                            new System.Numerics.Vector2(p0.X, p1.Y)
+                        };
+
+                        // Check handle hover for interaction
+                        for (int i = 0; i < corners.Length; i++)
+                        {
+                            var corner = corners[i];
+                            var handleMin = corner - new System.Numerics.Vector2(handleSize / 2, handleSize / 2);
+                            var handleMax = corner + new System.Numerics.Vector2(handleSize / 2, handleSize / 2);
+
+                            // Check if mouse is over this handle
+                            bool handleHovered = mouse.X >= handleMin.X && mouse.X <= handleMax.X &&
+                                                mouse.Y >= handleMin.Y && mouse.Y <= handleMax.Y;
+
+                            if (handleHovered && !_isUIHandleDragging)
+                            {
+                                hoveredUIElement = el;
+                                hoveredUIHandleIndex = i;
+                            }
+
+                            // Draw handle with hover/drag highlighting
+                            uint handleColor = borderColor;
+                            if ((isDragging && _draggedHandleIndex == i) || (handleHovered && !_isUIHandleDragging))
+                            {
+                                handleColor = 0xFFFFFF00; // Bright yellow for active handle
+                                handleSize = 10f; // Slightly larger when hovered/dragged
+                                handleMin = corner - new System.Numerics.Vector2(handleSize / 2, handleSize / 2);
+                                handleMax = corner + new System.Numerics.Vector2(handleSize / 2, handleSize / 2);
+                            }
+
+                            dl.AddRectFilled(handleMin, handleMax, handleColor);
+                            dl.AddRect(handleMin, handleMax, 0xFFFFFFFF, 0.0f, ImDrawFlags.None, 1.0f);
+                        }
+
+                        // Draw element info (type icon + name)
+                        var labelPos = p0 + new System.Numerics.Vector2(4, 4);
+                        string label = $"[{typeIcon}] {el.Name ?? "Unnamed"}";
+
+                        // Draw label background for readability
+                        var textSize = ImGui.CalcTextSize(label);
+                        var labelBgMin = labelPos - new System.Numerics.Vector2(2, 2);
+                        var labelBgMax = labelPos + textSize + new System.Numerics.Vector2(2, 2);
+                        dl.AddRectFilled(labelBgMin, labelBgMax, 0xCC000000); // Semi-transparent black
+                        dl.AddText(labelPos, 0xFFFFFFFF, label);
+
+                        // Draw flexbox indicator if using flex layout
+                        if (el.UseFlexLayout)
+                        {
+                            var flexLabelPos = new System.Numerics.Vector2(p0.X + 4, p1.Y - 20);
+                            string flexLabel = $"Flex: {el.FlexLayout.Direction}";
+                            var flexTextSize = ImGui.CalcTextSize(flexLabel);
+                            var flexBgMin = flexLabelPos - new System.Numerics.Vector2(2, 2);
+                            var flexBgMax = flexLabelPos + flexTextSize + new System.Numerics.Vector2(2, 2);
+                            dl.AddRectFilled(flexBgMin, flexBgMax, 0xCC000066); // Semi-transparent blue
+                            dl.AddText(flexLabelPos, 0xFF88AAFF, flexLabel);
+                        }
+
+                        // Draw anchor visualization (small lines showing anchor points)
+                        var anchorMin = el.Rect.AnchorMin;
+                        var anchorMax = el.Rect.AnchorMax;
+                        var parentSize = canvasSize; // Simplified - should be parent's size
+
+                        var anchorMinPos = itemMin + new System.Numerics.Vector2(
+                            anchorMin.X * parentSize.X,
+                            anchorMin.Y * parentSize.Y
+                        );
+                        var anchorMaxPos = itemMin + new System.Numerics.Vector2(
+                            anchorMax.X * parentSize.X,
+                            anchorMax.Y * parentSize.Y
+                        );
+
+                        // Draw anchor lines (dashed)
+                        uint anchorColor = 0x88FFFF00; // Yellow
+                        dl.AddLine(anchorMinPos, p0, anchorColor, 1.0f);
+                        if (anchorMin.X != anchorMax.X || anchorMin.Y != anchorMax.Y)
+                        {
+                            dl.AddLine(anchorMaxPos, p1, anchorColor, 1.0f);
+                        }
+
+                        // Recursively draw children
+                        if (el.Children != null)
+                            foreach (var ch in el.Children) DrawElement(ch, depth + 1);
+                    }
+
+                    if (c.Roots != null)
+                        foreach (var r in c.Roots) DrawElement(r, 0);
+                }
+            }
+        }
+        catch { /* keep editor robust if EventSystem API changes */ }
+
+        // Handle UI element handle dragging
+        if (hoveredWindow && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && hoveredUIElement != null && hoveredUIHandleIndex >= 0 && !PlayMode.IsInPlayMode)
+        {
+            _isUIHandleDragging = true;
+            _draggedUIElement = hoveredUIElement;
+            _draggedHandleIndex = hoveredUIHandleIndex;
+            _uiDragStart = mouseLocal;
+
+            // Store original rect for dragging
+            _uiDragOriginalRect = new Engine.UI.RectTransform
+            {
+                AnchorMin = hoveredUIElement.Rect.AnchorMin,
+                AnchorMax = hoveredUIElement.Rect.AnchorMax,
+                AnchoredPosition = hoveredUIElement.Rect.AnchoredPosition,
+                SizeDelta = hoveredUIElement.Rect.SizeDelta,
+                Pivot = hoveredUIElement.Rect.Pivot
+            };
+        }
+
+        // Update UI handle drag
+        if (_isUIHandleDragging && ImGui.IsMouseDown(ImGuiMouseButton.Left) && _draggedUIElement != null && _uiDragOriginalRect != null)
+        {
+            var delta = mouseLocal - _uiDragStart;
+
+            // Get canvas size for calculations
+            var canvas = Engine.UI.EventSystem.Instance.Canvases.FirstOrDefault();
+            if (canvas != null)
+            {
+                var canvasSize = canvas.Size;
+                var rect = _draggedUIElement.Rect;
+
+                // Apply delta based on which handle is being dragged
+                // 0=TL, 1=TR, 2=BR, 3=BL
+                switch (_draggedHandleIndex)
+                {
+                    case 0: // Top-Left
+                        rect.SizeDelta = _uiDragOriginalRect.SizeDelta - new System.Numerics.Vector2(delta.X, delta.Y);
+                        rect.AnchoredPosition = _uiDragOriginalRect.AnchoredPosition + new System.Numerics.Vector2(delta.X / 2, delta.Y / 2);
+                        break;
+                    case 1: // Top-Right
+                        rect.SizeDelta = _uiDragOriginalRect.SizeDelta + new System.Numerics.Vector2(delta.X, -delta.Y);
+                        rect.AnchoredPosition = _uiDragOriginalRect.AnchoredPosition + new System.Numerics.Vector2(delta.X / 2, -delta.Y / 2);
+                        break;
+                    case 2: // Bottom-Right
+                        rect.SizeDelta = _uiDragOriginalRect.SizeDelta + new System.Numerics.Vector2(delta.X, delta.Y);
+                        rect.AnchoredPosition = _uiDragOriginalRect.AnchoredPosition + new System.Numerics.Vector2(delta.X / 2, delta.Y / 2);
+                        break;
+                    case 3: // Bottom-Left
+                        rect.SizeDelta = _uiDragOriginalRect.SizeDelta - new System.Numerics.Vector2(delta.X, -delta.Y);
+                        rect.AnchoredPosition = _uiDragOriginalRect.AnchoredPosition + new System.Numerics.Vector2(-delta.X / 2, delta.Y / 2);
+                        break;
+                }
+
+                // Clamp minimum size
+                rect.SizeDelta = new System.Numerics.Vector2(
+                    Math.Max(10f, rect.SizeDelta.X),
+                    Math.Max(10f, rect.SizeDelta.Y)
+                );
+            }
+        }
+
+        // End UI handle drag
+        if (_isUIHandleDragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        {
+            _isUIHandleDragging = false;
+            _draggedUIElement = null;
+            _draggedHandleIndex = -1;
+            _uiDragOriginalRect = null;
+            // TODO: Add undo/redo support for UI element resizing
+        }
+
+        // Store focus state and window dimensions for overlays (must check before End())
+        bool viewportWasFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
+        bool viewportWasHovered = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
+        var viewportPos = ImGui.GetWindowPos();
+        var viewportSize = ImGui.GetWindowSize();
+
+        // Context menu popup
+        if (_showContextMenu)
+        {
+            ImGui.OpenPopup("ViewportContextMenu");
+            _showContextMenu = false; // Only open once
+        }
+
+        ImGui.SetNextWindowPos(_contextMenuPos);
+        if (ImGui.BeginPopup("ViewportContextMenu"))
+        {
+            bool hasSelection = Selection.Selected.Count > 0 || Selection.ActiveEntityId != 0;
+
+            // Move selection to cursor position
+            if (hasSelection && ImGui.MenuItem("Move Selection to Cursor"))
+            {
+                if (Renderer != null)
+                {
+                    var worldPos = Renderer.PickWorldPositionAt(_contextMenuPixelX, _contextMenuPixelY);
+                    if (worldPos.HasValue)
+                    {
+                        MoveSelectionToPosition(worldPos.Value);
+                    }
+                }
+                ImGui.CloseCurrentPopup();
+            }
+
+            // Snap selection to surface
+            if (hasSelection && ImGui.MenuItem("Snap Selection to Surface"))
+            {
+                if (Renderer != null)
+                {
+                    var worldPos = Renderer.PickWorldPositionAt(_contextMenuPixelX, _contextMenuPixelY);
+                    if (worldPos.HasValue)
+                    {
+                        MoveSelectionToPosition(worldPos.Value);
+                    }
+                }
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.Separator();
+
+            // Create entity at cursor
+            if (ImGui.MenuItem("Create Empty at Cursor"))
+            {
+                if (Renderer != null)
+                {
+                    var worldPos = Renderer.PickWorldPositionAt(_contextMenuPixelX, _contextMenuPixelY);
+                    if (worldPos.HasValue)
+                    {
+                        CreateEntityAtPosition(worldPos.Value);
+                    }
+                    else
+                    {
+                        // Fallback: create at camera target or origin
+                        CreateEntityAtPosition(OpenTK.Mathematics.Vector3.Zero);
+                    }
+                }
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.Separator();
+
+            // Frame selection
+            if (hasSelection && ImGui.MenuItem("Frame Selection", "F"))
+            {
+                Renderer?.FrameSelection();
+                ImGui.CloseCurrentPopup();
+            }
+
+            ImGui.EndPopup();
+        }
+
+        ImGui.End(); // End Viewport panel
+
+        // === Draw overlays AFTER ImGui.End() so they're not clipped to the viewport window ===
+        // Mini HUD (snap / space / pivot)
+        // Use small hysteresis to avoid very fast flicker when focus briefly toggles
+        if (viewportWasFocused || viewportWasHovered)
+        {
+            _viewportHudLastVisibleAt = ImGui.GetTime();
+        }
+
+        bool shouldShowViewportHud = viewportWasFocused || (ImGui.GetTime() - _viewportHudLastVisibleAt) < VIEWPORT_HUD_HOLD_SECONDS;
+
+        // Only show when viewport is focused or within the small debounce window
+        if (shouldShowViewportHud)
+        {
+            // --- Themed, draggable HUD overlay anchored to the viewport (persisted) ---
+            var savedPos = Editor.State.EditorSettings.ViewportHudPosition;
+            System.Numerics.Vector2 hudPos;
+            if (savedPos.X >= 0 && savedPos.Y >= 0)
+            {
+                hudPos = new System.Numerics.Vector2(savedPos.X, savedPos.Y);
+            }
+            else
+            {
+                // Default to top-left of the rendered image (small margin)
+                hudPos = itemMin + new System.Numerics.Vector2(10, 10);
+            }
+
+            // Clamp hudPos inside the image rect (prevent floating across editor)
+            hudPos.X = hudPos.X < itemMin.X + 8 ? itemMin.X + 8 : (hudPos.X > itemMax.X - 8 ? itemMax.X - 8 : hudPos.X);
+            hudPos.Y = hudPos.Y < itemMin.Y + 8 ? itemMin.Y + 8 : (hudPos.Y > itemMax.Y - 8 ? itemMax.Y - 8 : hudPos.Y);
+
+            // Apply theme colors
+            var winBg = Editor.Themes.ThemeManager.CurrentTheme.ChildBackground;
+            var border = Editor.Themes.ThemeManager.CurrentTheme.Border;
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, winBg);
+            ImGui.PushStyleColor(ImGuiCol.Border, border);
+            ImGui.SetNextWindowPos(hudPos, ImGuiCond.Always);
+            ImGui.SetNextWindowBgAlpha(winBg.W);
+            if (ImGui.Begin("##ViewportHUD", ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking))
+            {
+                // Allow dragging the HUD: if hovered and left mouse dragging, update saved position
+                if (ImGui.IsWindowHovered() && ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+                {
+                    var drag = ImGui.GetIO().MouseDelta;
+                    hudPos += drag;
+                    Editor.State.EditorSettings.ViewportHudPosition = (hudPos.X, hudPos.Y);
+                    ImGui.SetWindowPos(hudPos);
+                }
+            // Gizmo mode toolbar avec icônes et highlight animé
+            ImGui.Text("Mode:");
+            ImGui.SameLine();
+            float t = (float)(ImGui.GetTime() * 2.0); // vitesse de l'animation
+            float pulse = 0.5f + 0.5f * MathF.Sin(t);
+            var highlight = new System.Numerics.Vector4(1f, 0.8f, 0.2f, 0.35f + 0.25f * pulse);
+
+            // Configuration des boutons de gizmo pour éviter la duplication
+            var gizmos = new[]
+            {
+                (icon: "move", tooltip: "Move Tool (W)", mode: ViewportRenderer.GizmoMode.Translate),
+                (icon: "rotate", tooltip: "Rotate Tool (E)", mode: ViewportRenderer.GizmoMode.Rotate),
+                (icon: "scale", tooltip: "Scale Tool (R)", mode: ViewportRenderer.GizmoMode.Scale)
+            };
+
+            for (int i = 0; i < gizmos.Length; i++)
+            {
+                var (icon, tooltip, mode) = gizmos[i];
+                bool isCurrent = (_mode == mode);
+                
+                if (isCurrent) ImGui.PushStyleColor(ImGuiCol.Button, highlight);
+                
+                string fullTooltip = isCurrent ? $"{tooltip} - Active" : tooltip;
+                if (IconManager.IconButton(icon, fullTooltip))
+                {
+                    _mode = mode;
+                    Renderer?.SetMode(_mode);
+                }
+                
+                if (isCurrent) ImGui.PopStyleColor();
+                if (i < gizmos.Length - 1) ImGui.SameLine();
+            }
+
+            ImGui.Separator();
+            bool grid = Renderer != null ? Renderer.GridVisible : Editor.State.EditorSettings.ShowGrid;
+            if (ImGui.Checkbox("Show Grid", ref grid))
+            {
+                if (Renderer != null) Renderer.GridVisible = grid;
+                // persist choice even if renderer is not yet available
+                Editor.State.EditorSettings.ShowGrid = grid;
+            }
+            ImGui.SameLine();
+            ImGui.Text("Space:"); ImGui.SameLine();
+            bool worldSelected = !_localSpace;
+            if (ImGui.RadioButton("World", worldSelected)) _localSpace = false;
+            ImGui.SameLine();
+            bool localSelected = _localSpace;
+            if (ImGui.RadioButton("Local", localSelected)) _localSpace = true;
+
+            ImGui.Separator();
+            ImGui.Text("Pivot:"); ImGui.SameLine();
+            bool center = _pivotMode == PivotMode.Center;
+            if (ImGui.RadioButton("Center", center)) { _pivotMode = PivotMode.Center; UpdateGizmoPivot(); }
+            ImGui.SameLine();
+            bool pivot = _pivotMode == PivotMode.Pivot;
+            if (ImGui.RadioButton("Pivot", pivot)) { _pivotMode = PivotMode.Pivot; UpdateGizmoPivot(); }
+
+            ImGui.Separator();
+            ImGui.Text("Projection:");
+            int projMode = (int)_projectionMode;
+            if (ImGui.Combo("##Projection", ref projMode, "Perspective\0Orthographic\02D\0"))
+            {
+                _projectionMode = (ProjectionMode)projMode;
+                Renderer?.SetProjectionMode((int)_projectionMode, _orthoSize);
+            }
+
+            if (_projectionMode != ProjectionMode.Perspective)
+            {
+                ImGui.PushItemWidth(120);
+                if (ImGui.DragFloat("Ortho Size", ref _orthoSize, 0.1f, 0.1f, 1000f, "%.2f"))
+                {
+                    Renderer?.SetProjectionMode((int)_projectionMode, _orthoSize);
+                }
+                ImGui.PopItemWidth();
+            }
+
+            ImGui.Separator();
+            ImGui.Checkbox("Snap", ref _snapToggle); ImGui.SameLine();
+            ImGui.TextDisabled("(Ctrl)");
+            ImGui.PushItemWidth(120);
+            ImGui.DragFloat("Unit", ref _snapMove, 0.01f, 0.001f, 100f, "%.3f");
+            ImGui.DragFloat("Angle", ref _snapAngle, 1f, 1f, 90f, "%.0f°");
+            ImGui.DragFloat("Scale", ref _snapScale, 0.01f, 0.001f, 10f, "%.3f");
+            ImGui.PopItemWidth();
+            }
+            ImGui.End();
+            ImGui.PopStyleColor(2); // Pop WindowBg and Border colors
+        } // End of if (viewportWasFocused) for HUD
+
+    // Camera Settings Overlay (en haut à droite)
+    // Only show when Viewport panel is focused (not when Game panel is focused)
+    if (shouldShowViewportHud)
+    {
+            float cameraSettingsWidth = 250f;
+
+            // Apply theme colors (matching GamePanel and ViewportHUD)
+            var winBg = Editor.Themes.ThemeManager.CurrentTheme.ChildBackground;
+            var border = Editor.Themes.ThemeManager.CurrentTheme.Border;
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, winBg);
+            ImGui.PushStyleColor(ImGuiCol.Border, border);
+
+            // Position camera settings relative to the image top-right and clamp inside
+            var camPos = new System.Numerics.Vector2(itemMax.X - cameraSettingsWidth - 10, itemMin.Y + 10);
+            camPos.X = camPos.X < itemMin.X + 8 ? itemMin.X + 8 : (camPos.X > itemMax.X - 8 ? itemMax.X - 8 : camPos.X);
+            camPos.Y = camPos.Y < itemMin.Y + 8 ? itemMin.Y + 8 : (camPos.Y > itemMax.Y - 8 ? itemMax.Y - 8 : camPos.Y);
+            ImGui.SetNextWindowPos(camPos, ImGuiCond.Always);
+            ImGui.SetNextWindowBgAlpha(winBg.W);
+            if (ImGui.Begin("##CameraSettings", ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking))
+            {
+            if (ImGui.Button(_showCameraSettings ? "Camera Settings ▼" : "Camera Settings ▶"))
+            {
+                _showCameraSettings = !_showCameraSettings;
+            }
+
+            if (_showCameraSettings)
+            {
+                ImGui.Separator();
+                ImGui.PushItemWidth(150);
+
+                ImGui.Text("Movement:");
+                ImGui.DragFloat("Arrow Speed", ref _arrowSpeed, 0.1f, 0.1f, 10.0f, "%.1f");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Vitesse globale des mouvements arrow keys");
+
+                ImGui.Separator();
+                ImGui.Text("Physics:");
+                ImGui.DragFloat("Acceleration", ref _arrowAcceleration, 0.1f, 0.5f, 20.0f, "%.1f");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Accélération des mouvements");
+
+                ImGui.DragFloat("Damping", ref _arrowDamping, 0.01f, 0.5f, 0.99f, "%.2f");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Freinage (plus proche de 1 = plus lent)");
+
+                ImGui.Separator();
+                ImGui.Text("Smoothing:");
+                ImGui.DragFloat("Smooth Factor", ref _smoothFactor, 0.01f, 0.05f, 1.0f, "%.2f");
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Lissage de la caméra (plus bas = plus smooth)");
+
+                ImGui.PopItemWidth();
+            }
+            }
+            ImGui.End();
+            ImGui.PopStyleColor(2); // Pop WindowBg and Border colors
+        } // End of if (viewportWasFocused)
+    }
+
+    // Move selected entities to a world position
+    private void MoveSelectionToPosition(OpenTK.Mathematics.Vector3 worldPos)
+    {
+        if (Renderer?.Scene == null) return;
+
+        var scene = Renderer.Scene;
+        var selectedIds = Selection.Selected.ToList();
+        if (selectedIds.Count == 0 && Selection.ActiveEntityId != 0)
+            selectedIds.Add(Selection.ActiveEntityId);
+
+        if (selectedIds.Count == 0) return;
+
+        // Calculate center of selection
+        var center = Selection.ComputeCenter(scene);
+        var offset = new OpenTK.Mathematics.Vector3(worldPos.X - center.X, worldPos.Y - center.Y, worldPos.Z - center.Z);
+
+        // Create undo/redo action
+        var composite = new CompositeAction("Move Selection to Cursor");
+        foreach (var id in selectedIds)
+        {
+            var entity = scene.GetById(id);
+            if (entity == null) continue;
+
+            var oldXform = new State.Xform
+            {
+                Pos = entity.Transform.Position,
+                Rot = entity.Transform.Rotation,
+                Scl = entity.Transform.Scale
+            };
+
+            var newPos = entity.Transform.Position + offset;
+            var newXform = new State.Xform
+            {
+                Pos = newPos,
+                Rot = entity.Transform.Rotation,
+                Scl = entity.Transform.Scale
+            };
+
+            composite.Add(new State.TransformAction("Move", id, oldXform, newXform));
+
+            entity.Transform.Position = newPos;
+        }
+
+        if (composite.Count > 0)
+        {
+            UndoRedo.Push(composite);
+        }
+
+        UpdateGizmoPivot();
+    }
+
+    // Create a new entity at a world position
+    private void CreateEntityAtPosition(OpenTK.Mathematics.Vector3 worldPos)
+    {
+        if (Renderer?.Scene == null) return;
+
+        var scene = Renderer.Scene;
+        var newEntity = new Engine.Scene.Entity();
+        newEntity.Name = "New Entity";
+        newEntity.Id = scene.GetNextEntityId();
+        newEntity.Transform.Position = worldPos;
+
+        scene.Entities.Add(newEntity);
+        Selection.SetSingle(newEntity.Id);
+        UpdateGizmoPivot();
+
+        // TODO: Add undo/redo support for entity creation
+    }
+
+    // Event handlers for decoupled editing logic
+    private void OnGizmoDragEnded(CompositeAction action)
+    {
+        UndoRedo.Push(action);
+    }
+
+    private void OnEditingTouched()
+    {
+        UndoRedo.TouchEdit();
+    }
+}

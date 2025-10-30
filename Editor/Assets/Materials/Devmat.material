@@ -1,0 +1,27 @@
+{
+  "Guid": "580cebd4-edb3-43d2-9a57-fa507b6fab47",
+  "Name": "Devmat",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    0.19337016,
+    0.19337016,
+    0.19337016,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

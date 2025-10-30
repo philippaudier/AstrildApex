@@ -1,0 +1,169 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "guid": "0fe36daf-08db-4542-9139-b9587a7c933b",
+      "name": "Cube A",
+      "parent": null,
+      "components": [
+        {
+          "type": "Transform",
+          "data": {
+            "position": [
+              -1.5,
+              0.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "Render",
+          "data": {
+            "mesh": "Cube",
+            "color": [
+              0.85,
+              0.55,
+              0.55,
+              1
+            ],
+            "materialGuid": "b517cbad-fc0c-41e8-906c-0ccc47e0e2db"
+          }
+        }
+      ]
+    },
+    {
+      "guid": "77f6814e-1145-4f1d-9e2c-db1895a8f248",
+      "name": "Cube B",
+      "parent": null,
+      "components": [
+        {
+          "type": "Transform",
+          "data": {
+            "position": [
+              0,
+              0.5,
+              1.5
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "Render",
+          "data": {
+            "mesh": "Cube",
+            "color": [
+              0.55,
+              0.85,
+              0.6,
+              1
+            ],
+            "materialGuid": "a7d2c065-5149-4ef0-94bf-b1ce87930b8d"
+          }
+        }
+      ]
+    },
+    {
+      "guid": "c3a13c6d-5964-4671-925d-ccbd337c657f",
+      "name": "Cube C",
+      "parent": null,
+      "components": [
+        {
+          "type": "Transform",
+          "data": {
+            "position": [
+              1.5,
+              0.5,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "Render",
+          "data": {
+            "mesh": "Cube",
+            "color": [
+              0.5,
+              0.7,
+              1,
+              1
+            ],
+            "materialGuid": "3e681ad0-5916-43be-bf8b-debb086518a5"
+          }
+        }
+      ]
+    },
+    {
+      "guid": "09e1a63e-ecd6-4956-abfd-7228839e79c3",
+      "name": "Cube D",
+      "parent": null,
+      "components": [
+        {
+          "type": "Transform",
+          "data": {
+            "position": [
+              0,
+              0.5,
+              -1.5
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "Render",
+          "data": {
+            "mesh": "Cube",
+            "color": [
+              0.8,
+              0.85,
+              0.98,
+              1
+            ],
+            "materialGuid": "a58f5fea-3743-4570-b876-82d72eeac7d6"
+          }
+        }
+      ]
+    }
+  ]
+}

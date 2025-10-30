@@ -1,0 +1,62 @@
+{
+  "Guid": "99204530-428c-4238-84c4-ff773bda4e9a",
+  "Name": "Default Procedural Skybox",
+  "Type": 0,
+  "SkyTint": [
+    0,
+    0.15444016,
+    1,
+    1
+  ],
+  "GroundColor": [
+    0.9115045,
+    1,
+    0,
+    1
+  ],
+  "Exposure": 1,
+  "AtmosphereThickness": 1.104,
+  "SunTint": [
+    1,
+    0.95,
+    0.8,
+    1
+  ],
+  "SunSize": 0.596,
+  "SunSizeConvergence": 2.125,
+  "CubemapTexture": "6c7d3750-bbc3-403d-aa48-8db6e7c049ef",
+  "CubemapTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "CubemapExposure": 1,
+  "CubemapRotation": 0,
+  "FrontTexture": null,
+  "BackTexture": null,
+  "LeftTexture": null,
+  "RightTexture": null,
+  "UpTexture": null,
+  "DownTexture": null,
+  "SixSidedTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SixSidedExposure": 1,
+  "PanoramicTexture": null,
+  "PanoramicTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 0,
+  "Mapping": 0,
+  "MirrorOnBack": false,
+  "ImageType": 0,
+  "UseForFog": false
+}

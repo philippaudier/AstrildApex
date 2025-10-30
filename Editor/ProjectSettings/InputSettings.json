@@ -1,0 +1,84 @@
+{
+  "ActionBindings": {},
+  "ActionMaps": {
+    "Player": {
+      "MoveForward": [
+        {
+          "Path": "\u003CKeyboard\u003E/W",
+          "Type": "Key",
+          "Key": "W",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveBackward": [
+        {
+          "Path": "\u003CKeyboard\u003E/S",
+          "Type": "Key",
+          "Key": "S",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveLeft": [
+        {
+          "Path": "\u003CKeyboard\u003E/A",
+          "Type": "Key",
+          "Key": "A",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveRight": [
+        {
+          "Path": "\u003CKeyboard\u003E/D",
+          "Type": "Key",
+          "Key": "D",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Jump": [
+        {
+          "Path": "\u003CKeyboard\u003E/Space",
+          "Type": "Key",
+          "Key": "Space",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "LookX": [
+        {
+          "Path": "\u003CMouse\u003E/X",
+          "Type": "MouseAxis",
+          "Key": "",
+          "MouseButton": "",
+          "MouseAxis": "X",
+          "Scale": 0.1,
+          "Modifiers": []
+        }
+      ],
+      "LookY": [
+        {
+          "Path": "\u003CMouse\u003E/Y",
+          "Type": "MouseAxis",
+          "Key": "",
+          "MouseButton": "",
+          "MouseAxis": "Y",
+          "Scale": 0.1,
+          "Modifiers": []
+        }
+      ]
+    }
+  }
+}

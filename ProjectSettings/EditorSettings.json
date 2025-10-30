@@ -1,0 +1,78 @@
+{
+  "LastOpenedScene": "Editor\\Assets\\Scenes\\CustomScene.scene",
+  "LastOpenedTime": "2025-10-30T21:33:54.733564Z",
+  "ShowGrid": false,
+  "CameraNear": 0.1,
+  "CameraFar": 5000,
+  "CameraProjectionMode": 0,
+  "CameraOrthoSize": 10,
+  "CameraFov": 60,
+  "VSync": false,
+  "ViewportCamera": {
+    "Yaw": -22.88432,
+    "Pitch": -0.3118047,
+    "Distance": 582.1137,
+    "TargetX": -21.021986,
+    "TargetY": 191.29166,
+    "TargetZ": 425.3086
+  },
+  "SSAO": {
+    "Enabled": true,
+    "Radius": 2,
+    "Bias": 0.025,
+    "Intensity": 3,
+    "SampleCount": 128,
+    "BlurSize": 0,
+    "Strength": 1
+  },
+  "Shadows": {
+    "Enabled": true,
+    "ShadowMapSize": 8192,
+    "ShadowStrength": 1,
+    "ShadowBias": 0.382,
+    "ShadowDistance": 963,
+    "DebugShowShadowMap": false,
+    "ShadowQuality": 1,
+    "ShadowNormalBias": 0.05,
+    "PCFSamples": 0,
+    "LightSize": 0.15,
+    "Bias": 0.382,
+    "BiasConst": 0.382,
+    "SlopeScale": 0.05,
+    "PolygonOffsetFactor": 0,
+    "PolygonOffsetUnits": 10,
+    "PCFRadius": 0.5,
+    "UseCascadedShadows": false,
+    "CascadeCountCSM": 4,
+    "CascadeLambda": 0,
+    "AtlasSize": 8192,
+    "CascadeCount": 1,
+    "DebugShowAtlas": false
+  },
+  "TAA": {
+    "Enabled": true,
+    "FeedbackMin": 0.85,
+    "FeedbackMax": 0.95,
+    "UseYCoCg": true,
+    "JitterPattern": 0,
+    "JitterScale": 0.26
+  },
+  "AntiAliasingMode": 2,
+  "ThemeName": "Sunset Glow",
+  "ExternalTools": {
+    "ScriptEditor": "C:\\Users\\Philippe\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+    "ScriptEditorArgs": "\u0022$(File)\u0022 -g \u0022$(File):$(Line)\u0022",
+    "AutoDetectEditor": true
+  },
+  "Font": {
+    "FontName": "segoeui",
+    "FontPath": "C:\\WINDOWS\\Fonts\\segoeui.ttf",
+    "FontSize": 16
+  },
+  "UI": {
+    "GameHudPosX": 2204,
+    "GameHudPosY": 77,
+    "ViewportHudPosX": 335,
+    "ViewportHudPosY": 68
+  }
+}

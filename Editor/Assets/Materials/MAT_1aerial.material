@@ -1,0 +1,27 @@
+{
+  "Guid": "226ec958-0026-4d08-9f3d-c19e64967a6a",
+  "Name": "MAT_1aerial",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "dbcae1f7-b7a7-4d8f-8380-cd41c036ca83",
+  "AlbedoColor": [
+    0.8232044,
+    0.8232044,
+    0.8232044,
+    1
+  ],
+  "NormalTexture": "39a368eb-6eae-4731-894e-c30c2c73f44b",
+  "NormalStrength": 0.97,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

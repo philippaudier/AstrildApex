@@ -1,0 +1,27 @@
+{
+  "Guid": "df6444c3-e643-4584-9b21-3a2a636ab789",
+  "Name": "MAT_rock_aerial",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "8065dc79-5ad0-4255-9d7e-9721e179c4d6",
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": "3d9ecde1-9ea0-4289-b927-fb6e0402f147",
+  "NormalStrength": 0.94,
+  "Metallic": 0.393,
+  "Roughness": 0.23799998,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

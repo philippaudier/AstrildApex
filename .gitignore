@@ -1,0 +1,51 @@
+﻿# .gitignore minimal pour Unity / .NET projects
+
+# Build / output
+[Bb]in/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+UserSettings/
+MemoryCaptures/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+nul
+
+# VS/IDE
+.vs/
+.vscode/
+.idea/
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Editor generated cache / packages
+Packages/manifest.json.lock
+Library/ScriptAssemblies/
+
+# Mac
+*.DS_Store
+
+# Large binary assets often tracked with LFS instead of git
+# Example (enable LFS if needed):
+# *.psd
+# *.fbx
+# *.wav

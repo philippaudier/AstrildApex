@@ -1,0 +1,236 @@
+{
+  "ActionBindings": {},
+  "ActionMaps": {
+    "Player": {
+      "MoveForward": [
+        {
+          "Path": "\u003CKeyboard\u003E/W",
+          "Type": "Key",
+          "Key": "W",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveBackward": [
+        {
+          "Path": "\u003CKeyboard\u003E/S",
+          "Type": "Key",
+          "Key": "S",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveLeft": [
+        {
+          "Path": "\u003CKeyboard\u003E/A",
+          "Type": "Key",
+          "Key": "A",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "MoveRight": [
+        {
+          "Path": "\u003CKeyboard\u003E/D",
+          "Type": "Key",
+          "Key": "D",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Jump": [
+        {
+          "Path": "\u003CKeyboard\u003E/Space",
+          "Type": "Key",
+          "Key": "Space",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "LookX": [
+        {
+          "Path": "\u003CMouse\u003E/X",
+          "Type": "MouseAxis",
+          "Key": "",
+          "MouseButton": "",
+          "MouseAxis": "X",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "LookY": [
+        {
+          "Path": "\u003CMouse\u003E/Y",
+          "Type": "MouseAxis",
+          "Key": "",
+          "MouseButton": "",
+          "MouseAxis": "Y",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Crouch": [
+        {
+          "Path": "\u003CKeyboard\u003E/LeftControl",
+          "Type": "Key",
+          "Key": "LeftControl",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Sprint": [
+        {
+          "Path": "\u003CKeyboard\u003E/LeftShift",
+          "Type": "Key",
+          "Key": "LeftShift",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ]
+    },
+    "Vehicle": {
+      "Accelerate": [
+        {
+          "Path": "\u003CKeyboard\u003E/W",
+          "Type": "Key",
+          "Key": "W",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Brake": [
+        {
+          "Path": "\u003CKeyboard\u003E/Space",
+          "Type": "Key",
+          "Key": "Space",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "SteerLeft": [
+        {
+          "Path": "\u003CKeyboard\u003E/A",
+          "Type": "Key",
+          "Key": "A",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "SteerRight": [
+        {
+          "Path": "\u003CKeyboard\u003E/D",
+          "Type": "Key",
+          "Key": "D",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "ExitVehicle": [
+        {
+          "Path": "\u003CKeyboard\u003E/F",
+          "Type": "Key",
+          "Key": "F",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ]
+    },
+    "Menu": {
+      "Navigate": [
+        {
+          "Path": "\u003CKeyboard\u003E/Up",
+          "Type": "Key",
+          "Key": "Up",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        },
+        {
+          "Path": "\u003CKeyboard\u003E/Down",
+          "Type": "Key",
+          "Key": "Down",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        },
+        {
+          "Path": "\u003CKeyboard\u003E/Left",
+          "Type": "Key",
+          "Key": "Left",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        },
+        {
+          "Path": "\u003CKeyboard\u003E/Right",
+          "Type": "Key",
+          "Key": "Right",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Confirm": [
+        {
+          "Path": "\u003CKeyboard\u003E/Enter",
+          "Type": "Key",
+          "Key": "Enter",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Cancel": [
+        {
+          "Path": "\u003CKeyboard\u003E/Escape",
+          "Type": "Key",
+          "Key": "Escape",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ],
+      "Pause": [
+        {
+          "Path": "\u003CKeyboard\u003E/P",
+          "Type": "Key",
+          "Key": "P",
+          "MouseButton": "",
+          "MouseAxis": "",
+          "Scale": 1,
+          "Modifiers": []
+        }
+      ]
+    }
+  }
+}

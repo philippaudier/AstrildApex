@@ -1,0 +1,121 @@
+{
+  "Guid": "a58f5fea-3743-4570-b876-82d72eeac7d6",
+  "Name": "Cube C Mat",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "db5aaa6a-3cba-4086-bfe0-fc89f81ff44d",
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": "aa40ee9e-5d9f-4bc9-8871-bbfe2f37747b",
+  "NormalStrength": 1.01,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": {
+    "WaveAmplitude": 0.1,
+    "WaveFrequency": 1,
+    "WaveSpeed": 1,
+    "WaveDirection": [
+      1,
+      0
+    ],
+    "WaterColor": [
+      0.1,
+      0.3,
+      0.5,
+      0.8
+    ],
+    "Opacity": 0.8,
+    "AlbedoTexture": null,
+    "AlbedoColor": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "AlbedoTiling": [
+      1,
+      1
+    ],
+    "AlbedoScrollSpeed": [
+      0,
+      0
+    ],
+    "NormalTexture": null,
+    "NormalStrength": 1,
+    "NormalTiling": [
+      1,
+      1
+    ],
+    "NormalScrollSpeed1": [
+      0.05,
+      0.03
+    ],
+    "NormalScrollSpeed2": [
+      -0.04,
+      -0.06
+    ],
+    "Metallic": 0,
+    "Smoothness": 0.9,
+    "NoiseTexture1": null,
+    "Noise1Speed": [
+      0.03,
+      0.03
+    ],
+    "Noise1Direction": [
+      1,
+      0
+    ],
+    "Noise1Tiling": [
+      1,
+      1
+    ],
+    "Noise1Strength": 0.05,
+    "NoiseTexture2": null,
+    "Noise2Speed": [
+      0.02,
+      -0.02
+    ],
+    "Noise2Direction": [
+      0,
+      1
+    ],
+    "Noise2Tiling": [
+      1.5,
+      1.5
+    ],
+    "Noise2Strength": 0.03,
+    "RefractionStrength": 0.5,
+    "FresnelPower": 2,
+    "FresnelColor": [
+      0.8,
+      0.9,
+      1,
+      1
+    ],
+    "EnableReflection": false,
+    "ReflectionStrength": 1,
+    "ReflectionBlur": 0,
+    "TessellationLevel": 32,
+    "UseProceduralNoise": true,
+    "TessNearDistance": 20,
+    "TessMidDistance": 80,
+    "TessFarDistance": 200,
+    "TessNearLevel": 32,
+    "TessMidLevel": 16,
+    "TessFarLevel": 4,
+    "ReflectionUpdateInterval": 2
+  }
+}

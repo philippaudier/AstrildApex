@@ -1,0 +1,215 @@
+{
+  "Guid": "a3344fc3-778e-4c5a-84e7-ef0410d82fbf",
+  "Name": "Terrain",
+  "Shader": "TerrainForward",
+  "TerrainLayers": [
+    {
+      "Name": "Dirt",
+      "Material": "3e681ad0-5916-43be-bf8b-debb086518a5",
+      "Tiling": [
+        0.01,
+        0.01
+      ],
+      "Offset": [
+        0,
+        0
+      ],
+      "AlbedoTexture": null,
+      "NormalTexture": null,
+      "Metallic": 0,
+      "Smoothness": 0.5,
+      "HeightMin": -10000,
+      "HeightMax": 10000,
+      "HeightBlendDistance": 5,
+      "SlopeMinDeg": 20,
+      "SlopeMaxDeg": 50,
+      "SlopeBlendDistance": 5,
+      "Strength": 1,
+      "Priority": 1,
+      "BlendMode": 2,
+      "IsUnderwater": false,
+      "UnderwaterHeightMax": 0,
+      "UnderwaterBlendDistance": 2,
+      "UnderwaterSlopeMin": 0,
+      "UnderwaterSlopeMax": 90,
+      "UnderwaterBlendWithOthers": 0
+    },
+    {
+      "Name": "Rock",
+      "Material": "a58f5fea-3743-4570-b876-82d72eeac7d6",
+      "Tiling": [
+        0.01,
+        0.01
+      ],
+      "Offset": [
+        0,
+        0
+      ],
+      "AlbedoTexture": null,
+      "NormalTexture": null,
+      "Metallic": 0,
+      "Smoothness": 0.5,
+      "HeightMin": -10000,
+      "HeightMax": 10000,
+      "HeightBlendDistance": 5,
+      "SlopeMinDeg": 53,
+      "SlopeMaxDeg": 90,
+      "SlopeBlendDistance": 5,
+      "Strength": 1,
+      "Priority": 2,
+      "BlendMode": 2,
+      "IsUnderwater": false,
+      "UnderwaterHeightMax": 0,
+      "UnderwaterBlendDistance": 2,
+      "UnderwaterSlopeMin": 0,
+      "UnderwaterSlopeMax": 90,
+      "UnderwaterBlendWithOthers": 0
+    },
+    {
+      "Name": "Grass1",
+      "Material": "a54bbf2f-f453-48b8-b90d-4176cad8cb59",
+      "Tiling": [
+        0.05,
+        0.05
+      ],
+      "Offset": [
+        0,
+        0
+      ],
+      "AlbedoTexture": null,
+      "NormalTexture": null,
+      "Metallic": 0,
+      "Smoothness": 0.5,
+      "HeightMin": -10000,
+      "HeightMax": 10000,
+      "HeightBlendDistance": 5,
+      "SlopeMinDeg": 2,
+      "SlopeMaxDeg": 25,
+      "SlopeBlendDistance": 5,
+      "Strength": 1,
+      "Priority": 3,
+      "BlendMode": 2,
+      "IsUnderwater": false,
+      "UnderwaterHeightMax": 0,
+      "UnderwaterBlendDistance": 2,
+      "UnderwaterSlopeMin": 0,
+      "UnderwaterSlopeMax": 90,
+      "UnderwaterBlendWithOthers": 0
+    }
+  ],
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    100,
+    100
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": {
+    "WaveAmplitude": 0.1,
+    "WaveFrequency": 1,
+    "WaveSpeed": 1,
+    "WaveDirection": [
+      1,
+      0
+    ],
+    "WaterColor": [
+      0.1,
+      0.3,
+      0.5,
+      0.8
+    ],
+    "Opacity": 0.8,
+    "AlbedoTexture": null,
+    "AlbedoColor": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "AlbedoTiling": [
+      1,
+      1
+    ],
+    "AlbedoScrollSpeed": [
+      0,
+      0
+    ],
+    "NormalTexture": null,
+    "NormalStrength": 1,
+    "NormalTiling": [
+      1,
+      1
+    ],
+    "NormalScrollSpeed1": [
+      0.05,
+      0.03
+    ],
+    "NormalScrollSpeed2": [
+      -0.04,
+      -0.06
+    ],
+    "Metallic": 0,
+    "Smoothness": 0.9,
+    "NoiseTexture1": null,
+    "Noise1Speed": [
+      0.03,
+      0.03
+    ],
+    "Noise1Direction": [
+      1,
+      0
+    ],
+    "Noise1Tiling": [
+      1,
+      1
+    ],
+    "Noise1Strength": 0.05,
+    "NoiseTexture2": null,
+    "Noise2Speed": [
+      0.02,
+      -0.02
+    ],
+    "Noise2Direction": [
+      0,
+      1
+    ],
+    "Noise2Tiling": [
+      1.5,
+      1.5
+    ],
+    "Noise2Strength": 0.03,
+    "RefractionStrength": 0.5,
+    "FresnelPower": 2,
+    "FresnelColor": [
+      0.8,
+      0.9,
+      1,
+      1
+    ],
+    "EnableReflection": false,
+    "ReflectionStrength": 1,
+    "ReflectionBlur": 0,
+    "TessellationLevel": 32,
+    "UseProceduralNoise": true,
+    "TessNearDistance": 20,
+    "TessMidDistance": 80,
+    "TessFarDistance": 200,
+    "TessNearLevel": 32,
+    "TessMidLevel": 16,
+    "TessFarLevel": 4,
+    "ReflectionUpdateInterval": 2
+  }
+}

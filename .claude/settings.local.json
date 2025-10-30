@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Read(c:\\Users\\Philippe\\Documents\\Programming\\AstrildApex\\Editor\\Panels/**)",
+      "Read(C:\\Users\\Philippe\\Pictures\\Screenshots/**)",
+      "Read(C:\\Users\\Philippe\\Pictures\\Screenshots/**)",
+      "Read(C:\\Users\\Philippe\\Pictures\\Screenshots/**)",
+      "Bash(dotnet build)",
+      "Bash(dotnet run:*)",
+      "Read(//c/Users/Philippe/Pictures/Screenshots/**)",
+      "Bash(dir:*)",
+      "Bash(npm run build)",
+      "Bash(dotnet build:*)",
+      "Bash(awk '{print $NF}')",
+      "WebFetch(domain:learnopengl.com)",
+      "Bash(findstr:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

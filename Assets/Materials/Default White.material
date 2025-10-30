@@ -1,0 +1,23 @@
+{
+  "Guid": "2ea82ece-604c-4671-9dc8-5de1b8bdf869",
+  "Name": "Default White",
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 0.5,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ]
+}

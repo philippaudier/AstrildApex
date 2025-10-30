@@ -1,0 +1,27 @@
+{
+  "Guid": "1bd27b10-3bb4-4f6d-bfa6-a3693d325323",
+  "Name": "Sphere",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    1,
+    0.3116883,
+    0,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 0.38300002,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

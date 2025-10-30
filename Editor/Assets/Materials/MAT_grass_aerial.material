@@ -1,0 +1,27 @@
+{
+  "Guid": "a54bbf2f-f453-48b8-b90d-4176cad8cb59",
+  "Name": "MAT_grass_aerial",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "21eb698d-315a-4642-a96a-6b20740df9ca",
+  "AlbedoColor": [
+    0.9346174,
+    1,
+    0.3038674,
+    1
+  ],
+  "NormalTexture": "72bc7fc8-9c0d-43d0-9d23-9139af0afae5",
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

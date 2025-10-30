@@ -1,0 +1,27 @@
+{
+  "Guid": "2b04408f-3031-442b-8da3-2b4528c86149",
+  "Name": "Default White",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    0.5469613,
+    0.5469613,
+    0.5469613,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 1,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

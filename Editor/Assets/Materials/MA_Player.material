@@ -1,0 +1,27 @@
+{
+  "Guid": "3f5f1b85-9ec2-4f06-a6e9-77dec8d086c7",
+  "Name": "MA_Player",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": null,
+  "AlbedoColor": [
+    0,
+    1,
+    0.5454545,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "Metallic": 0,
+  "Roughness": 0.106000006,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "WaterProperties": null
+}

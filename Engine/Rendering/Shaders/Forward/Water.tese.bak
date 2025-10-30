@@ -1,0 +1,285 @@
+#version 400 core
+
+// Tessellation Evaluation Shader for Water
+// Computes the actual position of tessellated vertices
+
+// Global uniform block (from Common.glsl - inlined because #include not supported)
+layout(std140) uniform Global {
+    mat4 uView; mat4 uProj; mat4 uViewProj;
+    vec3 uCameraPos; float _pad1;
+
+    vec3 uDirLightDirection; float _pad2;
+    vec3 uDirLightColor; float uDirLightIntensity;
+
+    int uPointLightCount; float _pad3; float _pad4; float _pad5;
+    vec4 uPointLightPos0; vec4 uPointLightColor0;
+    vec4 uPointLightPos1; vec4 uPointLightColor1;
+    vec4 uPointLightPos2; vec4 uPointLightColor2;
+    vec4 uPointLightPos3; vec4 uPointLightColor3;
+
+    int uSpotLightCount; float _pad6; float _pad7; float _pad8;
+    vec4 uSpotLightPos0; vec4 uSpotLightDir0; vec4 uSpotLightColor0; float uSpotLightAngle0; float uSpotLightInnerAngle0; float _pad9; float _pad10;
+    vec4 uSpotLightPos1; vec4 uSpotLightDir1; vec4 uSpotLightColor1; float uSpotLightAngle1; float uSpotLightInnerAngle1; float _pad11; float _pad12;
+
+    vec3 uAmbientColor; float uAmbientIntensity;
+    vec3 uSkyboxTint; float uSkyboxExposure;
+
+    int uFogEnabled; float _pad13; float _pad14; float _pad15;
+    vec3 uFogColor; float uFogStart;
+    float uFogEnd; vec3 _pad16;
+};
+
+layout(quads, equal_spacing, ccw) in;
+
+in vec3 tcWorldPos[];
+in vec3 tcNormal[];
+in vec2 tcUV[];
+
+out vec3 teWorldPos;
+out vec3 teNormal;
+out vec2 teUV;
+out vec4 teClipPos;
+out vec3 teTangent;
+out vec3 teBitangent;
+
+uniform mat4 u_Model;
+uniform mat3 u_NormalMat;
+uniform vec2 u_TextureTiling;
+uniform vec2 u_TextureOffset;
+uniform float u_Time;
+uniform float u_WaveAmplitude;
+uniform float u_WaveFrequency;
+uniform float u_WaveSpeed;
+uniform vec2 u_WaveDirection;
+uniform sampler2D u_NormalMap;
+uniform float u_NormalMapStrength;
+uniform sampler2D u_NoiseTexture1;
+uniform sampler2D u_NoiseTexture2;
+uniform vec2 u_Noise1Speed;
+uniform vec2 u_Noise1Direction;
+uniform vec2 u_Noise1Tiling;
+uniform float u_Noise1Strength;
+uniform vec2 u_Noise2Speed;
+uniform vec2 u_Noise2Direction;
+uniform vec2 u_Noise2Tiling;
+uniform float u_Noise2Strength;
+uniform int u_UseProceduralNoise; // 1 = use snoise, 0 = sample noise textures for cheaper displacement
+
+// Simplex noise 3D implementation
+vec3 mod289(vec3 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 mod289(vec4 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+}
+
+vec4 permute(vec4 x) {
+    return mod289(((x * 34.0) + 1.0) * x);
+}
+
+vec4 taylorInvSqrt(vec4 r) {
+    return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+float snoise(vec3 v) {
+    const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+    // First corner
+    vec3 i  = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+
+    // Other corners
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+
+    // Permutations
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+             i.z + vec4(0.0, i1.z, i2.z, 1.0))
+           + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+           + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+    // Gradients
+    float n_ = 0.142857142857; // 1.0/7.0
+    vec3 ns = n_ * D.wyz - D.xzx;
+
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+
+    // Normalize gradients
+    vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+
+    // Mix final noise value
+    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+}
+
+void main()
+{
+    // Interpolate position using bilinear interpolation for quads
+    // gl_TessCoord.x = u, gl_TessCoord.y = v
+    float u = gl_TessCoord.x;
+    float v = gl_TessCoord.y;
+
+    vec3 pos = mix(
+        mix(tcWorldPos[0], tcWorldPos[1], u),
+        mix(tcWorldPos[3], tcWorldPos[2], u),
+        v
+    );
+
+    // Interpolate normal
+    vec3 normal = normalize(mix(
+        mix(tcNormal[0], tcNormal[1], u),
+        mix(tcNormal[3], tcNormal[2], u),
+        v
+    ));
+
+    // Interpolate UVs
+    vec2 uv = mix(
+        mix(tcUV[0], tcUV[1], u),
+        mix(tcUV[3], tcUV[2], u),
+        v
+    );
+
+    // Apply displacement: either procedural snoise (expensive) or texture-sampled noise (cheaper)
+    if (u_WaveAmplitude > 0.0001)
+    {
+        if (u_UseProceduralNoise == 1)
+        {
+            float time = u_Time * u_WaveSpeed;
+            // Multiple octaves of simplex noise for more complex water surface
+            vec3 noisePos1 = vec3(pos.xz * u_WaveFrequency, time);
+            vec3 noisePos2 = vec3(pos.xz * u_WaveFrequency * 2.0, time * 1.3);
+            vec3 noisePos3 = vec3(pos.xz * u_WaveFrequency * 4.0, time * 1.7);
+            
+            float noise1 = snoise(noisePos1);
+            float noise2 = snoise(noisePos2) * 0.5;
+            float noise3 = snoise(noisePos3) * 0.25;
+            
+            float totalNoise = noise1 + noise2 + noise3;
+            
+            // Apply vertical displacement
+            float displacement = totalNoise * u_WaveAmplitude;
+            pos.y += displacement;
+            
+            // Calculate normal using finite differences (procedural path)
+            float delta = 0.1;
+            vec3 posX1 = vec3(pos.x + delta, 0.0, pos.z);
+            vec3 posX2 = vec3(pos.x - delta, 0.0, pos.z);
+            vec3 posZ1 = vec3(pos.x, 0.0, pos.z + delta);
+            vec3 posZ2 = vec3(pos.x, 0.0, pos.z - delta);
+            
+            float noiseX1 = snoise(vec3(posX1.xz * u_WaveFrequency, time)) + 
+                           snoise(vec3(posX1.xz * u_WaveFrequency * 2.0, time * 1.3)) * 0.5 +
+                           snoise(vec3(posX1.xz * u_WaveFrequency * 4.0, time * 1.7)) * 0.25;
+            float noiseX2 = snoise(vec3(posX2.xz * u_WaveFrequency, time)) + 
+                           snoise(vec3(posX2.xz * u_WaveFrequency * 2.0, time * 1.3)) * 0.5 +
+                           snoise(vec3(posX2.xz * u_WaveFrequency * 4.0, time * 1.7)) * 0.25;
+            float noiseZ1 = snoise(vec3(posZ1.xz * u_WaveFrequency, time)) + 
+                           snoise(vec3(posZ1.xz * u_WaveFrequency * 2.0, time * 1.3)) * 0.5 +
+                           snoise(vec3(posZ1.xz * u_WaveFrequency * 4.0, time * 1.7)) * 0.25;
+            float noiseZ2 = snoise(vec3(posZ2.xz * u_WaveFrequency, time)) + 
+                           snoise(vec3(posZ2.xz * u_WaveFrequency * 2.0, time * 1.3)) * 0.5 +
+                           snoise(vec3(posZ2.xz * u_WaveFrequency * 4.0, time * 1.7)) * 0.25;
+            
+            float dx = (noiseX1 - noiseX2) * u_WaveAmplitude / (2.0 * delta);
+            float dz = (noiseZ1 - noiseZ2) * u_WaveAmplitude / (2.0 * delta);
+            
+            normal = normalize(vec3(-dx, 1.0, -dz));
+        }
+        else
+        {
+            // Cheaper path: sample two noise textures with tiling and scrolling
+            vec2 nuv1 = uv * u_Noise1Tiling + (u_Noise1Direction * (u_Time * u_Noise1Speed.x));
+            vec2 nuv2 = uv * u_Noise2Tiling + (u_Noise2Direction * (u_Time * u_Noise2Speed.x));
+
+            float s1 = texture(u_NoiseTexture1, nuv1).r * 2.0 - 1.0;
+            float s2 = texture(u_NoiseTexture2, nuv2).r * 2.0 - 1.0;
+            float totalNoise = s1 * u_Noise1Strength + s2 * u_Noise2Strength;
+
+            float displacement = totalNoise * u_WaveAmplitude;
+            pos.y += displacement;
+
+            // Approximate normal from normal map only (fast) — no finite differences
+            // We'll rely on normal map samples later in the shader to perturb the normal
+            // Keep 'normal' mostly upwards but slightly affected by displacement gradient
+            normal = normalize(vec3(-u_Noise1Strength * s1, 1.0, -u_Noise2Strength * s2));
+        }
+    }
+
+    // Calculate tangent and bitangent for normal mapping
+    vec3 tangent = normalize(vec3(1.0, 0.0, 0.0));
+    vec3 bitangent = normalize(cross(normal, tangent));
+    tangent = normalize(cross(bitangent, normal));
+
+    // Transform to world space
+    vec4 worldPos = u_Model * vec4(pos, 1.0);
+    teWorldPos = worldPos.xyz;
+    
+    // Calculate final UV coordinates with tiling and offset
+    teUV = uv * u_TextureTiling + u_TextureOffset;
+    
+    // Sample normal map and combine with procedural normal
+    vec3 finalNormal = normal;
+    
+    // Sample the normal map with animated UVs for flowing water effect
+    vec2 normalUV1 = teUV + vec2(u_Time * u_WaveSpeed * 0.05, u_Time * u_WaveSpeed * 0.03);
+    vec2 normalUV2 = teUV * 0.7 - vec2(u_Time * u_WaveSpeed * 0.04, u_Time * u_WaveSpeed * 0.06);
+    
+    vec3 normalMap1 = texture(u_NormalMap, normalUV1).xyz * 2.0 - 1.0;
+    vec3 normalMap2 = texture(u_NormalMap, normalUV2).xyz * 2.0 - 1.0;
+    
+    // Blend two normal map samples for more variation
+    vec3 normalMapSample = normalize(normalMap1 + normalMap2);
+    normalMapSample.xy *= u_NormalMapStrength;
+    normalMapSample = normalize(normalMapSample);
+    
+    // Transform normal map from tangent space to object space
+    mat3 TBN = mat3(tangent, bitangent, normal);
+    vec3 normalMapWorldSpace = TBN * normalMapSample;
+    
+    // Blend procedural normal with normal map
+    finalNormal = normalize(mix(normal, normalMapWorldSpace, 0.5));
+    
+    // Transform to world space with normal matrix
+    teNormal = normalize(u_NormalMat * finalNormal);
+    teTangent = normalize(u_NormalMat * tangent);
+    teBitangent = normalize(u_NormalMat * bitangent);
+
+    gl_Position = uViewProj * worldPos;
+    teClipPos = gl_Position;
+}
