@@ -49,3 +49,32 @@ Library/ScriptAssemblies/
 # *.psd
 # *.fbx
 # *.wav
+
+# Ignorer les modèles 3D volumineux
+Editor/Assets/Models/**/*.fbx
+Editor/Assets/Models/**/*.meshasset
+Editor/Assets/Models/**/*.png
+Editor/Assets/Models/**/*.jpg
+Editor/Assets/Models/**/*.jpeg
+Editor/Assets/Models/**/*.tga
+Editor/Assets/Models/**/*.bmp
+Editor/Assets/Models/**/*.gif
+Editor/Assets/Models/**/*.psd
+Editor/Assets/Models/**/*.tiff
+Editor/Assets/Models/**/*.exr
+Editor/Assets/Models/**/*.hdr
+Editor/Assets/Models/**/*.raw
+Editor/Assets/Models/**/*.obj
+Editor/Assets/Models/**/*.mtl
+Editor/Assets/Models/**/*.stl
+Editor/Assets/Models/**/*.blend
+Editor/Assets/Models/**/*.dae
+Editor/Assets/Models/**/*.3ds
+Editor/Assets/Models/**/*.ase
+Editor/Assets/Models/**/*.ply
+Editor/Assets/Models/**/*.x3d
+Editor/Assets/Models/**/*.c4d
+Editor/Assets/Models/**/*.lwo
+Editor/Assets/Models/**/*.lws
+Editor/Assets/Models/**/*.fbx.meta
+Editor/Assets/Models/**/*.meshasset.meta
