@@ -1,0 +1,207 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+  <PackageReference Include="AssimpNet" Version="5.0.0-beta1" />
+  <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+  <PackageReference Include="SixLabors.Fonts" Version="2.1.3" />
+  <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
+  <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="OpenTK" Version="4.9.4" />
+    <PackageReference Include="Serilog" Version="4.3.0" />
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.5" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <!-- Modular PBR Shaders -->
+    <None Update="Rendering\Shaders\Forward\ForwardBase.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\ForwardBase.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\ForwardBase.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\ForwardBase.frag</Link>
+    </None>
+    <!-- Water Shaders (simple, no tessellation) -->
+    <None Update="Rendering\Shaders\Forward\Water.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Water.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\Water.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Water.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterSimple.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterSimple.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterSimple.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterSimple.frag</Link>
+    </None>
+    <!-- Shader Includes -->
+    <None Update="Rendering\Shaders\Includes\Common.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\Common.glsl</Link>
+    </None>
+    <None Update="Rendering\Shaders\Includes\Lighting.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\Lighting.glsl</Link>
+    </None>
+    <None Update="Rendering\Shaders\Includes\Fog.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\Fog.glsl</Link>
+    </None>
+    <None Update="Rendering\Shaders\Includes\Shadows.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\Shadows.glsl</Link>
+    </None>
+    <None Update="Rendering\Shaders\Includes\IBL.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\IBL.glsl</Link>
+    </None>
+    <None Update="Rendering\Shaders\Includes\SSAO.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\SSAO.glsl</Link>
+    </None>
+    <!-- SSAO Shaders -->
+    <None Update="Rendering\Shaders\SSAO\SSAOGeometry.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOGeometry.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\SSAO\SSAOGeometry.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOGeometry.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\SSAO\SSAOCalc.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOCalc.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\SSAO\SSAOCalc.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOCalc.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\SSAO\SSAOBlur.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOBlur.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\SSAO\SSAOBlur.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\SSAO\SSAOBlur.frag</Link>
+    </None>
+    <!-- Post-Process Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\fullscreen.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\fullscreen.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\tonemap.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\tonemap.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\chromatic_aberration.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\chromatic_aberration.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\bloom_downsample.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\bloom_downsample.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\bloom_upsample.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\bloom_upsample.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\bloom_combine.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\bloom_combine.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\TAA.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\TAA.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\TAA.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\TAA.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\Blit.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\Blit.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\Blit.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\Blit.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\Velocity.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\Velocity.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\Velocity.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\Velocity.frag</Link>
+    </None>
+    <!-- Legacy PBR Shaders (kept for backward compatibility) -->
+    <None Update="Rendering\Shaders\pbr.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\pbr.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\pbr.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\pbr.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\skybox.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\skybox.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\skybox.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\skybox.frag</Link>
+    </None>
+
+    <!-- Shadow Shaders -->
+    <None Update="Rendering\Shaders\Shadow\ShadowDepth.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Shadow\ShadowDepth.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Shadow\ShadowDepth.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Shadow\ShadowDepth.frag</Link>
+    </None>
+
+    <!-- Terrain Shaders -->
+    <None Update="Rendering\Shaders\Terrain\terrain.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Terrain\terrain.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Terrain\terrain.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Terrain\terrain.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\TerrainForward.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\TerrainForward.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\TerrainForward.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\TerrainForward.frag</Link>
+    </None>
+
+    <!-- Debug Shaders -->
+    <None Update="Rendering\Shaders\Debug\TerrainDebug.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Debug\TerrainDebug.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Debug\TerrainDebug.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Debug\TerrainDebug.frag</Link>
+    </None>
+  </ItemGroup>
+
+</Project>
