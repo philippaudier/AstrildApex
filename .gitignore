@@ -48,6 +48,10 @@ Library/ScriptAssemblies/
 # *.fbx
 # *.wav
 
+# Icon sources (keep only PNG exports)
+export/icons/*.svg
+Assets/Icons/
+
 # Ignorer les modèles 3D volumineux
 Editor/Assets/Models/**/*.fbx
 Editor/Assets/Models/**/*.meshasset
