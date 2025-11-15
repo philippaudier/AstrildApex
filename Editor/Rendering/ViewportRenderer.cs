@@ -10,6 +10,7 @@ using Engine.Scene;
 using Editor.State;
 using Editor.Panels;
 using Engine.Components;
+using Editor.Logging;
 
 
 // en tête du fichier si absents :
@@ -61,7 +62,6 @@ namespace Editor.Rendering
     private System.Diagnostics.Stopwatch? _frameTimer = null;
     private float _lastFrameCpuMs = 0f;
     private float _lastShadowsMs = 0f;
-    private float _lastSsaoMs = 0f;
     private float _lastOpaqueMs = 0f;
     private float _lastTransparentMs = 0f;
     private float _lastPostProcessMs = 0f;
@@ -69,7 +69,6 @@ namespace Editor.Rendering
     // Expose timing for overlays/logging
     public float LastFrameCpuMs => _lastFrameCpuMs;
     public float LastShadowsMs => _lastShadowsMs;
-    public float LastSsaoMs => _lastSsaoMs;
     public float LastOpaqueMs => _lastOpaqueMs;
     public float LastTransparentMs => _lastTransparentMs;
     public float LastPostProcessMs => _lastPostProcessMs;
@@ -91,6 +90,7 @@ namespace Editor.Rendering
     private float _renderScale = 1.0f; // 1.0 = native, 0.8 = 80% (big perf gain on 21:9/4K)
     private int _displayWidth = 1;  // Target display size (before scaling)
     private int _displayHeight = 1;
+    private int _maxTexSize = 0; // GL_MAX_TEXTURE_SIZE (queried once)
     
     public float RenderScale 
     { 
@@ -317,6 +317,7 @@ namespace Editor.Rendering
             public Guid MaterialGuid;
             public Engine.Rendering.MaterialRuntime MaterialRuntime;
             public uint ObjectId;
+            public MeshKind MeshType;  // Added to track mesh type for culling
         }
 
         public ViewportRenderer()
@@ -443,6 +444,7 @@ namespace Editor.Rendering
     public int Width => _w;
     public int Height => _h;
     public float Distance => _distance;
+    public float DistanceGoal => _distanceGoal;
     public bool IsCameraAnimating => _camAnimating;
         public enum GizmoMode { Translate, Rotate, Scale }
 
@@ -467,8 +469,9 @@ namespace Editor.Rendering
 
         // === FBO ===
             private int _fbo, _colorTex, _idTex, _depthTex;
-        // Post-process ping target to avoid reading/writing same texture
+        // Post-process ping-pong targets to avoid reading/writing same texture
         private int _postFbo = 0, _postTex = 0;
+        private int _postFbo2 = 0, _postTex2 = 0;  // Second buffer for ping-pong
         // Velocity buffer (camera motion) - generated each frame from depth
         private int _velocityFbo = 0, _velocityTex = 0;
         // Indicates whether the post texture / fbo are healthy and can be used as final target
@@ -486,7 +489,7 @@ namespace Editor.Rendering
     private int _reflectionW = 512, _reflectionH = 512;
     private float _reflectionResolutionScale = 0.5f; // 0.5 = half resolution for performance
     // Return the post-processed texture when available, otherwise the raw color texture
-    public int ColorTexture => _postTex != 0 ? _postTex : _colorTex;
+    public int ColorTexture => (_postTex != 0 && _postTexHealthy) ? _postTex : _colorTex;
 
     // === Shaders & géométrie ===
     private int _cubeVao, _cubeVbo, _cubeEbo;
@@ -505,8 +508,10 @@ namespace Editor.Rendering
         
         // === Light icon geometry ===
         private int _lightIconVao, _lightIconVbo, _lightIconEbo;
+        // Cube indices - CCW winding (standard OpenGL)
         private readonly uint[] _cubeIdx = new uint[]
         {
+            // Standard CCW winding (but will appear CW after Z-flip in view matrix)
             0,1,2, 0,2,3,     4,5,6, 4,6,7,
             8,9,10, 8,10,11,  12,13,14, 12,14,15,
             16,17,18, 16,18,19, 20,21,22, 20,22,23
@@ -538,8 +543,9 @@ namespace Editor.Rendering
         private Matrix4 _viewGL, _projGL;
         private Matrix4 _projGLNoJitter; // Projection matrix without TAA jitter (for reprojection)
     private float _fovY = MathHelper.DegreesToRadians(60f);
-    // Camera near/far planes (editor default far increased)
-    private float _nearClip = 0.1f;
+    // Camera near/far planes - INCREASED near from 0.1f to 0.5f to reduce Z-fighting
+    // A larger near clip improves depth buffer precision (ratio near:far = 1:10000 instead of 1:50000)
+    private float _nearClip = 0.5f;
     private float _farClip = 5000f;
 
     // Projection mode: 0=Perspective, 1=Orthographic, 2=2D
@@ -699,13 +705,11 @@ namespace Editor.Rendering
     private int _shadowOverlayProg = 0;
     private int _shadowDebugColorTex = 0;
 
-        // SSAO Renderer
-        private Engine.Rendering.SSAORenderer? _ssaoRenderer = null;
-        // Debug overlay to visualize SSAO texture
-        private bool _showSSAOOverlay = false; // toggle this to show/hide overlay
     // G-buffer debug mode: 0=off, 1=position, 2=normal, 3=depth
     private int _gBufferDebugMode = 0;
-    private Engine.Rendering.ShaderProgram? _debugGBufferShader = null;
+
+    // Selection Outline Renderer
+    private Engine.Rendering.SelectionOutlineRenderer? _outlineRenderer = null;
 
     // TAA Renderer (Temporal Anti-Aliasing)
     private Engine.Rendering.PostProcess.TAARenderer? _taaRenderer = null;
@@ -722,18 +726,6 @@ namespace Editor.Rendering
 
         // Terrain Renderer
         private Engine.Rendering.Terrain.TerrainRenderer? _terrainRenderer = null;
-
-        public Engine.Rendering.SSAORenderer.SSAOSettings SSAOSettings
-        {
-            get => _ssaoSettings;
-            set
-            {
-                _ssaoSettings = value;
-                // Save to persistent settings
-                Editor.State.EditorSettings.SSAOSettings = value;
-            }
-        }
-        private Engine.Rendering.SSAORenderer.SSAOSettings _ssaoSettings;
 
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
@@ -792,6 +784,21 @@ namespace Editor.Rendering
         {
             w = Math.Max(1, w); h = Math.Max(1, h);
 
+            // Check GL max texture size on first resize
+            if (_maxTexSize == 0)
+            {
+                GL.GetInteger(GetPName.MaxTextureSize, out _maxTexSize);
+                LogManager.LogInfo($"GL_MAX_TEXTURE_SIZE: {_maxTexSize}", "ViewportRenderer");
+            }
+
+            // Clamp to GL max texture size to avoid artifacts
+            if (w > _maxTexSize || h > _maxTexSize)
+            {
+                LogManager.LogWarning($"Viewport size {w}x{h} exceeds GL_MAX_TEXTURE_SIZE {_maxTexSize}, clamping", "ViewportRenderer");
+                w = Math.Min(w, _maxTexSize);
+                h = Math.Min(h, _maxTexSize);
+            }
+
             // Store display size for when render scale changes
             _displayWidth = w;
             _displayHeight = h;
@@ -799,6 +806,11 @@ namespace Editor.Rendering
             // Apply render scale (render at lower res, upscale to display res)
             int renderW = Math.Max(1, (int)(w * _renderScale));
             int renderH = Math.Max(1, (int)(h * _renderScale));
+
+            // Force even dimensions to avoid mipmap artifacts in bloom downsampling
+            // (odd dimensions cause rounding errors when repeatedly dividing by 2)
+            renderW = (renderW + 1) & ~1;  // Round up to nearest even number
+            renderH = (renderH + 1) & ~1;
 
             // Early return if size hasn't changed
             bool sizeChanged = (_fbo == 0) || (renderW != _w) || (renderH != _h);
@@ -809,6 +821,8 @@ namespace Editor.Rendering
 
             // Update size
             _w = renderW; _h = renderH;
+
+            LogManager.LogInfo($"Resize: display={_displayWidth}x{_displayHeight}, render={_w}x{_h}, scale={_renderScale}", "ViewportRenderer");
 
             if (_fbo == 0) _fbo = GL.GenFramebuffer();
             // Debug: try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Instance={this.GetHashCode()} Resize({w}x{h}) -> FBO={_fbo}, previousColorTex={_colorTex}, previousIdTex={_idTex}"); } catch { }
@@ -830,7 +844,12 @@ namespace Editor.Rendering
             if (_idTex != 0) GL.DeleteTexture(_idTex);
             _idTex = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, _idTex);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32ui, _w, _h, 0, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+
+            // Initialize texture with zeros to avoid garbage data on borders
+            uint[] zeroData = new uint[_w * _h];
+            Array.Fill(zeroData, 0u);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32ui, _w, _h, 0, PixelFormat.RedInteger, PixelType.UnsignedInt, zeroData);
+
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
@@ -882,6 +901,39 @@ namespace Editor.Rendering
             else
             {
                 _postTexHealthy = true;
+                // Clear the FBO to avoid artifacts from uninitialized texture memory
+                GL.Viewport(0, 0, _w, _h);
+                GL.ClearColor(0, 0, 0, 0);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
+            }
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            // Create second post-process target for ping-pong between effects
+            if (_postTex2 != 0) { GL.DeleteTexture(_postTex2); _postTex2 = 0; }
+            if (_postFbo2 != 0) { GL.DeleteFramebuffer(_postFbo2); _postFbo2 = 0; }
+
+            _postTex2 = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _postTex2);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, _w, _h, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            _postFbo2 = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex2, 0);
+            var p2status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+            if (p2status != FramebufferErrorCode.FramebufferComplete)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer.Resize] Warning: post FBO2 incomplete: {p2status}");
+            }
+            else
+            {
+                // Clear the FBO to avoid artifacts from uninitialized texture memory
+                GL.Viewport(0, 0, _w, _h);
+                GL.ClearColor(0, 0, 0, 0);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
             }
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
@@ -916,23 +968,22 @@ namespace Editor.Rendering
             // Lazy-create grid only if enabled
             if (_showGrid && _grid == null) _grid = new GridRenderer();
 
-            // Initialize or recreate SSAO renderer when size changes
-            // Dispose old renderer first to avoid memory leak!
-            if (_ssaoRenderer != null)
+            // Initialize Selection Outline renderer
+            if (_outlineRenderer != null)
             {
-                try { _ssaoRenderer.Dispose(); } catch { }
+                try { _outlineRenderer.Dispose(); } catch { }
             }
 
             try
             {
-                _ssaoRenderer = new Engine.Rendering.SSAORenderer(_w, _h);
-                _ssaoRenderer.Settings = SSAOSettings;
-                Editor.Logging.LogManager.LogInfo($"SSAO Renderer initialized/resized: {_w}x{_h}", "Renderer");
+                _outlineRenderer = new Engine.Rendering.SelectionOutlineRenderer();
+                _outlineRenderer.Initialize();
+                Editor.Logging.LogManager.LogInfo("Selection Outline Renderer initialized", "Renderer");
             }
             catch (Exception ex)
             {
-                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to create SSAO renderer: {ex.Message}");
-                _ssaoRenderer = null;
+                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to create Selection Outline renderer: {ex.Message}");
+                _outlineRenderer = null;
             }
 
             // Initialize or recreate TAA renderer when size changes
@@ -1011,34 +1062,35 @@ if (_scene.Entities.Count == 0)
 
             // --- 24 sommets cube (pos + normal + uv) ---
             // 6 faces * 4 sommets (pos.xyz, normal.xyz, uv.xy)
+            // All faces have consistent CCW winding when viewed from outside
             float[] verts =
             {
-                // face -Z (normal = 0,0,-1)
+                // face -Z (normal = 0,0,-1) - CORRECTED WINDING
                 -0.5f,-0.5f,-0.5f,   0f,0f,-1f,   0f,0f,
-                 0.5f,-0.5f,-0.5f,   0f,0f,-1f,   1f,0f,
+                -0.5f, 0.5f,-0.5f,   0f,0f,-1f,   1f,0f,
                  0.5f, 0.5f,-0.5f,   0f,0f,-1f,   1f,1f,
-                -0.5f, 0.5f,-0.5f,   0f,0f,-1f,   0f,1f,
-                // face +Z (normal = 0,0,1)
+                 0.5f,-0.5f,-0.5f,   0f,0f,-1f,   0f,1f,
+                // face +Z (normal = 0,0,1) - already correct
                 -0.5f,-0.5f, 0.5f,   0f,0f,1f,    0f,0f,
                  0.5f,-0.5f, 0.5f,   0f,0f,1f,    1f,0f,
                  0.5f, 0.5f, 0.5f,   0f,0f,1f,    1f,1f,
                 -0.5f, 0.5f, 0.5f,   0f,0f,1f,    0f,1f,
-                // face -X (normal = -1,0,0)
+                // face -X (normal = -1,0,0) - CORRECTED WINDING
                 -0.5f,-0.5f,-0.5f,   -1f,0f,0f,   0f,0f,
-                -0.5f, 0.5f,-0.5f,   -1f,0f,0f,   1f,0f,
+                -0.5f,-0.5f, 0.5f,   -1f,0f,0f,   1f,0f,
                 -0.5f, 0.5f, 0.5f,   -1f,0f,0f,   1f,1f,
-                -0.5f,-0.5f, 0.5f,   -1f,0f,0f,   0f,1f,
-                // face +X (normal = 1,0,0)
+                -0.5f, 0.5f,-0.5f,   -1f,0f,0f,   0f,1f,
+                // face +X (normal = 1,0,0) - already correct
                  0.5f,-0.5f,-0.5f,   1f,0f,0f,    0f,0f,
                  0.5f, 0.5f,-0.5f,   1f,0f,0f,    1f,0f,
                  0.5f, 0.5f, 0.5f,   1f,0f,0f,    1f,1f,
                  0.5f,-0.5f, 0.5f,   1f,0f,0f,    0f,1f,
-                // face -Y (normal = 0,-1,0)
+                // face -Y (normal = 0,-1,0) - CORRECTED WINDING
                 -0.5f,-0.5f,-0.5f,   0f,-1f,0f,   0f,0f,
-                -0.5f,-0.5f, 0.5f,   0f,-1f,0f,   1f,0f,
+                 0.5f,-0.5f,-0.5f,   0f,-1f,0f,   1f,0f,
                  0.5f,-0.5f, 0.5f,   0f,-1f,0f,   1f,1f,
-                 0.5f,-0.5f,-0.5f,   0f,-1f,0f,   0f,1f,
-                // face +Y (normal = 0,1,0)
+                -0.5f,-0.5f, 0.5f,   0f,-1f,0f,   0f,1f,
+                // face +Y (normal = 0,1,0) - already correct
                 -0.5f, 0.5f,-0.5f,   0f,1f,0f,    0f,0f,
                 -0.5f, 0.5f, 0.5f,   0f,1f,0f,    1f,0f,
                  0.5f, 0.5f, 0.5f,   0f,1f,0f,    1f,1f,
@@ -1419,8 +1471,9 @@ void main(){
                     uint i1 = (uint)((lat + 1) * stride + lon);
                     uint i2 = (uint)((lat + 1) * stride + lon + 1);
                     uint i3 = (uint)(lat * stride + lon + 1);
-                    indices.Add(i0); indices.Add(i1); indices.Add(i2);
-                    indices.Add(i2); indices.Add(i3); indices.Add(i0);
+                    // Reversed winding: i0,i2,i1 instead of i0,i1,i2 to get CCW from outside
+                    indices.Add(i0); indices.Add(i2); indices.Add(i1);
+                    indices.Add(i2); indices.Add(i0); indices.Add(i3);
                 }
             }
             _sphereIndexCount = indices.Count;
@@ -1510,8 +1563,9 @@ void main(){
                     uint i1 = (uint)(base1 + j);
                     uint i2 = (uint)(base1 + j + 1);
                     uint i3 = (uint)(base0 + j + 1);
+                    // Corrected winding: i0,i1,i2 for proper CCW from outside
                     indices.Add(i0); indices.Add(i1); indices.Add(i2);
-                    indices.Add(i2); indices.Add(i3); indices.Add(i0);
+                    indices.Add(i0); indices.Add(i2); indices.Add(i3);
                 }
             }
 
@@ -1538,14 +1592,15 @@ void main(){
         {
             // Simple plane (will be tessellated by Water shader if used)
             // pos(3)+normal(3)+uv(2)
+            // Winding matches cube +Y face (CCW when viewed from above)
             float[] verts = new float[]
             {
-                -0.5f,0f,-0.5f, 0f,1f,0f, 0f,0f,
-                 0.5f,0f,-0.5f, 0f,1f,0f, 1f,0f,
-                 0.5f,0f, 0.5f, 0f,1f,0f, 1f,1f,
-                -0.5f,0f, 0.5f, 0f,1f,0f, 0f,1f,
+                -0.5f,0f,-0.5f, 0f,1f,0f, 0f,0f,  // back-left
+                -0.5f,0f, 0.5f, 0f,1f,0f, 1f,0f,  // front-left
+                 0.5f,0f, 0.5f, 0f,1f,0f, 1f,1f,  // front-right
+                 0.5f,0f,-0.5f, 0f,1f,0f, 0f,1f,  // back-right
             };
-            uint[] idx = new uint[] { 0,1,2, 2,3,0 };
+            uint[] idx = new uint[] { 0,1,2, 0,2,3 };
             _planeIndexCount = idx.Length;
 
             _planeVao = GL.GenVertexArray();
@@ -1567,14 +1622,16 @@ void main(){
 
         private void CreateModernQuadXY()
         {
+            // Quad in XY plane (facing +Z)
+            // Winding matches cube +Z face (CCW when viewed from +Z)
             float[] verts = new float[]
             {
-                -0.5f,-0.5f,0f, 0f,0f,1f, 0f,0f,
-                 0.5f,-0.5f,0f, 0f,0f,1f, 1f,0f,
-                 0.5f, 0.5f,0f, 0f,0f,1f, 1f,1f,
-                -0.5f, 0.5f,0f, 0f,0f,1f, 0f,1f,
+                -0.5f,-0.5f,0f, 0f,0f,1f, 0f,0f,  // bottom-left
+                 0.5f,-0.5f,0f, 0f,0f,1f, 1f,0f,  // bottom-right
+                 0.5f, 0.5f,0f, 0f,0f,1f, 1f,1f,  // top-right
+                -0.5f, 0.5f,0f, 0f,0f,1f, 0f,1f,  // top-left
             };
-            uint[] idx = new uint[] { 0,1,2, 2,3,0 };
+            uint[] idx = new uint[] { 0,1,2, 0,2,3 };
             _quadVao = GL.GenVertexArray();
             _quadVbo = GL.GenBuffer();
             _quadEbo = GL.GenBuffer();
@@ -1622,8 +1679,9 @@ void main(){
                     uint i1 = (uint)((lat + 1) * stride + lon);
                     uint i2 = (uint)((lat + 1) * stride + lon + 1);
                     uint i3 = (uint)(lat * stride + lon + 1);
-                    indices.Add(i0); indices.Add(i1); indices.Add(i2);
-                    indices.Add(i2); indices.Add(i3); indices.Add(i0);
+                    // Reversed winding: i0,i2,i1 instead of i0,i1,i2 to get CCW from outside
+                    indices.Add(i0); indices.Add(i2); indices.Add(i1);
+                    indices.Add(i2); indices.Add(i0); indices.Add(i3);
                 }
             }
             _sphereIndexCount = indices.Count;
@@ -1719,8 +1777,9 @@ void main(){
                     uint i1 = (uint)(base1 + j);
                     uint i2 = (uint)(base1 + j + 1);
                     uint i3 = (uint)(base0 + j + 1);
+                    // Corrected winding: i0,i1,i2 for proper CCW from outside
                     indices.Add(i0); indices.Add(i1); indices.Add(i2);
-                    indices.Add(i2); indices.Add(i3); indices.Add(i0);
+                    indices.Add(i0); indices.Add(i2); indices.Add(i3);
                 }
             }
 
@@ -1748,8 +1807,18 @@ void main(){
         {
             _yaw = yawRad;
             _pitch = Math.Clamp(pitchRad, -1.553f, 1.553f);
+            
+            // CRITICAL: Only update distance/distanceGoal when NOT animating
+            // During focus/frame animation, the renderer manages its own distance interpolation
+            // and we must not overwrite _distanceGoal
+            distance = Math.Max(0.01f, distance); // Zoom infini, minimum très proche
+            
             if (!_camAnimating)
-                _distance = Math.Max(0.01f, distance); // Zoom infini, minimum très proche
+            {
+                _distanceGoal = distance;
+                _distance = distance;
+            }
+            // When animating, ignore the distance parameter - renderer's animation takes precedence
         }
         
         /// <summary>
@@ -1863,7 +1932,7 @@ void main(){
             var status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (status != FramebufferErrorCode.FramebufferComplete)
             {
-                Console.WriteLine($"[ViewportRenderer] Warning: Reflection FBO incomplete: {status}");
+                LogManager.LogWarning($"Reflection FBO incomplete: {status}", "ViewportRenderer");
             }
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -1917,7 +1986,7 @@ void main(){
 
                 // Get camera position from view matrix (inverse translation)
                 var invView = viewMatrix.Inverted();
-                _globalUniforms.CameraPosition = new Vector3(invView.M14, invView.M24, invView.M34);
+                _globalUniforms.CameraPosition = new Vector3(invView.M41, invView.M42, invView.M43);
 
                 // NOTE: ClipPlaneEnabled and ClipPlane should already be set by caller
                 // We just upload everything here
@@ -2008,10 +2077,21 @@ void main(){
 
                     if (vao != 0 && ebo != 0 && idxCount > 0)
                     {
+                        // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
+                        bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane;
+                        if (isDoubleSided)
+                        {
+                            GL.Disable(EnableCap.CullFace);
+                            if (_frameDrawCalls % 120 == 0) // Log every 2 seconds at 60fps
+                                LogManager.LogInfo($"Plane: Culling DISABLED for rendering", "ViewportRenderer");
+                        }
+
                         GL.BindVertexArray(vao);
                         GL.BindBuffer(BufferTarget.ElementArrayBuffer, ebo);
                         GL.DrawElements(PrimitiveType.Triangles, idxCount, DrawElementsType.UnsignedInt, 0);
                         renderedCount++;
+
+                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
                 }
 
@@ -2072,7 +2152,7 @@ void main(){
                                 }
                                 catch (Exception ex)
                                 {
-                                    Console.WriteLine($"[Reflection] Error rendering terrain: {ex.Message}");
+                                    LogManager.LogWarning($"Reflection: Error rendering terrain: {ex.Message}", "ViewportRenderer");
                                 }
                             }
                         }
@@ -2096,7 +2176,7 @@ void main(){
 
                 if (Engine.Utils.DebugLogger.EnableVerbose)
                 {
-                    Console.WriteLine($"[ViewportRenderer] Rendered {renderedCount} objects in reflection");
+                    LogManager.LogVerbose($"Rendered {renderedCount} objects in reflection", "ViewportRenderer");
                 }
 
                 // Restore normal face culling
@@ -2166,7 +2246,7 @@ void main(){
 
                 GL.Enable(EnableCap.CullFace);
                 GL.CullFace(TriangleFace.Back); // Cull back faces as normal
-                GL.FrontFace(FrontFaceDirection.Cw); // But flip what "front" means (reflected camera)
+                GL.FrontFace(FrontFaceDirection.Cw); // Flip for reflected camera (Y-mirrored)
 
                 RenderEnvironmentForReflection(reflectedView, reflectedProj);
 
@@ -2177,7 +2257,7 @@ void main(){
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Reflection] Error: {ex.Message}");
+                LogManager.LogWarning($"Reflection: Error: {ex.Message}", "ViewportRenderer");
             }
 
             // Restore state (use MSAA FBO if active)
@@ -2268,7 +2348,7 @@ void main(){
 
                     // DEBUG: Log jitter once every 60 frames
                     if (_frameDrawCalls % 60 == 0)
-                        Console.WriteLine($"[TAA] Jitter active: ({jitter.X:F6}, {jitter.Y:F6})");
+                        LogManager.LogVerbose($"TAA Jitter active: ({jitter.X:F6}, {jitter.Y:F6})", "ViewportRenderer");
                 }
 
                 camPos = CameraPosition();
@@ -2315,12 +2395,12 @@ void main(){
                 // If the upload processing itself is slow, log it (helps find IO/CPU hotspots)
                 if (swUploads.Elapsed.TotalMilliseconds > 2.0)
                 {
-                    try { Console.WriteLine($"[Perf] Texture upload processing took {swUploads.Elapsed.TotalMilliseconds:F2} ms (uploads={uploads})"); } catch { }
+                    try { LogManager.LogVerbose($"Texture upload processing took {swUploads.Elapsed.TotalMilliseconds:F2} ms (uploads={uploads})", "ViewportRenderer"); } catch { }
                 }
             }
             catch (Exception ex)
             {
-                try { Console.WriteLine($"[ViewportRenderer] TextureCache.ProcessPendingUploads failed: {ex.Message}"); } catch { }
+                try { LogManager.LogWarning($"TextureCache.ProcessPendingUploads failed: {ex.Message}", "ViewportRenderer"); } catch { }
             }
             // ✅ S'assurer que ce viewport utilise son UBO global
             GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
@@ -2395,10 +2475,10 @@ void main(){
                     swSh.Stop();
                     _lastShadowsMs = (float)swSh.Elapsed.TotalMilliseconds;
                     if (!shadowsRendered) {
-                        if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine("[Shadows] RenderShadowMaps returned false - shadows disabled");
+                        if (Engine.Utils.DebugLogger.EnableVerbose) LogManager.LogVerbose("RenderShadowMaps returned false - shadows disabled", "ViewportRenderer");
                     }
                 } catch (Exception ex) { 
-                    if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine($"[Shadows] RenderShadowMaps exception: {ex.Message}");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) LogManager.LogVerbose($"RenderShadowMaps exception: {ex.Message}", "ViewportRenderer");
                 }
                 var swOpaque = System.Diagnostics.Stopwatch.StartNew();
                 DrawForwardOpaque();
@@ -2415,22 +2495,52 @@ void main(){
 
             // Grid overlay placeholder: actual draw happens after post-processing so it's not overwritten
 
-            // Gizmos (depth test modified)
+            // === POST-PROCESS EFFECTS ===
+            // Note: Gizmos are rendered AFTER post-processing to avoid being detected by outline
+            var swPost = System.Diagnostics.Stopwatch.StartNew();
+            ApplyPostProcessEffects();
+            swPost.Stop();
+
+            // === GIZMOS RENDERED AFTER OUTLINE ===
+            // Render gizmos into _postFbo so they appear on top of outline but not in ID texture during outline pass
             if (_gizmoVisible && HasValidSelection())
             {
-                RenderGizmosOnTop();
+                int targetFbo = (_postTexHealthy && _postFbo != 0) ? _postFbo : _fbo;
+                if (targetFbo != 0)
+                {
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, targetFbo);
+                    var db = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0 };
+                    GL.DrawBuffers(db.Length, db);
+                    GL.Viewport(0, 0, _w, _h);
+                    
+                    RenderGizmosOnTop();
+                    
+                    // Restore main FBO
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
+                    var mainBufs = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 };
+                    GL.DrawBuffers(mainBufs.Length, mainBufs);
+                }
             }
 
             // === COLLIDER GIZMOS (wireframe), rendered on top ===
             if (_showColliderGizmos)
             {
-                RenderColliderGizmosOnTop();
+                int targetFbo = (_postTexHealthy && _postFbo != 0) ? _postFbo : _fbo;
+                if (targetFbo != 0)
+                {
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, targetFbo);
+                    var db = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0 };
+                    GL.DrawBuffers(db.Length, db);
+                    GL.Viewport(0, 0, _w, _h);
+                    
+                    RenderColliderGizmosOnTop();
+                    
+                    // Restore main FBO
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
+                    var mainBufs = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 };
+                    GL.DrawBuffers(mainBufs.Length, mainBufs);
+                }
             }
-
-            // === POST-PROCESS EFFECTS ===
-            var swPost = System.Diagnostics.Stopwatch.StartNew();
-            ApplyPostProcessEffects();
-            swPost.Stop();
 
             // Render grid into the post-process target so it appears inside the renderer's ColorTexture
             try
@@ -2627,222 +2737,64 @@ void main(){
         }
     }
 
-    private void RenderSSAOPasses(Vector3 camPos)
-    {
-        if (_ssaoRenderer == null || !SSAOSettings.Enabled) return;
-
-        // Resize SSAO renderer to match viewport dimensions
-        _ssaoRenderer.Resize(_w, _h);
-
-        // Use SSAO settings from inspector
-        _ssaoRenderer.Settings = SSAOSettings;
-        
-        try
+    // ===================== SELECTION OUTLINE =====================
+    private void RenderSelectionOutline()
         {
-            // 1. Geometry pass - render simplified geometry to SSAO G-buffer
-            _ssaoRenderer.BeginGeometryPass();
+            if (_outlineRenderer == null || Scene == null) return;
 
-            var geometryShader = _ssaoRenderer.GetGeometryShader();
-            geometryShader.Use();
+            // Get outline settings from EditorSettings
+            var outlineData = Editor.State.EditorSettings.Outline;
+            if (!outlineData.Enabled) return;
 
-            // CRITICAL: Pass separate view and projection matrices for view-space SSAO
-            geometryShader.SetMat4("u_ViewMatrix", _viewGL);
-            geometryShader.SetMat4("u_ProjMatrix", _projGL);
-            var viewProjMatrix = _viewGL * _projGL;
-            geometryShader.SetMat4("u_ViewProjMatrix", viewProjMatrix);
+            // Get selected entity ID
+            uint selectedId = Editor.State.Selection.ActiveEntityId;
+            if (selectedId == 0) return;
 
-            // Setup view-space matrices for SSAO
-
-            int entityCount = 0;
-            foreach (var entity in _scene.Entities)
+            // Convert settings to renderer format
+            var settings = new Engine.Rendering.SelectionOutlineRenderer.OutlineSettings
             {
-                // Handle standard mesh entities
-                var meshRenderer = entity.GetComponent<Engine.Components.MeshRendererComponent>();
-                if (meshRenderer != null && meshRenderer.HasMeshToRender())
-                {
-                    entityCount++;
+                Enabled = outlineData.Enabled,
+                Thickness = outlineData.Thickness,
+                Color = new Vector4(outlineData.ColorR, outlineData.ColorG, outlineData.ColorB, outlineData.ColorA),
+                EnablePulse = outlineData.EnablePulse,
+                PulseSpeed = outlineData.PulseSpeed,
+                PulseMinAlpha = outlineData.PulseMinAlpha,
+                PulseMaxAlpha = outlineData.PulseMaxAlpha
+            };
 
-                    // Set model matrix and normal matrix
-                    entity.GetModelAndNormalMatrix(out var worldMatrix, out var normalMatrix);
-                    geometryShader.SetMat4("u_Model", worldMatrix);
-                    geometryShader.SetMat3("u_NormalMat", normalMatrix);
-
-                // Render the mesh geometry (simplified for SSAO G-buffer)
-                // Check if using custom mesh first
-                if (meshRenderer.IsUsingCustomMesh())
-                {
-                    var customMesh = LoadCustomMesh(meshRenderer.CustomMeshGuid!.Value, meshRenderer.SubmeshIndex);
-                    if (customMesh.HasValue)
-                    {
-                        GL.BindVertexArray(customMesh.Value.VAO);
-                        GL.DrawElements(PrimitiveType.Triangles, customMesh.Value.IndexCount, DrawElementsType.UnsignedInt, 0);
-                    }
-                    else
-                    {
-                        // Fallback to cube if custom mesh fails to load
-                        if (_cubeVao != 0)
-                        {
-                            GL.BindVertexArray(_cubeVao);
-                            GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
-                        }
-                    }
-                }
-                else
-                {
-                    // Use primitive mesh
-                    switch (meshRenderer.Mesh)
-                    {
-                        case MeshKind.Cube:
-                            if (_cubeVao != 0)
-                            {
-                                GL.BindVertexArray(_cubeVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                        case MeshKind.Plane:
-                            if (_planeVao != 0)
-                            {
-                                GL.BindVertexArray(_planeVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _planeIndexCount, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                        case MeshKind.Quad:
-                            if (_quadVao != 0)
-                            {
-                                GL.BindVertexArray(_quadVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _quadIndexCount, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                        case MeshKind.Sphere:
-                            if (_sphereVao != 0)
-                            {
-                                GL.BindVertexArray(_sphereVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _sphereIndexCount, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                        case MeshKind.Capsule:
-                            if (_capsuleVao != 0)
-                            {
-                                GL.BindVertexArray(_capsuleVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _capsuleIndexCount, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                        case MeshKind.None:
-                            // Skip entities with no mesh
-                            break;
-                        default:
-                            // Fallback to cube for unknown mesh types
-                            if (_cubeVao != 0)
-                            {
-                                GL.BindVertexArray(_cubeVao);
-                                GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
-                            }
-                            break;
-                    }
-                }
-                }
-
-                // Terrain is now a single-mesh component. SSAO geometry pass will skip per-chunk rendering.
-                // Render terrain into the SSAO geometry pass as well so SSAO accounts for terrain depth/normal.
-                if (entity.HasComponent<Engine.Components.Terrain>())
-                {
-                    var terrain = entity.GetComponent<Engine.Components.Terrain>();
-                    if (terrain != null)
-                    {
-                        try
-                        {
-                            // Set model/normal matrices for geometry shader
-                            entity.GetModelAndNormalMatrix(out var worldMatrix, out var normalMatrix);
-                            geometryShader.SetMat4("u_Model", worldMatrix);
-                            geometryShader.SetMat3("u_NormalMat", normalMatrix);
-
-                            // Render terrain (mesh is generated on demand)
-                            var ssaoCamPos = CameraPosition();
-                            terrain.Render(new System.Numerics.Vector3(ssaoCamPos.X, ssaoCamPos.Y, ssaoCamPos.Z));
-                        }
-                        catch { }
-                    }
-                }
-            }
-
-            _ssaoRenderer.EndGeometryPass();
-
-
-            if (entityCount == 0)
-            {
-                // No entities to render SSAO for
-                Editor.Logging.LogManager.LogWarning("No entities rendered to SSAO G-buffer", "SSAO");
-                return;
-            }
-
-            // 2. SSAO calculation pass
-            var swSsao = System.Diagnostics.Stopwatch.StartNew();
-
-            // Render SSAO with view-space sampling (stable, no camera position needed)
-            _ssaoRenderer.RenderSSAO(_viewGL, _projGL, 0.1f, 100.0f);
-
-            // 3. Blur pass
-            _ssaoRenderer.BlurSSAO();
-            // Optional debug sampling
-            try {
-                var dbg = Environment.GetEnvironmentVariable("SSAO_DEBUG");
-                if (!string.IsNullOrEmpty(dbg) && dbg == "1") _ssaoRenderer.DebugLogCenterPixel();
-            } catch {}
-            swSsao.Stop();
-            _lastSsaoMs = (float)swSsao.Elapsed.TotalMilliseconds;
-            
-            // If user requested G-buffer debug view, render it into post-process target so it's visible
             try
             {
-                if (_gBufferDebugMode != 0 && _ssaoRenderer != null && _postFbo != 0)
+                // DEBUG: Check texture sizes before rendering outline
+                GL.BindTexture(TextureTarget.Texture2D, _postTex);
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int postTexW);
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int postTexH);
+
+                GL.BindTexture(TextureTarget.Texture2D, _idTex);
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int idTexW);
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int idTexH);
+
+                if (postTexW != _w || postTexH != _h || idTexW != _w || idTexH != _h)
                 {
-                    if (_debugGBufferShader == null)
-                    {
-                        _debugGBufferShader = Engine.Rendering.ShaderProgram.FromFiles(
-                            "Engine/Rendering/Shaders/SSAO/SSAOCalc.vert",
-                            "Engine/Rendering/Shaders/SSAO/DebugGBuffer.frag");
-                    }
-
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo);
-                    GL.Viewport(0, 0, _w, _h);
-                    GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-
-                    _debugGBufferShader.Use();
-
-                    GL.ActiveTexture(TextureUnit.Texture0);
-                    GL.BindTexture(TextureTarget.Texture2D, _ssaoRenderer.GetPositionTexture());
-                    _debugGBufferShader.SetInt("u_PositionTex", 0);
-
-                    GL.ActiveTexture(TextureUnit.Texture1);
-                    GL.BindTexture(TextureTarget.Texture2D, _ssaoRenderer.GetNormalTexture());
-                    _debugGBufferShader.SetInt("u_NormalTex", 1);
-
-                    GL.ActiveTexture(TextureUnit.Texture2);
-                    GL.BindTexture(TextureTarget.Texture2D, _ssaoRenderer.GetDepthTexture());
-                    _debugGBufferShader.SetInt("u_DepthTex", 2);
-
-                    _debugGBufferShader.SetInt("u_DebugMode", _gBufferDebugMode);
-
-                    if (_quadVao != 0 && _quadIndexCount > 0)
-                    {
-                        GL.BindVertexArray(_quadVao);
-                        GL.DrawElements(PrimitiveType.Triangles, _quadIndexCount, DrawElementsType.UnsignedInt, 0);
-                        GL.BindVertexArray(0);
-                    }
-
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    LogManager.LogWarning($"Texture size mismatch! _w={_w}, _h={_h}, postTex={postTexW}x{postTexH}, idTex={idTexW}x{idTexH}", "ViewportRenderer");
                 }
-            }
-            catch (Exception)
-            {
-                // ignore debug rendering errors
-            }
-        }
-        catch (Exception)
-        {
-            // SSAO pass failed - continue without SSAO
-        }
 
+                // Bind _postFbo2 as render target (NOT _postFbo) to avoid read/write conflict
+                // We read from _postTex and write to _postFbo2, then copy back to _postFbo
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
+                GL.Viewport(0, 0, _w, _h);
+
+                // Render outline using _postTex (color) and _idTex (entity IDs)
+                float time = (float)System.DateTime.Now.TimeOfDay.TotalSeconds;
+                _outlineRenderer.RenderOutline(_postTex, _idTex, selectedId, _w, _h, settings, time);
+
+                // Restore state
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+            }
+            catch (Exception ex)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to render selection outline: {ex.Message}");
+            }
         }
 
         // Calculate cascade split distances using practical split scheme (logarithmic + linear blend)
@@ -2887,7 +2839,7 @@ void main(){
             int shadowMapSize = Math.Clamp(shadowSettings.ShadowMapSize, 512, 8192);
             if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
             {
-                Console.WriteLine($"[Shadow] Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})");
+                LogManager.LogInfo($"Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})", "ViewportRenderer");
                 _shadowManager?.Dispose();
                 _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
             }
@@ -2952,7 +2904,7 @@ void main(){
                     catch (Exception ex)
                     {
                         // Silently skip terrain that fails to render
-                        Console.WriteLine($"[Shadow] Failed to render terrain: {ex.Message}");
+                        LogManager.LogWarning($"Shadow: Failed to render terrain: {ex.Message}", "ViewportRenderer");
                     }
                 }
             }
@@ -3014,7 +2966,7 @@ void main(){
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[Shadow] Failed to render mesh: {ex.Message}");
+                        LogManager.LogWarning($"Shadow: Failed to render mesh: {ex.Message}", "ViewportRenderer");
                     }
                 }
             }
@@ -3129,8 +3081,14 @@ void main(){
                         }
                     }
 
+                    // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
+                    bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane;
+                    if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                     GL.BindVertexArray(vao);
                     GL.DrawElements(PrimitiveType.Triangles, idxCount, DrawElementsType.UnsignedInt, 0);
+
+                    if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                 }
 
                 // Terrain
@@ -3208,7 +3166,7 @@ void main(){
             var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (fboStatus != FramebufferErrorCode.FramebufferComplete)
             {
-                Console.WriteLine($"[CSM] ERROR: Shadow FBO incomplete: {fboStatus}");
+                LogManager.LogError($"CSM: Shadow FBO incomplete: {fboStatus}", "ViewportRenderer");
                 GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
                 return false;
             }
@@ -3328,7 +3286,7 @@ void main(){
                     camProj = camProj * 0.5f + new Vector3(0.5f);
                     Vector2 camUV = new Vector2(camProj.X * scaleX + offsetX, camProj.Y * scaleY + offsetY);
 
-                    Console.WriteLine($"[CSM DEBUG] Cascade {c} tile=({tileX},{tileY}) atlas=({scaleX:F3},{scaleY:F3},{offsetX:F3},{offsetY:F3}) originUV=({originUV.X:F3},{originUV.Y:F3}) camUV=({camUV.X:F3},{camUV.Y:F3}) radius={radius:F2}");
+                    LogManager.LogVerbose($"CSM DEBUG Cascade {c} tile=({tileX},{tileY}) atlas=({scaleX:F3},{scaleY:F3},{offsetX:F3},{offsetY:F3}) originUV=({originUV.X:F3},{originUV.Y:F3}) camUV=({camUV.X:F3},{camUV.Y:F3}) radius={radius:F2}", "ViewportRenderer");
                 }
 
                 // Set viewport for this tile (use flipped Y to match atlas texture coordinates)
@@ -3459,12 +3417,12 @@ void main(){
             // Shadow settings logged only on errors
             if (!lighting.HasDirectional)
             {
-                try { Console.WriteLine("[Shadows] Skipping: no directional light present in scene."); } catch { }
+                try { LogManager.LogVerbose("Shadows: Skipping - no directional light present in scene.", "ViewportRenderer"); } catch { }
                 return false;
             }
             if (!lighting.DirCastShadows)
             {
-                try { Console.WriteLine("[Shadows] Skipping: directional light set to not cast shadows (DirCastShadows=false)."); } catch { }
+                try { LogManager.LogVerbose("Shadows: Skipping - directional light set to not cast shadows (DirCastShadows=false).", "ViewportRenderer"); } catch { }
                 return false;
             }
 
@@ -3474,7 +3432,7 @@ void main(){
             // Only recreate shadow manager if shadow map size changed
             if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
             {
-                Console.WriteLine($"[Shadow] Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})");
+                LogManager.LogInfo($"Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})", "ViewportRenderer");
                 _shadowManager?.Dispose();
                 _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
             }
@@ -3663,7 +3621,7 @@ void main(){
                 var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
                 if (fboStatus != FramebufferErrorCode.FramebufferComplete)
                 {
-                    Console.WriteLine($"[Shadows] ERROR: Shadow FBO incomplete: {fboStatus}");
+                    LogManager.LogError($"Shadows: Shadow FBO incomplete: {fboStatus}", "ViewportRenderer");
                     // Unbind and abort shadow rendering to avoid undefined behavior
                     GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
                     GL.UseProgram(0);
@@ -3727,8 +3685,14 @@ void main(){
                                 case MeshKind.Sphere: vao = _sphereVao; idxCount = _sphereIndexCount; break;
                                 case MeshKind.Capsule: vao = _capsuleVao; idxCount = _capsuleIndexCount; break;
                             }
+                            // Disable culling for double-sided meshes (plane, quad)
+                            bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane || meshRenderer.Mesh == MeshKind.Quad;
+                            if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                             GL.BindVertexArray(vao);
                             GL.DrawElements(PrimitiveType.Triangles, idxCount, DrawElementsType.UnsignedInt, 0);
+
+                            if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                         }
 
                         // Terrain
@@ -3779,11 +3743,11 @@ void main(){
                     {
                         long sum = 0; int nonzero = 0;
                         for (int i = 0; i < pixels.Length; i++) { sum += pixels[i]; if (pixels[i] != 0) nonzero++; }
-                        try { Console.WriteLine($"[Shadows] DebugColorRead: center({cx},{cy}) {sampleW}x{sampleH} sum={sum} nonzero={nonzero} texId={_shadowDebugColorTex}"); } catch { }
+                        try { LogManager.LogVerbose($"Shadows: DebugColorRead: center({cx},{cy}) {sampleW}x{sampleH} sum={sum} nonzero={nonzero} texId={_shadowDebugColorTex}", "ViewportRenderer"); } catch { }
                     }
                 }
             }
-            catch (Exception ex) { try { Console.WriteLine("[Shadows] DebugColorRead failed: " + ex.Message); } catch { } }
+            catch (Exception ex) { try { LogManager.LogWarning("Shadows: DebugColorRead failed: " + ex.Message, "ViewportRenderer"); } catch { } }
 
                 // Force-blit debug color tile into the renderer color target so ImGui displays it
                 try
@@ -3812,10 +3776,10 @@ void main(){
                         // Restore default framebuffer bindings
                         GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
                         GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, 0);
-                        try { Console.WriteLine($"[Shadows] Blitted debug color tex into targetFbo={targetFbo} rect=({ox},{oy}) {overlayW}x{overlayH}"); } catch { }
+                        try { LogManager.LogVerbose($"Shadows: Blitted debug color tex into targetFbo={targetFbo} rect=({ox},{oy}) {overlayW}x{overlayH}", "ViewportRenderer"); } catch { }
                     }
                 }
-                catch (Exception ex) { try { Console.WriteLine("[Shadows] Debug blit failed: " + ex.Message); } catch { } }
+                catch (Exception ex) { try { LogManager.LogWarning("Shadows: Debug blit failed: " + ex.Message, "ViewportRenderer"); } catch { } }
 
             // Render UI on top of the scene (mirror GameRenderer)
             try
@@ -3830,7 +3794,7 @@ void main(){
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ViewportRenderer] UI render error: {ex.Message}");
+                LogManager.LogWarning($"UI render error: {ex.Message}", "ViewportRenderer");
             }
 
             // Unbind
@@ -4269,6 +4233,7 @@ void main(){
                         Model = model,
                         NormalMat3 = normalMat3,
                         MaterialGuid = meshRenderer.MaterialGuid.Value,
+                        MeshType = meshRenderer.Mesh,
                         MaterialRuntime = materialRuntime,
                         ObjectId = entity.Id
                     });
@@ -4299,7 +4264,7 @@ void main(){
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ViewportRenderer] Failed to create TerrainRenderer: {ex.Message}");
+                    LogManager.LogWarning($"Failed to create TerrainRenderer: {ex.Message}", "ViewportRenderer");
                     return;
                 }
             }
@@ -4360,16 +4325,11 @@ void main(){
                                 }
                             }
 
-                            // Get SSAO settings from actual SSAO state
-                            bool ssaoEnabled = SSAOSettings.Enabled && _ssaoRenderer != null;
+                            // SSAO is now handled as a post-effect, not in material shaders
+                            bool ssaoEnabled = false;
                             int ssaoTexture = 0;
-                            float ssaoStrength = SSAOSettings.Strength;
+                            float ssaoStrength = 1.0f;
                             var screenSize = new OpenTK.Mathematics.Vector2(_w, _h);
-
-                            if (ssaoEnabled)
-                            {
-                                ssaoTexture = _ssaoRenderer != null ? (int)_ssaoRenderer.GetSSAOTexture() : 0;
-                            }
 
                             // IMPORTANT: Bind the Global UBO before rendering terrain
                             // The terrain shader expects the Global UBO to be bound at binding point 0
@@ -4395,12 +4355,14 @@ void main(){
                                 shadowStrength,  // Pass shadow strength
                                 terrainModel,  // Pass the terrain's actual transform matrix
                                 shadowSettings.ShadowBias,  // Use new bias
-                                shadowSettings.ShadowDistance  // Use shadow distance
+                                shadowSettings.ShadowDistance,  // Use shadow distance
+                                0,  // globalUBO (not used)
+                                entity.Id  // Pass entity ID for selection outline
                             );
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[ViewportRenderer] Terrain rendering error: {ex.Message}");
+                            LogManager.LogWarning($"Terrain rendering error: {ex.Message}", "ViewportRenderer");
                         }
                     }
                 }
@@ -4459,7 +4421,7 @@ void main(){
 
                             if (waterShader == null)
                             {
-                                Console.WriteLine("[ViewportRenderer] Failed to load Water shader");
+                                LogManager.LogWarning("Failed to load Water shader", "ViewportRenderer");
                                 continue;
                             }
 
@@ -4503,27 +4465,13 @@ void main(){
                             float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
                             waterMaterialRuntime.Bind(waterShader, time);
 
-                            // Set SSAO
-                            bool ssaoEnabled = SSAOSettings.Enabled && _ssaoRenderer != null;
-                            int ssaoTexture = 0;
-                            float ssaoStrength = SSAOSettings.Strength;
-                            var screenSize = new OpenTK.Mathematics.Vector2(_w, _h);
-
-                            if (ssaoEnabled)
-                            {
-                                ssaoTexture = _ssaoRenderer != null ? (int)_ssaoRenderer.GetSSAOTexture() : 0;
-                            }
-
-                            waterShader.SetInt("u_SSAOEnabled", ssaoEnabled ? 1 : 0);
-                            waterShader.SetFloat("u_SSAOStrength", ssaoStrength);
-                            waterShader.SetVec2("u_ScreenSize", screenSize);
-
-                            if (ssaoEnabled && ssaoTexture > 0)
-                            {
-                                GL.ActiveTexture(TextureUnit.Texture3);
-                                GL.BindTexture(TextureTarget.Texture2D, ssaoTexture);
-                                waterShader.SetInt("u_SSAOTexture", 3);
-                            }
+                            // SSAO is now handled as a post-effect, not in water shader
+                            waterShader.SetInt("u_SSAOEnabled", 0);
+                            waterShader.SetFloat("u_SSAOStrength", 0.0f);
+                            waterShader.SetVec2("u_ScreenSize", new OpenTK.Mathematics.Vector2(_w, _h));
+                            GL.ActiveTexture(TextureUnit.Texture3);
+                            GL.BindTexture(TextureTarget.Texture2D, 0);
+                            waterShader.SetInt("u_SSAOTexture", 3);
 
                             // Set shadows
                             bool shadowsEnabled = false;
@@ -4556,7 +4504,7 @@ void main(){
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[ViewportRenderer] Water rendering error: {ex.Message}");
+                            LogManager.LogWarning($"Water rendering error: {ex.Message}", "ViewportRenderer");
                         }
                     }
                 }
@@ -4609,6 +4557,10 @@ void main(){
                     else
                     {
                         // Use primitive mesh
+                        // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
+                        bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane;
+                        if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                         switch (meshRenderer.Mesh)
                         {
                             case MeshKind.Cube:
@@ -4636,6 +4588,8 @@ void main(){
                                 GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
                                 break;
                         }
+
+                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
                 }
                 // Additionally: if PBR shader is unavailable, draw the modern render items (water, models using PBR materials)
@@ -4663,10 +4617,20 @@ void main(){
                         GL.Uniform4(_locAlbColor, col[0], col[1], col[2], col[3]);
                         GL.Uniform1(_locUseTex, albedo != Engine.Rendering.TextureCache.White1x1 ? 1 : 0);
 
+                        // Disable culling for plane (double-sided) - Quad is single-sided like Unity
+                        bool isDoubleSided = item.MeshType == MeshKind.Plane;
+                        if (isDoubleSided)
+                        {
+                            GL.Disable(EnableCap.CullFace);
+                            LogManager.LogInfo($"PLANE RENDERING: Culling DISABLED (opaque pass)", "ViewportRenderer");
+                        }
+
                         GL.BindVertexArray(item.Vao);
                         GL.BindBuffer(BufferTarget.ElementArrayBuffer, item.Ebo);
                             RecordDraw(PrimitiveType.Triangles, item.IndexCount);
                             GL.DrawElements(PrimitiveType.Triangles, item.IndexCount, DrawElementsType.UnsignedInt, 0);
+
+                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
 
                     // TRANSPARENT items (sorted back-to-front)
@@ -4704,6 +4668,14 @@ void main(){
                         GL.Uniform4(_locAlbColor, col[0], col[1], col[2], col[3]);
                         GL.Uniform1(_locUseTex, albedo != Engine.Rendering.TextureCache.White1x1 ? 1 : 0);
 
+                        // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
+                        bool isDoubleSided = item.MeshType == MeshKind.Plane;
+                        if (isDoubleSided)
+                        {
+                            GL.Disable(EnableCap.CullFace);
+                            LogManager.LogInfo($"PLANE RENDERING: Culling DISABLED (transparent pass)", "ViewportRenderer");
+                        }
+
                         if (item.Vao != lastVaoFb)
                         {
                             GL.BindVertexArray(item.Vao);
@@ -4717,6 +4689,8 @@ void main(){
 
                         RecordDraw(PrimitiveType.Triangles, item.IndexCount);
                         GL.DrawElements(PrimitiveType.Triangles, item.IndexCount, DrawElementsType.UnsignedInt, 0);
+
+                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
 
                     GL.DepthMask(true);
@@ -4732,10 +4706,15 @@ void main(){
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
             GL.Disable(EnableCap.Blend);
+
+            // Face culling: CW because Z-flip in view matrix inverts CCW vertices to CW on screen
+            // Cube vertices are CCW, but after LookAtLH * ZFlip transformation, they appear CW
+            GL.Enable(EnableCap.CullFace);
+            GL.CullFace(TriangleFace.Back);
+            GL.FrontFace(FrontFaceDirection.Cw);
             
-            // Disable face culling to show all triangles regardless of winding order
-            // This will fix the issue where some meshes have inconsistent face visibility
-            GL.Disable(EnableCap.CullFace);
+            GL.Enable(EnableCap.DepthTest);
+            GL.DepthFunc(DepthFunction.Less);
 
             var items = BuildRenderList();
             items.Sort((a, b) => a.MaterialGuid.CompareTo(b.MaterialGuid));
@@ -4752,42 +4731,14 @@ void main(){
             SetShadowUniforms(pbr, shadowSettings.Enabled);
             pbr.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
 
-            // Configure SSAO uniforms (DISABLED)
+            // SSAO is now handled as a post-effect, not in PBR shader
+            // Set disabled defaults to avoid shader errors
             pbr.SetInt("u_SSAOEnabled", 0);
             pbr.SetFloat("u_SSAOStrength", 0.0f);
-
-            // Set a dummy SSAO texture to avoid shader errors
+            _pbrShader.SetVec2("u_ScreenSize", new Vector2(_w, _h));
             GL.ActiveTexture(TextureUnit.Texture3);
             GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
             pbr.SetInt("u_SSAOTexture", 3);
-            
-            if (SSAOSettings.Enabled && _ssaoRenderer != null)
-            {
-                pbr.SetInt("u_SSAOEnabled", 1);
-                pbr.SetFloat("u_SSAOStrength", SSAOSettings.Strength);
-
-                // Debug SSAO parameters
-
-                // Set screen size for SSAO UV calculation
-                _pbrShader.SetVec2("u_ScreenSize", new Vector2(_w, _h));
-
-                // Bind SSAO texture
-                var ssaoTexture = _ssaoRenderer.GetSSAOTexture();
-                if (ssaoTexture != 0)
-                {
-                    GL.ActiveTexture(TextureUnit.Texture3); // Use a free texture unit
-                    GL.BindTexture(TextureTarget.Texture2D, ssaoTexture);
-                    pbr.SetInt("u_SSAOTexture", 3);
-                }
-                else
-                {
-                }
-            }
-            else
-            {
-                pbr.SetInt("u_SSAOEnabled", 0);
-                pbr.SetFloat("u_SSAOStrength", 0.0f);
-            }
 
             // Two-phase rendering: opaque then transparent
             // Opaque pass will be executed after SSAO compute so objects (including terrain) can sample the SSAO texture.
@@ -4834,36 +4785,9 @@ void main(){
             RenderTerrain();
 
             // === QUEUE 2600: SSAO POST-PROCESSING ===
-            if (SSAOSettings.Enabled && _ssaoRenderer != null)
-            {
-                RenderSSAOPasses(CameraPosition());
+            // SSAO is now handled as a post-effect, not during main rendering pipeline
 
-                // Restore OpenGL state after SSAO (use MSAA FBO if active)
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
-                GL.Viewport(0, 0, _w, _h); // CRITICAL: Restore full-resolution viewport after half-res SSAO
-                GL.Enable(EnableCap.DepthTest);
-                GL.DepthFunc(DepthFunction.Less);
-                GL.Disable(EnableCap.Blend);
-                GL.DepthMask(true);
-
-                // Re-activate PBR shader and bind SSAO texture so terrain and opaque items can sample it
-                if (_pbrShader != null)
-                {
-                    _pbrShader.Use();
-                }
-
-                var ssaoTexture = _ssaoRenderer.GetSSAOTexture();
-                if (ssaoTexture != 0 && _pbrShader != null)
-                {
-                    GL.ActiveTexture(TextureUnit.Texture3);
-                    GL.BindTexture(TextureTarget.Texture2D, ssaoTexture);
-                    _pbrShader.SetInt("u_SSAOTexture", 3);
-                    _pbrShader.SetInt("u_SSAOEnabled", 1);
-                    _pbrShader.SetFloat("u_SSAOStrength", SSAOSettings.Strength);
-                    _pbrShader.SetVec2("u_ScreenSize", new Vector2(_w, _h));
-                }
-
-                // === Configure Simple Shadow Uniforms ===
+            // === Configure Simple Shadow Uniforms ===
                 if (_pbrShader != null && shadowSettings.Enabled && _shadowManager != null)
                 {
                     // Bind shadow texture to TextureUnit.Texture5
@@ -4897,12 +4821,13 @@ void main(){
                     SetShadowUniforms(_pbrShader, shadowSettings.Enabled);
                     _pbrShader.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
 
-                    // Re-bind SSAO texture for subsequent objects
+                    // SSAO is now handled as a post-effect
+                    // Set disabled defaults for legacy uniforms
                     GL.ActiveTexture(TextureUnit.Texture3);
-                    GL.BindTexture(TextureTarget.Texture2D, ssaoTexture);
+                    GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                     _pbrShader.SetInt("u_SSAOTexture", 3);
-                    _pbrShader.SetInt("u_SSAOEnabled", 1);
-                    _pbrShader.SetFloat("u_SSAOStrength", SSAOSettings.Strength);
+                    _pbrShader.SetInt("u_SSAOEnabled", 0);
+                    _pbrShader.SetFloat("u_SSAOStrength", 0.0f);
                     _pbrShader.SetVec2("u_ScreenSize", new Vector2(_w, _h));
                 }
 
@@ -4954,32 +4879,16 @@ void main(){
                             GL.PatchParameter(PatchParameterInt.PatchVertices, 4);
                         }
                         SetShadowUniforms(shaderToUse, shadowSettings.Enabled);
-                        // Preserve SSAO state per-shader: if SSAO was computed, enable it and bind the SSAO texture
+                        // SSAO is now handled as a post-effect, not during main rendering
+                        // Set disabled defaults for legacy shaders that still have SSAO uniforms
                         try
                         {
-                            if (SSAOSettings.Enabled && _ssaoRenderer != null)
-                            {
-                                shaderToUse.SetInt("u_SSAOEnabled", 1);
-                                shaderToUse.SetFloat("u_SSAOStrength", SSAOSettings.Strength);
-                                shaderToUse.SetVec2("u_ScreenSize", new OpenTK.Mathematics.Vector2(_w, _h));
-
-                                var ssaoTex = _ssaoRenderer.GetSSAOTexture();
-                                if (ssaoTex != 0)
-                                {
-                                    GL.ActiveTexture(TextureUnit.Texture3);
-                                    GL.BindTexture(TextureTarget.Texture2D, ssaoTex);
-                                    shaderToUse.SetInt("u_SSAOTexture", 3);
-                                }
-                            }
-                            else
-                            {
-                                shaderToUse.SetInt("u_SSAOEnabled", 0);
-                                shaderToUse.SetFloat("u_SSAOStrength", 0.0f);
-                                // Bind a white 1x1 to the unit to avoid sampling garbage if shader reads it
-                                GL.ActiveTexture(TextureUnit.Texture3);
-                                GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
-                                shaderToUse.SetInt("u_SSAOTexture", 3);
-                            }
+                            shaderToUse.SetInt("u_SSAOEnabled", 0);
+                            shaderToUse.SetFloat("u_SSAOStrength", 0.0f);
+                            shaderToUse.SetVec2("u_ScreenSize", new OpenTK.Mathematics.Vector2(_w, _h));
+                            GL.ActiveTexture(TextureUnit.Texture3);
+                            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+                            shaderToUse.SetInt("u_SSAOTexture", 3);
                         }
                         catch { }
                     }
@@ -5004,6 +4913,10 @@ void main(){
                         GL.BindVertexArray(first.Vao);
                         GL.BindBuffer(BufferTarget.ElementArrayBuffer, first.Ebo);
 
+                        // Check if this is a double-sided mesh (Plane only - Quad is single-sided like Unity)
+                        bool isDoubleSided = first.MeshType == MeshKind.Plane;
+                        if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                         foreach (var it in group)
                         {
                             if (lastShader2 != null)
@@ -5021,6 +4934,8 @@ void main(){
                             RecordDraw(primitiveType, it.IndexCount);
                             GL.DrawElements(primitiveType, it.IndexCount, DrawElementsType.UnsignedInt, 0);
                         }
+
+                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
 
                     // Advance idx past all items with this material
@@ -5028,171 +4943,7 @@ void main(){
                     while (nextIdx < items.Count && items[nextIdx].MaterialGuid == matGuid) nextIdx++;
                     idx = nextIdx;
                 }
-            }
-            else
-            {
-                // SSAO disabled - render terrain without SSAO
-                // CRITICAL FIX: Ensure correct framebuffer is bound (same as SSAO enabled path, use MSAA FBO if active)
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
-                GL.Enable(EnableCap.DepthTest);
-                GL.DepthFunc(DepthFunction.Less);
-                GL.Disable(EnableCap.Blend);
-                GL.DepthMask(true);
-
-                // Re-activate PBR shader before rendering terrain
-                if (_pbrShader != null)
-                {
-                    _pbrShader.Use();
-                }
-
-                // === Configure Simple Shadow Uniforms (SSAO disabled path) ===
-                if (_pbrShader != null && shadowSettings.Enabled && _shadowManager != null)
-                {
-                    // Bind shadow texture
-                    _shadowManager.BindShadowTexture(TextureUnit.Texture5);
-
-                    // Set shadow uniforms for simple system
-                    _pbrShader.SetInt("u_ShadowMap", 5);
-                    _pbrShader.SetMat4("u_ShadowMatrix", _shadowManager.LightSpaceMatrix);
-                    _pbrShader.SetInt("u_UseShadows", 1);
-                    _pbrShader.SetFloat("u_ShadowMapSize", (float)_shadowManager.ShadowMapSize);
-                    _pbrShader.SetFloat("u_ShadowBias", shadowSettings.ShadowBias);
-                    _pbrShader.SetFloat("u_ShadowStrength", shadowSettings.ShadowStrength);
-                    _pbrShader.SetFloat("u_ShadowDistance", shadowSettings.ShadowDistance);
-                }
-                else if (_pbrShader != null)
-                {
-                    // Shadows disabled
-                    _pbrShader.SetInt("u_UseShadows", 0);
-                }
-
-                try
-                {
-                    // Terrain already rendered at line 4410 (before SSAO branches)
-                    // Re-activate PBR shader after terrain rendering
-                    if (_pbrShader != null)
-                    {
-                        _pbrShader.Use();
-
-                        // Re-bind shadow uniforms for subsequent objects (using CSM-aware helper)
-                        SetShadowUniforms(_pbrShader, shadowSettings.Enabled);
-                        _pbrShader.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
-
-                        // Ensure SSAO is disabled for subsequent objects
-                        _pbrShader.SetInt("u_SSAOEnabled", 0);
-                        _pbrShader.SetFloat("u_SSAOStrength", 0.0f);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[ViewportRenderer] Error rendering terrain (no SSAO): {ex.Message}");
-                }
-
-                // Also render opaque objects when SSAO is disabled
-                lastBound = Guid.Empty;
-                Engine.Rendering.ShaderProgram? lastShader2 = null;
-                int lastVao2 = -1;
-                int lastEbo2 = -1;
-                foreach (var item in items)
-                {
-                    bool isTransparent = item.MaterialRuntime != null && item.MaterialRuntime.TransparencyMode != 0;
-                    if (isTransparent) continue;
-
-                    if (item.MaterialGuid != lastBound || _forceMaterialRebind)
-                    {
-                        try { if (Engine.Assets.AssetDatabase.TryGet(item.MaterialGuid, out var rec)) { } } catch { }
-
-                        if (pbr == null) continue;
-
-                        // Reload MaterialRuntime from cache in case it was updated
-                        Engine.Rendering.MaterialRuntime? mr = null;
-                        if (!_materialCache.TryGetValue(item.MaterialGuid, out var cached))
-                        {
-                            // Material not in cache, reload it
-                            try
-                            {
-                                var asset = Engine.Assets.AssetDatabase.LoadMaterial(item.MaterialGuid);
-                                Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                                mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
-                                _materialCache[item.MaterialGuid] = mr;
-                            }
-                            catch
-                            {
-                                mr = item.MaterialRuntime ?? new Engine.Rendering.MaterialRuntime { AlbedoTex = Engine.Rendering.TextureCache.White1x1 };
-                            }
-                        }
-                        else
-                        {
-                            mr = cached;
-                        }
-
-                        Engine.Rendering.ShaderProgram? shaderToUse = pbr;
-                        try
-                        {
-                            if (!string.IsNullOrEmpty(mr.ShaderName))
-                            {
-                                var alt = Engine.Rendering.ShaderLibrary.GetShaderByName(mr.ShaderName);
-                                if (alt != null) shaderToUse = alt;
-                            }
-                        }
-                        catch { }
-                        if (shaderToUse != null)
-                        {
-                            shaderToUse.Use();
-                            float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
-                            mr.Bind(shaderToUse, time);
-                            lastShader2 = shaderToUse;
-
-                            // Enable tessellation for Water shader
-                            if (string.Equals(mr.ShaderName, "Water", StringComparison.OrdinalIgnoreCase))
-                            {
-                                GL.PatchParameter(PatchParameterInt.PatchVertices, 4); // 4 vertices per patch (quad)
-                            }
-
-                            // Re-bind shadow uniforms for this shader (CSM-aware, SSAO disabled in this branch)
-                            SetShadowUniforms(shaderToUse, shadowSettings.Enabled);
-
-                            // Disable SSAO for this shader (SSAO disabled branch)
-                            shaderToUse.SetInt("u_SSAOEnabled", 0);
-                        }
-                        lastBound = item.MaterialGuid;
-                        if (_forceMaterialRebind)
-                        {
-                            // Clear the flag once we've forced a rebind for this material
-                            _forceMaterialRebind = false;
-                        }
-                    }
-
-                    if (lastShader2 != null)
-                    {
-                        lastShader2.SetMat4("u_Model", item.Model);
-                        lastShader2.SetMat3("u_NormalMat", item.NormalMat3);
-                        lastShader2.SetUInt("u_ObjectId", item.ObjectId);
-                    }
-
-                    // Avoid redundant VAO / EBO binds when consecutive items share them
-                    if (item.Vao != lastVao2)
-                    {
-                        GL.BindVertexArray(item.Vao);
-                        lastVao2 = item.Vao;
-                    }
-                    if (item.Ebo != lastEbo2)
-                    {
-                        GL.BindBuffer(BufferTarget.ElementArrayBuffer, item.Ebo);
-                        lastEbo2 = item.Ebo;
-                    }
-
-                    // Use patches for tessellation shaders (Water), triangles for others
-                    var primitiveType = (lastShader2 != null && item.MaterialRuntime != null &&
-                                        string.Equals(item.MaterialRuntime.ShaderName, "Water", StringComparison.OrdinalIgnoreCase))
-                        ? PrimitiveType.Patches
-                        : PrimitiveType.Triangles;
-
-                    // Record draw for overlay/stats counters
-                    RecordDraw(primitiveType, item.IndexCount);
-                    GL.DrawElements(primitiveType, item.IndexCount, DrawElementsType.UnsignedInt, 0);
-                }
-            }
+            
 
             // === RENDER WATER (DISABLED - TO BE REIMPLEMENTED LATER) ===
             // RenderWater();
@@ -5304,6 +5055,10 @@ void main(){
                     lastShader3.SetUInt("u_ObjectId", item.ObjectId);
                 }
 
+                // Check if this is a double-sided mesh (Plane only - Quad is single-sided like Unity)
+                bool isDoubleSided = item.MeshType == MeshKind.Plane;
+                if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                 // Avoid redundant VAO / EBO binds when consecutive items share them
                 if (item.Vao != lastVao3)
                 {
@@ -5324,6 +5079,8 @@ void main(){
                 // Record draw for overlay/stats counters
                 RecordDraw(primitiveType, item.IndexCount);
                 GL.DrawElements(primitiveType, item.IndexCount, DrawElementsType.UnsignedInt, 0);
+
+                if (isDoubleSided) GL.Enable(EnableCap.CullFace);
             }
 
             // Draw water preview planes for any terrain entities that requested it.
@@ -5357,80 +5114,15 @@ void main(){
             }
             catch (Exception)
             {
-                Console.WriteLine("[ViewportRenderer] Water preview render error (transparent pass)");
+                LogManager.LogWarning("Water preview render error (transparent pass)", "ViewportRenderer");
             }
 
             // Restore state
             GL.DepthMask(true);
             GL.Disable(EnableCap.Blend);
 
-            // Debug: draw small SSAO overlay (top-right) to verify SSAO texture contents
-            try
-            {
-                if (_showSSAOOverlay && _ssaoRenderer != null && _ssaoRenderer.Settings.Enabled)
-                {
-                    uint ssaoTex = _ssaoRenderer.GetSSAOTexture();
-                    if (ssaoTex != 0u)
-                    {
-                        // Use simple gfx shader to draw a textured quad in NDC space
-                        GL.UseProgram(_gfxShader);
-
-                        // Save and disable depth test / depth writes for overlay
-                        bool oldDepth = GL.IsEnabled(EnableCap.DepthTest);
-                        GL.Disable(EnableCap.DepthTest);
-                        GL.DepthMask(false);
-
-                        // Setup a small viewport in the top-right corner (200x150 or scaled)
-                        int overlayW = Math.Min(200, _w / 4);
-                        int overlayH = Math.Min(150, _h / 4);
-                        GL.Viewport(_w - overlayW - 10, _h - overlayH - 10, overlayW, overlayH);
-
-                        // Bind SSAO texture to unit 0 and draw full-screen quad (the gfx shader samples u_AlbedoTex)
-                        GL.ActiveTexture(TextureUnit.Texture0);
-                        GL.BindTexture(TextureTarget.Texture2D, (int)ssaoTex);
-                        GL.Uniform1(_locAlbTex, 0);
-                        // Force use texture
-                        GL.Uniform1(_locUseTex, 1);
-
-                        // Draw quad using modern quad VAO (pos+normal+uv) if available or the legacy quad
-                        var mvp = Matrix4.Identity; // gfx shader expects u_MVP
-                        GL.UniformMatrix4(_locMvp, false, ref mvp);
-                        if (_quadVao != 0 && _quadIndexCount > 0)
-                        {
-                            GL.BindVertexArray(_quadVao);
-                            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _quadEbo);
-                            RecordDraw(PrimitiveType.Triangles, _quadIndexCount);
-                            GL.DrawElements(PrimitiveType.Triangles, _quadIndexCount, DrawElementsType.UnsignedInt, 0);
-                        }
-                        else if (_legacyQuadVao != 0)
-                        {
-                            GL.BindVertexArray(_legacyQuadVao);
-                            RecordDraw(PrimitiveType.Triangles, _quadIndexCount);
-                            GL.DrawElements(PrimitiveType.Triangles, _quadIndexCount, DrawElementsType.UnsignedInt, 0);
-                        }
-
-                        // Restore main viewport and depth state
-                        GL.Viewport(0, 0, _w, _h);
-                        GL.DepthMask(true);
-                        if (oldDepth) GL.Enable(EnableCap.DepthTest); else GL.Disable(EnableCap.DepthTest);
-                        GL.UseProgram(0);
-                        // Ensure scissor is disabled after rendering this tile
-                        GL.Disable(EnableCap.ScissorTest);
-                        // Check for GL errors
-                        var err = GL.GetError();
-                        if (err != ErrorCode.NoError) Console.WriteLine("[Shadows] GL error after cascade render: " + err);
-                    }
-                }
-            }
-            catch { }
-
-            // MSAA: Resolve multisampled framebuffer to regular framebuffer
-            if (_msaaRenderer != null && _antiAliasingMode.IsMSAA())
-            {
-                _msaaRenderer.ResolveToFramebuffer((uint)_fbo);
-                // NOTE: Do NOT run the ID-only pass here every frame (heavy). It will be
-                // executed on-demand inside PickIdAt / PickIdAtFat when a readback is requested.
-            }
+            // Debug: SSAO overlay removed - SSAO is now a post-effect
+            // View SSAO by adding it to GlobalEffects component
         }
 
         /// <summary>
@@ -5506,6 +5198,10 @@ void main(){
                 }
                 else
                 {
+                    // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
+                    bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane;
+                    if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+
                     switch (meshRenderer.Mesh)
                     {
                         case MeshKind.Cube:
@@ -5533,6 +5229,8 @@ void main(){
                             GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
                             break;
                     }
+
+                    if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                 }
             }
 
@@ -5797,6 +5495,23 @@ void main(){
                     {
                         var obb = col.GetWorldOBB();
                         DrawObbWire(obb, colr);
+                    }
+                }
+
+                // Also draw point light range gizmo for selected entities that have a Point light
+                // This mirrors the collider gizmo behavior: only draw when entity is selected
+                if (entitySelected && e.HasComponent<Engine.Components.LightComponent>())
+                {
+                    var light = e.GetComponent<Engine.Components.LightComponent>();
+                    if (light != null && light.Enabled && light.Type == Engine.Components.LightType.Point)
+                    {
+                        // Compute world position and scale
+                        e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+                        // Visual radius: multiply Range by largest scale component to match world transform
+                        float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+                        float radius = MathF.Max(1e-6f, light.Range * s);
+                        var lightColor = new Vector4(1.0f, 0.84f, 0.2f, 0.9f); // warm yellow for lights
+                        DrawSphereWire(wpos, radius, lightColor, 48);
                     }
                 }
             }
@@ -6553,8 +6268,63 @@ void main(){
             if (entityIds.Count == 0) return;
             var first = _scene.GetById(entityIds[0]);
             if (first == null) return;
-            first.GetWorldTRS(out var pos, out _, out _);
-            SetFocus(pos, MathF.Max(0.2f, first.BoundsRadius), smooth);
+            first.GetWorldTRS(out var pos, out _, out var scale);
+            
+            // Calculate optimal radius based on entity type and actual size
+            float radius = CalculateOptimalFrameRadius(first, scale);
+            SetFocus(pos, radius, smooth);
+        }
+        
+        private float CalculateOptimalFrameRadius(Entity entity, Vector3 scale)
+        {
+            // Special handling for terrain - use a moderate view distance
+            if (entity.HasComponent<Engine.Components.Terrain>())
+            {
+                var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                if (terrain != null)
+                {
+                    // For terrain, use a fraction of its size to get a nice overview
+                    // Typical terrain is 2000x2000, so we want to be at ~300-500 units away
+                    float terrainSize = MathF.Max(terrain.TerrainWidth, terrain.TerrainLength);
+                    return terrainSize * 0.25f; // 25% of terrain size gives good overview
+                }
+            }
+            
+            // For mesh objects, calculate bounds based on mesh type and scale
+            var meshRenderer = entity.GetComponent<MeshRendererComponent>();
+            if (meshRenderer != null)
+            {
+                // Check if using custom mesh with actual bounds
+                if (meshRenderer.IsUsingCustomMesh() && meshRenderer.CustomMeshGuid.HasValue)
+                {
+                    // Try to get actual mesh bounds from the loaded mesh
+                    var customMesh = LoadCustomMesh(meshRenderer.CustomMeshGuid.Value, meshRenderer.SubmeshIndex);
+                    if (customMesh.HasValue)
+                    {
+                        // Use a conservative estimate based on scale
+                        // Most imported meshes are normalized to roughly 1-2 units
+                        float meshMaxScale = MathF.Max(MathF.Max(MathF.Abs(scale.X), MathF.Abs(scale.Y)), MathF.Abs(scale.Z));
+                        return MathF.Max(1.0f, meshMaxScale * 1.5f);
+                    }
+                }
+                
+                // For primitive meshes, use accurate bounds
+                float baseRadius = meshRenderer.Mesh switch
+                {
+                    MeshKind.Cube => 0.866f,      // sqrt(3)/2 for unit cube diagonal
+                    MeshKind.Sphere => 0.5f,      // Radius of unit sphere
+                    MeshKind.Capsule => 1.0f,     // Capsule height/2
+                    MeshKind.Plane => 0.707f,     // sqrt(2)/2 for unit plane diagonal
+                    MeshKind.Quad => 0.707f,      // sqrt(2)/2 for unit quad diagonal
+                    _ => 1.0f
+                };
+                
+                float primitiveMaxScale = MathF.Max(MathF.Max(MathF.Abs(scale.X), MathF.Abs(scale.Y)), MathF.Abs(scale.Z));
+                return MathF.Max(0.5f, baseRadius * primitiveMaxScale * 1.2f); // 1.2x for comfortable framing
+            }
+            
+            // Fallback: use entity's BoundsRadius with minimum
+            return MathF.Max(1.0f, entity.BoundsRadius);
         }
 
         public void FocusUnderCursor(int px, int py, bool smooth = true)
@@ -6563,7 +6333,13 @@ void main(){
             if (id != 0 && !IsGizmo(id))
             {
                 var e = _scene.GetById(id);
-                if (e != null) { SetFocus(e.Transform.Position, MathF.Max(0.2f, e.BoundsRadius), smooth); return; }
+                if (e != null) 
+                { 
+                    e.GetWorldTRS(out var pos, out _, out var scale);
+                    float radius = CalculateOptimalFrameRadius(e, scale);
+                    SetFocus(pos, radius, smooth); 
+                    return; 
+                }
             }
             var ray = ScreenRay(px, py);
             if (RayPlane(ray.origin, ray.dir, Vector3.Zero, Vector3.UnitY, out float t))
@@ -6576,8 +6352,22 @@ void main(){
         private void SetFocus(Vector3 center, float radius, bool smooth)
         {
             _targetGoal = center;
-            _distanceGoal = MathF.Max(0.01f, radius / MathF.Tan(_fovY * 0.5f) + 0.35f * radius); // Zoom infini
-            if (smooth) _camAnimating = true; else { _target = _targetGoal; _distance = _distanceGoal; _camAnimating = false; }
+            
+            // Calculate optimal distance to frame the object comfortably
+            // Formula: distance = radius / tan(fovY/2) gives the distance for object to fill screen height
+            // We add extra margin (50% of radius) for comfortable viewing with some breathing room
+            float baseDistance = radius / MathF.Tan(_fovY * 0.5f);
+            float margin = radius * 0.5f; // 50% margin for comfortable framing
+            _distanceGoal = MathF.Max(0.5f, baseDistance + margin); // Minimum 0.5 units away
+            
+            if (smooth) 
+                _camAnimating = true; 
+            else 
+            { 
+                _target = _targetGoal; 
+                _distance = _distanceGoal; 
+                _camAnimating = false; 
+            }
         }
 
         // ===================== DRAG + SNAPPING =====================
@@ -7194,6 +6984,22 @@ void main(){
             );
         }
 
+        /// <summary>
+        /// Right-handed LookAt for OpenGL (preserves winding order).
+        /// </summary>
+        private static Matrix4 LookAtRH(in Vector3 eye, in Vector3 target, in Vector3 up)
+        {
+            var f = Vector3.Normalize(target - eye);
+            var s = Vector3.Normalize(Vector3.Cross(f, up));  // RH
+            var u = Vector3.Cross(s, f);
+            return new Matrix4(
+                new Vector4(s.X, u.X, -f.X, 0f),  // -f for RH
+                new Vector4(s.Y, u.Y, -f.Y, 0f),
+                new Vector4(s.Z, u.Z, -f.Z, 0f),
+                new Vector4(-Vector3.Dot(s, eye), -Vector3.Dot(u, eye), Vector3.Dot(f, eye), 1f)
+            );
+        }
+
         public void ClearMaterialCache()
         {
             _materialCache.Clear();
@@ -7218,24 +7024,55 @@ void main(){
 
                 mr.Metallic = mat.Metallic;
                 mr.Smoothness = 1.0f - mat.Roughness;
+                mr.OcclusionStrength = mat.OcclusionStrength;
+                if (mat.EmissiveColor != null && mat.EmissiveColor.Length >= 3)
+                    mr.EmissiveColor = new float[] { mat.EmissiveColor[0], mat.EmissiveColor[1], mat.EmissiveColor[2] };
+                mr.HeightScale = mat.HeightScale;
                 mr.TextureTiling = mat.TextureTiling ?? new float[] { 1f, 1f };
                 mr.TextureOffset = mat.TextureOffset ?? new float[] { 0f, 0f };
                 mr.NormalStrength = mat.NormalStrength;
-                mr.TransparencyMode = mat.TransparencyMode;
+                // DO NOT overwrite TransparencyMode here - it should only change when user explicitly
+                // changes "Render Mode" dropdown, not when editing other properties like Smoothness.
+                // mr.TransparencyMode = mat.TransparencyMode;
+                
+                // Update stylization parameters
+                mr.Saturation = mat.Saturation;
+                mr.Brightness = mat.Brightness;
+                mr.Contrast = mat.Contrast;
+                mr.Hue = mat.Hue;
+                mr.Emission = mat.Emission;
 
                 // If texture GUIDs changed, attempt to update texture handles.
+                var resolver = new Func<Guid, string?>(g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null);
                 try
                 {
+                    // Base textures
                     if (mat.AlbedoTexture.HasValue)
-                    {
-                        var resolver = new Func<Guid, string?>(g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null);
                         mr.AlbedoTex = Engine.Rendering.TextureCache.GetOrLoad(mat.AlbedoTexture.Value, resolver);
-                    }
                     if (mat.NormalTexture.HasValue)
-                    {
-                        var resolver = new Func<Guid, string?>(g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null);
                         mr.NormalTex = Engine.Rendering.TextureCache.GetOrLoad(mat.NormalTexture.Value, resolver);
-                    }
+                    
+                    // PBR textures
+                    if (mat.MetallicTexture.HasValue)
+                        mr.MetallicTex = Engine.Rendering.TextureCache.GetOrLoad(mat.MetallicTexture.Value, resolver);
+                    if (mat.RoughnessTexture.HasValue)
+                        mr.RoughnessTex = Engine.Rendering.TextureCache.GetOrLoad(mat.RoughnessTexture.Value, resolver);
+                    if (mat.MetallicRoughnessTexture.HasValue)
+                        mr.MetallicRoughnessTex = Engine.Rendering.TextureCache.GetOrLoad(mat.MetallicRoughnessTexture.Value, resolver);
+                    if (mat.OcclusionTexture.HasValue)
+                        mr.OcclusionTex = Engine.Rendering.TextureCache.GetOrLoad(mat.OcclusionTexture.Value, resolver);
+                    if (mat.EmissiveTexture.HasValue)
+                        mr.EmissiveTex = Engine.Rendering.TextureCache.GetOrLoad(mat.EmissiveTexture.Value, resolver);
+                    if (mat.HeightTexture.HasValue)
+                        mr.HeightTex = Engine.Rendering.TextureCache.GetOrLoad(mat.HeightTexture.Value, resolver);
+                    
+                    // Detail textures
+                    if (mat.DetailMaskTexture.HasValue)
+                        mr.DetailMaskTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailMaskTexture.Value, resolver);
+                    if (mat.DetailAlbedoTexture.HasValue)
+                        mr.DetailAlbedoTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailAlbedoTexture.Value, resolver);
+                    if (mat.DetailNormalTexture.HasValue)
+                        mr.DetailNormalTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailNormalTexture.Value, resolver);
                 }
                 catch { }
 
@@ -7245,6 +7082,24 @@ void main(){
             catch (Exception ex)
             {
                 try { Console.WriteLine($"[ViewportRenderer] ApplyLiveMaterialUpdate failed for {materialGuid}: {ex.Message}"); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Update ONLY the TransparencyMode for a cached material. Use this when user explicitly
+        /// changes Render Mode dropdown to avoid unwanted side effects during other property edits.
+        /// </summary>
+        public void UpdateMaterialTransparency(Guid materialGuid, int transparencyMode)
+        {
+            try
+            {
+                if (!_materialCache.TryGetValue(materialGuid, out var mr)) return;
+                mr.TransparencyMode = transparencyMode;
+                _forceMaterialRebind = true;
+            }
+            catch (Exception ex)
+            {
+                try { Console.WriteLine($"[ViewportRenderer] UpdateMaterialTransparency failed for {materialGuid}: {ex.Message}"); } catch { }
             }
         }
 
@@ -7307,7 +7162,6 @@ void main(){
             _materialUniformBuffers.Clear();
             _grid?.Dispose();
             _skyboxRenderer?.Dispose();
-            _ssaoRenderer?.Dispose();
             _terrainRenderer?.Dispose();
 
             // === NEW: Dispose Modern Shadow System ===
@@ -7332,6 +7186,8 @@ void main(){
             if (_fbo != 0) GL.DeleteFramebuffer(_fbo);
             if (_postTex != 0) GL.DeleteTexture(_postTex);
             if (_postFbo != 0) GL.DeleteFramebuffer(_postFbo);
+            if (_postTex2 != 0) GL.DeleteTexture(_postTex2);
+            if (_postFbo2 != 0) GL.DeleteFramebuffer(_postFbo2);
             if (_velocityTex != 0) GL.DeleteTexture(_velocityTex);
             if (_velocityFbo != 0) GL.DeleteFramebuffer(_velocityFbo);
             _velocityShader?.Dispose();
@@ -7358,56 +7214,190 @@ void main(){
                     return;
                 }
 
-                // Create post-process context
-                // Ensure post target contains the base color image first (so it's never empty)
+                // Mark post texture as healthy if FBOs exist
                 if (_postFbo != 0 && _fbo != 0)
                 {
-                    try
-                    {
-                        // Blit color from _fbo (read) to _postFbo (draw)
-                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
-                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
-                        GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
-                        GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
-                        GL.BlitFramebuffer(0, 0, _w, _h, 0, 0, _w, _h, ClearBufferMask.ColorBufferBit, 
-                        BlitFramebufferFilter.Nearest);
+                    _postTexHealthy = true;
+                }
 
-                        
-                        // Check for GL errors after blit
-                        var err = GL.GetError();
-                        if (err != ErrorCode.NoError)
+                // Post-process effects with ping-pong between two buffers to avoid read/write conflicts
+                // Get all active post-process effects from the scene
+                var allEffects = new List<(Engine.Components.PostProcessEffect effect, Engine.Components.IPostProcessRenderer renderer)>();
+                
+                foreach (var entity in _scene.Entities)
+                {
+                    if (!entity.Active) continue;
+                    var globalEffects = entity.GetComponent<Engine.Components.GlobalEffects>();
+                    if (globalEffects == null || !globalEffects.Enabled) continue;
+                    
+                    foreach (var effect in globalEffects.Effects.Where(e => e?.Enabled == true).OrderBy(e => e?.Priority ?? 0))
+                    {
+                        if (effect == null) continue;
+                        // Get renderer for this effect type
+                        if (Engine.Rendering.PostProcessManager.TryGetRenderer(effect.GetType(), out var renderer))
                         {
-                            _postTexHealthy = false;
+                            allEffects.Add((effect, renderer));
                         }
-                    }
-                    catch (Exception)
-                    {
-                        _postTexHealthy = false;
-                    }
-                    finally
-                    {
-                        // Restore default framebuffer binding to our scene FBO and reset read/draw buffers
-                        try { GL.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo); } catch { }
-                        try { GL.ReadBuffer(ReadBufferMode.ColorAttachment0); } catch { }
-                        try { GL.DrawBuffer(DrawBufferMode.ColorAttachment0); } catch { }
                     }
                 }
 
-                // Post-process: read from the color texture and write into the separate post FBO
-                var context = new Engine.Components.PostProcessContext(
-                    (uint)_colorTex,  // Source texture (raw color buffer)
-                    (uint)(_postFbo != 0 ? _postFbo : _fbo), // Target framebuffer -> prefer postFbo
-                    _w, _h,           // Dimensions
-                    0.016f,           // Delta time (approximation)
-                    _scene            // Associate current scene to scope post-process effects
-                );
+                // When no effects are active, copy _colorTex to _postFbo using BlitFramebuffer
+                // (faster than using a shader for a simple copy)
+                if (allEffects.Count == 0)
+                {
+                    if (_postFbo != 0 && _colorTex != 0)
+                    {
+                        try
+                        {
+                            // Use glCopyImageSubData for a fast, artifact-free copy
+                            // This is faster than BlitFramebuffer and avoids edge artifacts
+                            GL.CopyImageSubData(
+                                _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _w, _h, 1
+                            );
+                            _postTexHealthy = true;
+                        }
+                        catch (Exception)
+                        {
+                            // Fallback to blit if CopyImageSubData is not supported
+                            try
+                            {
+                                GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+                                GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                                GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
+                                GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+                                GL.BlitFramebuffer(0, 0, _w, _h, 0, 0, _w, _h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+                                _postTexHealthy = true;
+                            }
+                            catch (Exception)
+                            {
+                                _postTexHealthy = false;
+                            }
+                        }
+                    }
+                }
+                // Apply effects with ping-pong: read from source, write to target, then swap
+                else if (allEffects.Count > 0)
+                {
+                    // Start by reading from _colorTex (the rendered scene)
+                    int srcTex = _colorTex;
+
+                    // Choose starting buffer based on effect count to ensure final result lands in _postFbo
+                    // With odd number of effects: start with _postFbo (1st->_postFbo, 2nd->_postFbo2, 3rd->_postFbo)
+                    // With even number of effects: start with _postFbo2 (1st->_postFbo2, 2nd->_postFbo)
+                    int dstFbo = (allEffects.Count % 2 == 1) ? _postFbo : _postFbo2;
+                    int dstTex = (allEffects.Count % 2 == 1) ? _postTex : _postTex2;
+                    
+                    // Log only on first frame or when effect count changes
+                    
+                    for (int i = 0; i < allEffects.Count; i++)
+                    {
+                        var (effect, renderer) = allEffects[i];
+
+                        // Create context for this effect
+                        var context = new Engine.Components.PostProcessContext(
+                            (uint)srcTex,
+                            (uint)dstFbo,
+                            _w, _h,
+                            0.016f,
+                            _scene
+                        );
+                        
+                        // Add depth texture and matrices for effects that need them (SSAO, GTAO, TAA, etc.)
+                        context.DepthTexture = (uint)_depthTex;
+                        context.ProjectionMatrix = _projGL;
+                        context.ViewMatrix = _viewGL;
+                        
+                        // Bind target and render effect
+                        try
+                        {
+                            GL.BindFramebuffer(FramebufferTarget.Framebuffer, dstFbo);
+                            GL.Viewport(0, 0, _w, _h);
+
+                            // Clear the target to ensure no artifacts from previous content
+                            GL.ClearColor(0, 0, 0, 1);
+                            GL.Clear(ClearBufferMask.ColorBufferBit);
+
+                            // Ensure clean state for post-processing
+                            GL.Disable(EnableCap.DepthTest);
+                            GL.Disable(EnableCap.Blend);
+                            GL.Disable(EnableCap.CullFace);
+                            GL.Disable(EnableCap.ScissorTest);
+
+                            renderer.Render(effect, context);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[ViewportRenderer] Post-effect error: {ex.Message}");
+                        }
+                        
+                        // Ping-pong: for next effect, read from what we just wrote
+                        if (i < allEffects.Count - 1)
+                        {
+                            // Next effect reads from the texture we just wrote to
+                            srcTex = dstTex;
+
+                            // Swap buffers for next iteration
+                            if (dstFbo == _postFbo)
+                            {
+                                dstFbo = _postFbo2;
+                                dstTex = _postTex2;
+                            }
+                            else
+                            {
+                                dstFbo = _postFbo;
+                                dstTex = _postTex;
+                            }
+                        }
+                    }
+
+                    // Final result is now guaranteed to be in _postFbo/_postTex (no need for final blit)
+                }
 
                 // Console.WriteLine($"[ViewportRenderer] Created PostProcessContext, calling PostProcessManager.ApplyEffects");
 
-                // Apply all registered post-process effects (safe mode)
-                Engine.Rendering.PostProcessManager.ApplyEffects(context);
+                // NOTE: We no longer call PostProcessManager.ApplyEffects() here as we handle ping-pong manually above
 
                 // Console.WriteLine($"[ViewportRenderer] Post-process effects applied successfully");
+
+                // === SELECTION OUTLINE POST-PROCESS ===
+                // Render outline AFTER other post-effects so it appears on top and isn't overwritten
+                // IMPORTANT: We check if selection outline should be rendered
+                bool shouldRenderOutline = _postFbo != 0 && _postTex != 0 && _postFbo2 != 0 && 
+                                          _outlineRenderer != null && Scene != null &&
+                                          Editor.State.EditorSettings.Outline.Enabled &&
+                                          Editor.State.Selection.ActiveEntityId != 0;
+                
+                if (shouldRenderOutline)
+                {
+                    // Render outline into _postFbo2 (reading from _postTex, writing to _postTex2)
+                    RenderSelectionOutline();
+                    
+                    // Copy result back from _postFbo2 to _postFbo (final output)
+                    // This ensures the outline is in the correct buffer for display
+                    if (_postFbo2 != 0 && _postTex2 != 0)
+                    {
+                        try
+                        {
+                            GL.CopyImageSubData(
+                                _postTex2, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _w, _h, 1
+                            );
+                        }
+                        catch
+                        {
+                            // Fallback to blit
+                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo2);
+                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                            GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
+                            GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+                            GL.BlitFramebuffer(0, 0, _w, _h, 0, 0, _w, _h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+                        }
+                    }
+                }
+                // Note: When no outline is needed, _postTex already contains the final image from post-processing
 
                 // Verify that the post texture actually contains a valid image; some drivers may
                 // leave the texture uninitialized or the FBO incomplete even when creation succeeded.
