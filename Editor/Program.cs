@@ -4,12 +4,14 @@ using OpenTK.Windowing.Desktop;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Serilog;
+using Editor.Logging;
 using Engine.Core;
 using Engine.UI;
 using Editor.ImGuiBackend;
 using Editor.Panels;
 using Editor.Rendering;
 using Editor.SceneManagement;
+using Engine.Utils;
 
 namespace Editor;
 
@@ -52,16 +54,49 @@ public static class Program
     [STAThread] // Required for WinForms
     public static void Main(string[] args)
     {
+        // If invoked with PMREM import arguments, run the importer and exit.
+        // Usage example:
+        // dotnet run --project Editor/Editor.csproj -- --pmrem --cmgen "C:\path\cmgen.exe" --input "C:\path\env.hdr" --out "Generated/Env" --size 512
+        if (args != null && args.Length > 0 && Array.Exists(args, a => string.Equals(a, "--pmrem", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                var ret = Editor.Tools.PMREMImporter.RunFromArgs(args);
+                Environment.Exit(ret);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"PMREM Import failed: {ex.Message}\n{ex.StackTrace}");
+                Environment.Exit(10);
+            }
+        }
         // CRITICAL FIX: Set working directory to executable location so shader files are found
         // When using 'dotnet run', the working directory is the project root, not bin/Debug/
         var exeDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
         if (!string.IsNullOrEmpty(exeDir))
         {
             System.IO.Directory.SetCurrentDirectory(exeDir);
-            Console.WriteLine($"[Program] Set working directory to: {exeDir}");
+            
+            // Redirect Console output to the engine debug logger to keep the terminal clean.
+            // TEMPORARILY DISABLED FOR DEBUGGING
+            /*try
+            {
+                Console.SetOut(new Engine.Utils.ConsoleLogWriter());
+                Console.SetError(new Engine.Utils.ConsoleLogWriter());
+            }
+            catch { }*/
+            
+            // Also write a short startup message to the engine log
+            DebugLogger.Log($"[Program] Set working directory to: {exeDir}");
         }
 
-        Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateLogger();
+        // Configure Serilog: route events to both the terminal and the in-editor Console panel.
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .WriteTo.Console()
+            .WriteTo.Sink(new ConsolePanelSink())
+            .CreateLogger();
+
         Log.Information("{Name} Editor starting v{Version}", EngineInfo.Name, EngineInfo.Version);
 
         var native = new NativeWindowSettings()
@@ -130,7 +165,7 @@ public static class Program
             loadingManager.UpdateStep("Loading editor theme...");
             Editor.Utils.StartupProfiler.BeginSection("Theme Manager Init");
             var savedTheme = Editor.State.EditorSettings.ThemeName;
-            Console.WriteLine($"[Program] Initializing theme system with theme: {savedTheme}");
+            Log.Information("Initializing theme system with theme: {Theme}", savedTheme);
             Editor.Themes.ThemeManager.Initialize(savedTheme);
             Editor.Utils.StartupProfiler.EndSection();
 
@@ -142,11 +177,12 @@ public static class Program
 
             loadingManager.UpdateStep("Configuring SSAO settings...");
             // Load saved SSAO settings from EditorSettings
-            Editor.Utils.StartupProfiler.BeginSection("SSAO Settings Load");
-            var loadedSSAO = Editor.State.EditorSettings.SSAOSettings;
-            Console.WriteLine($"[Program] Loading SSAO settings: Radius={loadedSSAO.Radius}, Intensity={loadedSSAO.Intensity}, SampleCount={loadedSSAO.SampleCount}, Enabled={loadedSSAO.Enabled}");
-            viewport.SSAOSettings = loadedSSAO;
-            Editor.Utils.StartupProfiler.EndSection();
+            // NOTE: SSAO settings load removed - SSAO is now configured via GlobalEffects component
+            // Editor.Utils.StartupProfiler.BeginSection("SSAO Settings Load");
+            // var loadedSSAO = Editor.State.EditorSettings.SSAOSettings;
+            // Console.WriteLine($"[Program] Loading SSAO settings: Radius={loadedSSAO.Radius}, Intensity={loadedSSAO.Intensity}, SampleCount={loadedSSAO.SampleCount}, Enabled={loadedSSAO.Enabled}");
+            // viewport.SSAOSettings = loadedSSAO;
+            // Editor.Utils.StartupProfiler.EndSection();
 
             // Ensure viewport subscribes to material changes for real-time updates
             Engine.Assets.AssetDatabase.MaterialSaved += viewport.OnMaterialSaved;
@@ -157,13 +193,27 @@ public static class Program
             InitScripting();
             Editor.Utils.StartupProfiler.EndSection();
 
+            // --- Initialize AudioEngine ---
+            loadingManager.UpdateStep("Initializing audio engine...");
+            Editor.Utils.StartupProfiler.BeginSection("AudioEngine Init");
+            try
+            {
+                Engine.Audio.Core.AudioEngine.Instance.Initialize();
+                Log.Information("AudioEngine initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to initialize AudioEngine");
+            }
+            Editor.Utils.StartupProfiler.EndSection();
+
             // --- Initialize AssetDatabase BEFORE loading scene ---
             loadingManager.UpdateStep("Loading asset database...");
             Editor.Utils.StartupProfiler.BeginSection("AssetDatabase Init");
             System.IO.Directory.CreateDirectory(Editor.State.ProjectPaths.AssetsDir);
             Engine.Assets.AssetDatabase.Initialize(Editor.State.ProjectPaths.AssetsDir);
             Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial();
-            Console.WriteLine("[Program] AssetDatabase initialized");
+            Log.Information("AssetDatabase initialized");
             Editor.Utils.StartupProfiler.EndSection();
 
             // Auto-load last scene if available
@@ -186,9 +236,9 @@ public static class Program
             // --- PostProcessManager init ---
             loadingManager.UpdateStep("Initializing post-processing...");
             Editor.Utils.StartupProfiler.BeginSection("PostProcess Manager Init");
-            Console.WriteLine("[Program] About to initialize PostProcessManager...");
+            Log.Information("About to initialize PostProcessManager...");
             Engine.Rendering.PostProcessManager.Initialize();
-            Console.WriteLine("[Program] PostProcessManager initialized successfully!");
+            Log.Information("PostProcessManager initialized successfully");
             Editor.Utils.StartupProfiler.EndSection();
 
             // Complete loading
@@ -250,6 +300,9 @@ public static class Program
             // Update InputSystem
             Engine.Input.InputManager.Instance?.Update();
 
+            // Update AudioEngine
+            Engine.Audio.Core.AudioEngine.Instance.Update((float)e.Time);
+
             // Mettre à jour la simulation du jeu en Play Mode
             PlayMode.UpdateSimulation((float)e.Time);
 
@@ -278,7 +331,7 @@ public static class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Program] DeferredActions.ProcessAll failed: {ex.Message}");
+                Log.Error(ex, "DeferredActions.ProcessAll failed");
             }
         };
 
@@ -294,11 +347,11 @@ public static class Program
             if (!text.Contains("##")) return;
             var newText = text.Replace("##", "_");
             System.IO.File.WriteAllText(path, newText);
-            Console.WriteLine($"[Program] Sanitized ImGui ini: {path}");
+            Log.Information("Sanitized ImGui ini: {Path}", path);
         }
         catch (Exception ex)
         {
-            try { Console.WriteLine($"[Program] Failed to sanitize ini {path}: {ex.Message}"); } catch { }
+            try { Log.Warning(ex, "Failed to sanitize ini {Path}", path); } catch { }
         }
     }
 }

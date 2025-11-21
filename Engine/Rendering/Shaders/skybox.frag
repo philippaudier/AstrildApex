@@ -1,8 +1,11 @@
 #version 330 core
 
-out vec4 FragColor;
+layout(location=0) out vec4 FragColor;
+layout(location=1) out uint outId;
 
 in vec3 TexCoords;
+
+uniform uint u_ObjectId;
 
 
 uniform float exposure;              
@@ -29,9 +32,10 @@ uniform float sunSize;
 uniform float sunSizeConvergence;    
 
 
-vec3 tonemapExposure(vec3 c, float exposure) {
-
-    return c * exposure;
+// Simple Reinhard tonemapping (LearnOpenGL standard)
+// Maps HDR to LDR while preserving color ratios
+vec3 ReinhardTonemap(vec3 hdr) {
+    return hdr / (hdr + vec3(1.0));
 }
 
 void main()
@@ -40,7 +44,8 @@ void main()
 
     vec3 color;
     if (uMode == 0) {
-   
+        // Cubemap mode: sample the cubemap texture
+        // Note: dir should already be normalized from vertex shader
         color = texture(skybox, dir).rgb;
         color *= tintColor;
     } else {
@@ -67,9 +72,17 @@ void main()
         color = mix(color, sunTint, sunMask);
     }
 
+    // Unity-style HDR skybox processing (NO tonemapping for skybox!):
+    // 1. Apply exposure to HDR linear values
+    color = color * max(exposure, 0.0);
 
-    color = tonemapExposure(color, max(exposure, 0.0));
-    color = pow(color, vec3(1.0/2.2));
+    // 2. Clamp to prevent overflow (but keep HDR feel)
+    color = min(color, vec3(65504.0)); // Max value for half-float
+
+    // 3. Gamma correct ONLY: convert from linear to sRGB for display
+    // Unity does NOT apply tonemapping to skyboxes - just gamma
+    // TESTING: Try without gamma to see if colors appear
+    // color = pow(color, vec3(1.0/2.2));
 
     #ifdef SKIP_FOG
     FragColor = vec4(color, 1.0);
@@ -102,4 +115,7 @@ void main()
 
     FragColor = vec4(color, 1.0);
     #endif
+    
+    // Write entity ID for object picking and selection outline
+    outId = u_ObjectId;
 }

@@ -165,23 +165,40 @@ vec3 calculateSpotLights(vec3 worldPos, vec3 N, vec3 V, MaterialProperties mater
 }
 
 // Calculate ambient lighting contribution
-vec3 calculateAmbientLighting(MaterialProperties material) {
-    return material.baseColor * uAmbientColor * uAmbientIntensity * (1.0 - material.metallic * 0.5);
+// Note: This function needs world position which is not in MaterialProperties
+vec3 calculateAmbientLighting(MaterialProperties material, vec3 worldPos) {
+    // Use IBL if available, otherwise fallback to uniform ambient color
+    vec3 ambient;
+    if (u_HasIBL != 0) {
+        // Use full IBL calculation including diffuse + specular (metallic/roughness aware)
+        vec3 V = normalize(uCameraPos - worldPos);
+
+        // material.F0 is already calculated, but recalculate for consistency
+        vec3 F0 = mix(vec3(0.04), material.baseColor, material.metallic);
+
+        // calculateIBL returns proper diffuse + specular based on material properties
+        ambient = calculateIBL(material.normal, V, material.roughness, F0, material.baseColor) * uAmbientIntensity;
+    } else {
+        // Fallback to uniform ambient color
+        ambient = material.baseColor * uAmbientColor * uAmbientIntensity * (1.0 - material.metallic * 0.5);
+    }
+    return ambient;
 }
 
 // Calculate ambient lighting with SSAO
-vec3 calculateAmbientLightingWithSSAO(MaterialProperties material, vec2 screenCoord, vec2 screenSize,
+vec3 calculateAmbientLightingWithSSAO(MaterialProperties material, vec3 worldPos, vec2 screenCoord, vec2 screenSize,
                                      sampler2D ssaoTexture, int ssaoEnabled, float ssaoStrength) {
-    vec3 ambient = calculateAmbientLighting(material);
+    vec3 ambient = calculateAmbientLighting(material, worldPos);
 
     // Apply SSAO if enabled
     if (ssaoEnabled != 0) {
         vec2 ssaoUV = screenCoord / screenSize;
         float ssaoFactor = texture(ssaoTexture, ssaoUV).r;
 
-        // Allow full darkening; leave control to ssaoStrength
+        // ssaoStrength controls how much the AO darkens (1.0 = normal, >1.0 = stronger darkening)
+        // Apply power to increase darkening effect
+        ssaoFactor = pow(ssaoFactor, ssaoStrength);
         ssaoFactor = clamp(ssaoFactor, 0.0, 1.0);
-        ssaoFactor = mix(1.0, ssaoFactor, clamp(ssaoStrength, 0.0, 1.0));
 
         ambient *= ssaoFactor;
     }

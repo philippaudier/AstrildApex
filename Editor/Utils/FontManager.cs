@@ -71,7 +71,7 @@ namespace Editor.Utils
 
                 if (!Directory.Exists(fontsDir))
                 {
-                    Console.WriteLine($"[FontManager] Fonts directory not found: {fontsDir}");
+                    try { Engine.Utils.DebugLogger.Log($"[FontManager] Fonts directory not found: {fontsDir}"); } catch { }
                     return;
                 }
 
@@ -80,7 +80,7 @@ namespace Editor.Utils
                 fontFiles.AddRange(Directory.GetFiles(fontsDir, "*.ttf", SearchOption.TopDirectoryOnly));
                 fontFiles.AddRange(Directory.GetFiles(fontsDir, "*.otf", SearchOption.TopDirectoryOnly));
 
-                Console.WriteLine($"[FontManager] Found {fontFiles.Count} font files in {fontsDir}");
+                try { Engine.Utils.DebugLogger.Log($"[FontManager] Found {fontFiles.Count} font files in {fontsDir}"); } catch { }
 
                 foreach (var filePath in fontFiles)
                 {
@@ -96,18 +96,18 @@ namespace Editor.Utils
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[FontManager] Error processing font {filePath}: {ex.Message}");
+                        try { Engine.Utils.DebugLogger.Log($"[FontManager] Error processing font {filePath}: {ex.Message}"); } catch { }
                     }
                 }
 
                 // Sort alphabetically by display name
                 _availableFonts = _availableFonts.OrderBy(f => f.DisplayName).ToList();
 
-                Console.WriteLine($"[FontManager] Successfully loaded {_availableFonts.Count} fonts");
+                try { Engine.Utils.DebugLogger.Log($"[FontManager] Successfully loaded {_availableFonts.Count} fonts"); } catch { }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FontManager] Error scanning fonts: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[FontManager] Error scanning fonts: {ex.Message}"); } catch { }
             }
         }
 

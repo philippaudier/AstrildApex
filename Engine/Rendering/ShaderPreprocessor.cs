@@ -37,10 +37,11 @@ namespace Engine.Rendering
         /// <returns>Fully processed shader source with all includes expanded</returns>
         public static string ProcessShaderCached(string shaderPath)
         {
-            if (!File.Exists(shaderPath))
+            var resolved = ResolveShaderFile(shaderPath);
+            if (resolved == null)
                 throw new FileNotFoundException($"Shader file not found: {shaderPath}");
 
-            var absolutePath = Path.GetFullPath(shaderPath);
+            var absolutePath = resolved;
             var lastModified = File.GetLastWriteTime(absolutePath);
 
             // Check cache validity
@@ -85,19 +86,72 @@ namespace Engine.Rendering
         /// <returns>Fully processed shader source</returns>
         public static string ProcessShader(string shaderPath)
         {
+            var resolved = ResolveShaderFile(shaderPath) ?? throw new FileNotFoundException($"Shader file not found: {shaderPath}");
             var dependencies = new HashSet<string>();
-            return ProcessShader(shaderPath, dependencies);
+            return ProcessShader(resolved, dependencies);
         }
 
         private static string ProcessShader(string shaderPath, HashSet<string> dependencies)
         {
-            if (!File.Exists(shaderPath))
-                throw new FileNotFoundException($"Shader file not found: {shaderPath}");
-
-            var absolutePath = Path.GetFullPath(shaderPath);
+            var resolved = ResolveShaderFile(shaderPath) ?? throw new FileNotFoundException($"Shader file not found: {shaderPath}");
+            var absolutePath = Path.GetFullPath(resolved);
             var includeStack = new Stack<string>();
 
             return ProcessShaderRecursive(absolutePath, dependencies, includeStack);
+        }
+
+        /// <summary>
+        /// Try to resolve a shader file path. Accepts absolute paths or relative ones and attempts
+        /// several common locations: the path as-is, relative to the current working directory,
+        /// relative to the application's base directory, and the Engine/Rendering/Shaders folder
+        /// inside the base directory.
+        /// </summary>
+        private static string? ResolveShaderFile(string shaderPath)
+        {
+            try
+            {
+                // If already absolute and exists
+                if (File.Exists(shaderPath))
+                    return Path.GetFullPath(shaderPath);
+
+                // Try relative to current working directory
+                var cwd = Path.GetFullPath(Directory.GetCurrentDirectory());
+                var candidate = Path.Combine(cwd, shaderPath);
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+
+                // Try relative to AppContext.BaseDirectory (where the exe runs)
+                var baseDir = AppContext.BaseDirectory ?? "";
+                candidate = Path.Combine(baseDir, shaderPath);
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+
+                // Try common Engine shader folder under baseDir
+                candidate = Path.Combine(baseDir, "Engine", "Rendering", "Shaders", Path.GetFileName(shaderPath));
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+
+                // If baseDir is inside bin/obj, try walking up a few parent directories to locate the repo root
+                var dir = new DirectoryInfo(baseDir);
+                for (int i = 0; i < 6 && dir.Parent != null; i++)
+                {
+                    dir = dir.Parent;
+                    candidate = Path.Combine(dir.FullName, "Engine", "Rendering", "Shaders", Path.GetFileName(shaderPath));
+                    if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+                }
+
+                // If a shader base path was configured, try that as well
+                if (!string.IsNullOrEmpty(_shaderBasePath))
+                {
+                    candidate = Path.Combine(_shaderBasePath, shaderPath);
+                    if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+                    candidate = Path.Combine(_shaderBasePath, Path.GetFileName(shaderPath));
+                    if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string ProcessShaderRecursive(string shaderPath, HashSet<string> dependencies, Stack<string> includeStack)

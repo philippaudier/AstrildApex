@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Editor.Logging;
 
 namespace Editor.Utils
 {
@@ -33,7 +34,7 @@ namespace Editor.Utils
                     act = _queue.Dequeue();
                 }
 
-                try { act?.Invoke(); } catch (Exception ex) { Console.WriteLine($"[DeferredActions] Action failed: {ex.Message}"); }
+                try { act?.Invoke(); } catch (Exception ex) { LogManager.LogError($"Action failed: {ex.Message}", "DeferredActions"); }
             }
         }
     }

@@ -20,7 +20,15 @@ namespace Engine.Components
         public override void OnAttached()
         {
             // Enregistrer ce GlobalEffects comme actif dans le système de rendu
+            Console.WriteLine($"[GlobalEffects] OnAttached() called! Entity={Entity?.Name}, EffectsCount={_effects.Count}");
             Engine.Rendering.PostProcessManager.RegisterGlobalEffects(this);
+            
+            // Log each effect
+            for (int i = 0; i < _effects.Count; i++)
+            {
+                var effect = _effects[i];
+                Console.WriteLine($"[GlobalEffects]   Effect {i}: {effect?.GetType().Name}, Enabled={effect?.Enabled}");
+            }
         }
 
         public override void OnDetached()
@@ -122,6 +130,15 @@ namespace Engine.Components
         // to the same scene. This prevents effects from one scene (editor/game)
         // being applied to another.
         public Engine.Scene.Scene? Scene { get; set; }
+        
+        // Depth texture for effects like SSAO
+        public uint DepthTexture { get; set; }
+        
+        // Projection matrix for screen-space effects
+        public OpenTK.Mathematics.Matrix4? ProjectionMatrix { get; set; }
+        
+        // View matrix for temporal reprojection
+        public OpenTK.Mathematics.Matrix4? ViewMatrix { get; set; }
 
         public PostProcessContext(uint sourceTexture, uint targetFramebuffer, int width, int height, float deltaTime = 0f, Engine.Scene.Scene? scene = null)
         {
@@ -131,6 +148,9 @@ namespace Engine.Components
             Height = height;
             DeltaTime = deltaTime;
             Scene = scene;
+            DepthTexture = 0;
+            ProjectionMatrix = null;
+            ViewMatrix = null;
         }
     }
 

@@ -4,6 +4,12 @@ using System.Threading.Tasks;
 using System.IO;
 using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
+using BCnEncoder.Decoder;
+using BCnEncoder.Shared;
+using BCnEncoder.ImageSharp;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 namespace Engine.Rendering
 {
@@ -62,14 +68,31 @@ namespace Engine.Rendering
             public int Height;
             public PixelInternalFormat InternalFormat;
             public int SizeInBytes;
+            // KTX-specific payload (for cubemaps / mipmaps)
+            public bool IsKtx;
+            public KtxLoader.KtxImage? Ktx;
         }
         
         public static int White1x1 { get; private set; } = 0;
         public static long TotalMemoryUsed => _totalMemoryUsed;
         public static int LoadedTextureCount => _textureNodes.Count;
+
+        /// <summary>
+        /// Checks if a texture is still pending upload (not yet ready to use)
+        /// </summary>
+        public static bool IsPending(Guid textureGuid)
+        {
+            return _pendingLoads.Contains(textureGuid);
+        }
         
         static TextureCache()
         {
+            // CRITICAL: Flip textures vertically to match OpenGL UV convention
+            // Image files have origin at top-left (0,0)
+            // OpenGL textures have origin at bottom-left (0,0)
+            // Combined with FlipUVs in ModelLoader, this ensures correct texture orientation
+            StbImage.stbi_set_flip_vertically_on_load(1);
+            
             _head.Next = _tail;
             _tail.Prev = _head;
         }
@@ -91,6 +114,8 @@ namespace Engine.Rendering
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
             
             GL.BindTexture(TextureTarget.Texture2D, 0);
+            // Enable seamless cubemap filtering globally to reduce seams when sampling across cube faces
+            try { GL.Enable(EnableCap.TextureCubeMapSeamless); } catch { }
         }
         
         public static int GetOrLoad(Guid textureGuid, Func<Guid, string?> resolvePath)
@@ -133,14 +158,18 @@ namespace Engine.Rendering
             // Capture values for background task
             var captureGuid = textureGuid;
             var capturePath = path;
+            try { Console.WriteLine($"[TextureCache] Scheduling background load for GUID={captureGuid} path={capturePath}"); } catch { }
 
             Task.Run(() =>
             {
                 try
                 {
+                    try { Console.WriteLine($"[TextureCache] Background loader started for path={capturePath}"); } catch { }
                     // Load image data on background thread (no GL calls)
                     using var fs = File.OpenRead(capturePath);
                     bool isHdr = capturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase);
+                    bool isDds = capturePath.EndsWith(".dds", StringComparison.OrdinalIgnoreCase);
+                    bool isKtx = capturePath.EndsWith(".ktx", StringComparison.OrdinalIgnoreCase);
 
                     // Read .meta (if exists) to detect normal map flags
                     bool metaIsNormal = false;
@@ -158,7 +187,102 @@ namespace Engine.Rendering
                     }
                     catch { }
 
-                    if (isHdr)
+                    if (isDds)
+                    {
+                        // Load DDS using BCnEncoder
+                        fs.Position = 0;
+                        var decoder = new BcDecoder();
+                        var image = decoder.DecodeToImageRgba32(fs);
+                        
+                        // Manually extract RGBA data to ensure correct format for OpenGL
+                        var rgba8Data = new byte[image.Width * image.Height * 4];
+                        int idx = 0;
+                        image.ProcessPixelRows(accessor =>
+                        {
+                            for (int y = 0; y < accessor.Height; y++)
+                            {
+                                var row = accessor.GetRowSpan(y);
+                                for (int x = 0; x < accessor.Width; x++)
+                                {
+                                    var pixel = row[x];
+                                    rgba8Data[idx++] = pixel.R;
+                                    rgba8Data[idx++] = pixel.G;
+                                    rgba8Data[idx++] = pixel.B;
+                                    rgba8Data[idx++] = pixel.A;
+                                }
+                            }
+                        });
+                        
+                        var fmt = ChooseOptimalFormat(rgba8Data, image.Width, image.Height);
+                        var size = CalculateTextureSize(image.Width, image.Height, fmt, true);
+                        var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = rgba8Data, Width = image.Width, Height = image.Height, InternalFormat = fmt, SizeInBytes = size };
+                        _uploadQueue.Enqueue(pl);
+                        try { Console.WriteLine($"[TextureCache] Enqueued DDS/LDR upload: {capturePath}"); } catch { }
+                        
+                        image.Dispose();
+                    }
+                    else if (isKtx)
+                    {
+                        try
+                        {
+                            fs.Position = 0;
+                            var ktx = KtxLoader.Load(capturePath);
+                            // Estimate size based on format
+                            long baseSize;
+                            if (ktx.InternalFormat == PixelInternalFormat.R11fG11fB10f)
+                            {
+                                // R11F_G11F_B10F: 4 bytes per pixel (packed 32-bit)
+                                baseSize = (long)ktx.Width * ktx.Height * 4 * ktx.NumFaces;
+                            }
+                            else if (ktx.Type == PixelType.HalfFloat)
+                            {
+                                // Half-float: 2 bytes per channel
+                                int channels = ktx.Format == PixelFormat.Rgba ? 4 : 3;
+                                baseSize = (long)ktx.Width * ktx.Height * channels * 2 * ktx.NumFaces;
+                            }
+                            else if (ktx.Type == PixelType.Float)
+                            {
+                                // Float: 4 bytes per channel
+                                int channels = ktx.Format == PixelFormat.Rgba ? 4 : 3;
+                                baseSize = (long)ktx.Width * ktx.Height * channels * 4 * ktx.NumFaces;
+                            }
+                            else
+                            {
+                                // Byte formats
+                                int channels = ktx.Format == PixelFormat.Rgba ? 4 : 3;
+                                baseSize = (long)ktx.Width * ktx.Height * channels * 1 * ktx.NumFaces;
+                            }
+                            int size = (int)(ktx.MipLevels > 1 ? baseSize * 1.33f : baseSize);
+
+                            var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = ktx.IsFloatFormat, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = null, Width = ktx.Width, Height = ktx.Height, InternalFormat = ktx.InternalFormat, SizeInBytes = size, IsKtx = true, Ktx = ktx };
+                            _uploadQueue.Enqueue(pl);
+                            try { Console.WriteLine($"[TextureCache] Enqueued KTX for upload: {capturePath}"); } catch { }
+                        }
+                        catch (Exception ex)
+                        {
+                            try { Console.WriteLine($"[TextureCache] KTX parse failed ({capturePath}): {ex.Message}"); } catch { }
+                            try { Console.WriteLine(ex.ToString()); } catch { }
+
+                            // Failed to parse KTX; fall through to generic loader
+                            try
+                            {
+                                fs.Position = 0;
+                                var img = StbImageSharp.ImageResult.FromStream(fs, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+                                var actualData = img.Data ?? new byte[] { 255, 255, 255, 255 };
+                                var fmt = ChooseOptimalFormat(actualData, img.Width, img.Height);
+                                var size = CalculateTextureSize(img.Width, img.Height, fmt, true);
+                                var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = actualData, Width = img.Width, Height = img.Height, InternalFormat = fmt, SizeInBytes = size };
+                                _uploadQueue.Enqueue(pl);
+                                try { Console.WriteLine($"[TextureCache] Enqueued fallback LDR upload for: {capturePath}"); } catch { }
+                            }
+                            catch (Exception ex2)
+                            {
+                                try { Console.WriteLine($"[TextureCache] Fallback LDR load also failed for {capturePath}: {ex2.Message}"); } catch { }
+                                try { Console.WriteLine(ex2.ToString()); } catch { }
+                            }
+                        }
+                    }
+                    else if (isHdr)
                     {
                         var hdr = StbImageSharp.ImageResultFloat.FromStream(fs, StbImageSharp.ColorComponents.RedGreenBlue);
                         // Convert HDR to LDR bytes for upload
@@ -166,6 +290,7 @@ namespace Engine.Rendering
                         var size = CalculateTextureSize(hdr.Width, hdr.Height, PixelInternalFormat.Rgba8, false);
                         var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = true, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = rgba8, Width = hdr.Width, Height = hdr.Height, InternalFormat = PixelInternalFormat.Rgba8, SizeInBytes = size };
                         _uploadQueue.Enqueue(pl);
+                        try { Console.WriteLine($"[TextureCache] Enqueued HDR->LDR upload: {capturePath}"); } catch { }
                     }
                     else
                     {
@@ -210,12 +335,13 @@ namespace Engine.Rendering
                         var size = CalculateTextureSize(img.Width, img.Height, fmt, true);
                         var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = actualData, Width = img.Width, Height = img.Height, InternalFormat = fmt, SizeInBytes = size };
                         _uploadQueue.Enqueue(pl);
+                        try { Console.WriteLine($"[TextureCache] Enqueued LDR upload: {capturePath}"); } catch { }
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // PERFORMANCE: Disabled log (only log critical failures)
-                    // Background load failed silently
+                    try { Console.WriteLine($"[TextureCache] Background loader exception for {capturePath}: {ex.Message}"); } catch { }
+                    try { Console.WriteLine(ex.ToString()); } catch { }
                 }
             });
 
@@ -249,26 +375,199 @@ namespace Engine.Rendering
 
                     EnsureCacheSpace();
 
-                    // Create GL texture from pixel data
-                    int handle = GL.GenTexture();
-                    GL.BindTexture(TextureTarget.Texture2D, handle);
-                    GL.TexImage2D(TextureTarget.Texture2D, 0, pl.InternalFormat, pl.Width, pl.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pl.PixelData);
-
-                    // Generate mipmaps for non-HDR uploads
-                    if (!pl.IsHdr)
+                    // Create GL texture from pixel data (handle KTX cubemaps specially)
+                    int handle;
+                    if (pl.IsKtx && pl.Ktx != null)
                     {
-                        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                        var k = pl.Ktx;
+                        try { Console.WriteLine($"[TextureCache] Starting KTX upload: {pl.Path}"); } catch { }
+
+                        // Validate that this is a cubemap (6 faces)
+                        if (k.NumFaces != 6)
+                        {
+                            try { Console.WriteLine($"[TextureCache] ERROR: KTX file is not a cubemap! NumFaces={k.NumFaces}, expected 6. Path={pl.Path}"); } catch { }
+                            // Fallback to white texture
+                            handle = White1x1;
+                        }
+                        else if (k.MipFaces.Count == 0)
+                        {
+                            try { Console.WriteLine($"[TextureCache] ERROR: KTX has no mipmap data! Path={pl.Path}"); } catch { }
+                            handle = White1x1;
+                        }
+                        else
+                        {
+                            // Create cubemap and upload per-mip, per-face data
+                            handle = GL.GenTexture();
+                            GL.BindTexture(TextureTarget.TextureCubeMap, handle);
+
+                            // CRITICAL FIX: Set proper pixel unpack parameters for KTX cubemap data
+                            // KTX files from cmgen have tightly packed data without row padding
+                            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);  // No alignment padding
+                            GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);   // Use width from glTexImage2D
+                            GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
+                            GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
+
+                            try { Console.WriteLine($"[TextureCache] Loading KTX cubemap: {k.Width}x{k.Height}, {k.MipLevels} mips, format={k.InternalFormat}, type={k.Type}"); } catch { }
+
+                            bool uploadFailed = false;
+                            try
+                            {
+                                for (int mip = 0; mip < k.MipLevels && !uploadFailed; mip++)
+                                {
+                                    int mipW = Math.Max(1, k.Width >> mip);
+                                    int mipH = Math.Max(1, k.Height >> mip);
+
+                                    if (mip >= k.MipFaces.Count)
+                                    {
+                                        try { Console.WriteLine($"[TextureCache] WARNING: Missing mip level {mip}, stopping at {mip} mips. Path={pl.Path}"); } catch { }
+                                        break;
+                                    }
+
+                                    var faceList = k.MipFaces[mip];
+                                    if (faceList == null || faceList.Length != 6)
+                                    {
+                                        try { Console.WriteLine($"[TextureCache] ERROR: Mip {mip} has invalid face count {faceList?.Length ?? 0}. Path={pl.Path}"); } catch { }
+                                        uploadFailed = true;
+                                        break;
+                                    }
+
+                                    try { Console.WriteLine($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
+
+                                    for (int f = 0; f < 6; f++)
+                                    {
+                                        var target = TextureTarget.TextureCubeMapPositiveX + f;
+                                        byte[] data = faceList[f] ?? Array.Empty<byte>();
+
+                                        if (data.Length == 0)
+                                        {
+                                            try { Console.WriteLine($"[TextureCache] ERROR: Face {f} mip {mip} has no data. Path={pl.Path}"); } catch { }
+                                            uploadFailed = true;
+                                            break;
+                                        }
+
+                                        try { Console.WriteLine($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
+
+                                        // Upload face data
+                                        if (k.IsCompressed)
+                                        {
+                                            // Use glCompressedTexImage2D for compressed formats
+                                            GL.CompressedTexImage2D(target, mip, (InternalFormat)k.InternalFormat, mipW, mipH, 0, data.Length, data);
+                                        }
+                                        else
+                                        {
+                                            // Use regular glTexImage2D for uncompressed formats
+                                            GL.TexImage2D(target, mip, k.InternalFormat, mipW, mipH, 0, k.Format, k.Type, data);
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                try { Console.WriteLine($"[TextureCache] EXCEPTION during KTX upload: {ex.Message}"); } catch { }
+                                try { Console.WriteLine(ex.ToString()); } catch { }
+                                uploadFailed = true;
+                            }
+
+                            if (uploadFailed)
+                            {
+                                try { Console.WriteLine($"[TextureCache] KTX upload failed, using fallback. Path={pl.Path}"); } catch { }
+                                try { GL.DeleteTexture(handle); } catch { }
+                                handle = White1x1;
+                            }
+                            else
+                            {
+                                // Only set filtering parameters if upload succeeded
+                                try
+                                {
+                                        try { Console.WriteLine($"[TextureCache] KTX upload SUCCESS"); } catch { }
+
+                                        // If KTX has only a single mip level and is not compressed, generate mipmaps
+                                        // on the GPU so that diffuse IBL sampling can use high LODs to blur
+                                        // the cubemap and remove visible face geometry in reflections.
+                                        if (k.MipLevels == 1 && !k.IsCompressed)
+                                        {
+                                            try
+                                            {
+                                                GL.GenerateMipmap(GenerateMipmapTarget.TextureCubeMap);
+                                                int maxDim = Math.Max(k.Width, k.Height);
+                                                int mipCount = (int)Math.Floor(Math.Log(maxDim, 2)) + 1;
+                                                k.MipLevels = Math.Max(1, mipCount);
+                                                try { Console.WriteLine($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                try { Console.WriteLine($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
+                                            }
+                                        }
+
+                                        if (k.MipLevels > 1)
+                                    {
+                                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                                    }
+                                    else
+                                    {
+                                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                                    }
+
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                                    
+                                    // Enable seamless cubemap filtering to eliminate seams at edges
+                                    GL.Enable(EnableCap.TextureCubeMapSeamless);
+                                    // Update global prefilter max LOD if possible
+                                    try { Engine.Rendering.SkyboxRenderer.PrefilterMaxLod = Math.Max(0.0f, (float)(k.MipLevels - 1)); } catch { }
+                                }
+                                catch (Exception ex)
+                                {
+                                    try { Console.WriteLine($"[TextureCache] Failed to set texture parameters: {ex.Message}"); } catch { }
+                                }
+                            }
+
+                            // Restore default pixel store parameters
+                            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+                            GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+                            GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
+                            GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
+
+                            // Unbind cubemap texture
+                            try { GL.BindTexture(TextureTarget.TextureCubeMap, 0); } catch { }
+                        }
+
+                        try { Console.WriteLine($"[TextureCache] Uploaded KTX cubemap: {pl.Path} -> handle={handle}"); } catch { }
                     }
                     else
                     {
-                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-                    }
+                        // Create 2D texture from pixel data
+                        handle = GL.GenTexture();
+                        GL.BindTexture(TextureTarget.Texture2D, handle);
+                        GL.TexImage2D(TextureTarget.Texture2D, 0, pl.InternalFormat, pl.Width, pl.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pl.PixelData);
 
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-                    GL.BindTexture(TextureTarget.Texture2D, 0);
+                        // Generate mipmaps for non-HDR uploads
+                        if (!pl.IsHdr)
+                        {
+                            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                            
+                            // Enable 16x anisotropic filtering to reduce texture shimmering at oblique angles
+                            if (GL.GetString(StringName.Extensions).Contains("GL_EXT_texture_filter_anisotropic"))
+                            {
+                                float maxAniso;
+                                GL.GetFloat((GetPName)0x84FF, out maxAniso);
+                                GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, Math.Min(16.0f, maxAniso));
+                            }
+                        }
+                        else
+                        {
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                        }
+
+                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+                        GL.BindTexture(TextureTarget.Texture2D, 0);
+                    }
 
                     var entry = new TextureEntry
                     {
@@ -280,8 +579,7 @@ namespace Engine.Rendering
                         IsResident = true
                     };
 
-                    // PERFORMANCE: Disabled log (only enabled during FlushPendingUploads)
-                    // try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
+                    try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
 
                     var node = new LRUNode { Key = pl.Guid, Value = entry };
                     _textureNodes[pl.Guid] = node;
@@ -323,31 +621,219 @@ namespace Engine.Rendering
                         existing.Value.LastUsedFrame = _currentFrame;
                         _pendingLoads.Remove(pl.Guid);
                         processed++;
+                        try { Console.WriteLine($"[TextureCache] Skipped duplicate upload for {pl.Path}"); } catch { }
+                        continue;
+                    }
+                    
+                    // Also skip if GUID already loaded (prevents duplicate uploads)
+                    if (_textureNodes.ContainsKey(pl.Guid))
+                    {
+                        var existing = _textureNodes[pl.Guid];
+                        MoveToHead(existing);
+                        existing.Value.LastUsedFrame = _currentFrame;
+                        _pendingLoads.Remove(pl.Guid);
+                        processed++;
+                        try { Console.WriteLine($"[TextureCache] Skipped duplicate GUID upload for {pl.Path}"); } catch { }
                         continue;
                     }
 
                     EnsureCacheSpace();
 
                     // Create GL texture from pixel data
-                    int handle = GL.GenTexture();
-                    GL.BindTexture(TextureTarget.Texture2D, handle);
-                    GL.TexImage2D(TextureTarget.Texture2D, 0, pl.InternalFormat, pl.Width, pl.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pl.PixelData);
+                        int handle;
+                        if (pl.IsKtx && pl.Ktx != null)
+                        {
+                            var k = pl.Ktx;
+                            try { Console.WriteLine($"[TextureCache] ProcessPending KTX: {k.Width}x{k.Height}, {k.MipLevels} mips, {k.NumFaces} faces, format={k.InternalFormat}, type={k.Type}, compressed={k.IsCompressed}"); } catch { }
 
-                    // Generate mipmaps for non-HDR uploads
-                    if (!pl.IsHdr)
-                    {
-                        GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
-                    }
-                    else
-                    {
-                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-                    }
+                            // Validate cubemap
+                            if (k.NumFaces != 6 || k.MipFaces.Count == 0)
+                            {
+                                try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Invalid KTX (faces={k.NumFaces}, mipCount={k.MipFaces.Count}). Path={pl.Path}"); } catch { }
+                                handle = White1x1;
+                            }
+                            // Check if this is a compressed format we don't support
+                            else if (k.IsCompressed && k.InternalFormat == PixelInternalFormat.R11fG11fB10f)
+                            {
+                                try { Console.WriteLine($"[TextureCache] ERROR: KTX claims to be compressed but format R11F_G11F_B10F is not a valid compressed format! (glInternalFormat=0x{k.GlInternalFormat:X})"); } catch { }
+                                try { Console.WriteLine($"[TextureCache] This may be caused by cmgen producing a KTX with an incorrect header or a compression we do not support. Path={pl.Path}"); } catch { }
+                                try { Console.WriteLine($"[TextureCache] Suggestion: Re-export using the Editor's PMREM generation or provide a source HDR/EXR file."); } catch { }
+                                handle = White1x1;
+                            }
+                            else
+                            {
+                                // Create cubemap and upload per-mip, per-face data
+                                handle = GL.GenTexture();
+                                GL.BindTexture(TextureTarget.TextureCubeMap, handle);
 
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
-                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-                    GL.BindTexture(TextureTarget.Texture2D, 0);
+                                // CRITICAL FIX: Set proper pixel unpack parameters for KTX cubemap data
+                                // KTX files from cmgen have tightly packed data without row padding
+                                GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);  // No alignment padding
+                                GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);   // Use width from glTexImage2D
+                                GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
+                                GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
+
+                                bool uploadFailed = false;
+                                try
+                                {
+                                    for (int mip = 0; mip < k.MipLevels && !uploadFailed; mip++)
+                                    {
+                                        if (mip >= k.MipFaces.Count) break;
+
+                                        int mipW = Math.Max(1, k.Width >> mip);
+                                        int mipH = Math.Max(1, k.Height >> mip);
+                                        var faceList = k.MipFaces[mip];
+
+                                        if (faceList == null || faceList.Length != 6)
+                                        {
+                                            try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Mip {mip} invalid face count {faceList?.Length ?? 0}"); } catch { }
+                                            uploadFailed = true;
+                                            break;
+                                        }
+
+                                        try { Console.WriteLine($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
+
+                                        // KTX stores faces in order: +X, -X, +Y, -Y, +Z, -Z
+                                        // OpenGL expects: GL_TEXTURE_CUBE_MAP_POSITIVE_X (+X), NEGATIVE_X (-X),
+                                        //                 POSITIVE_Y (+Y), NEGATIVE_Y (-Y), POSITIVE_Z (+Z), NEGATIVE_Z (-Z)
+                                        // The order is the same, so we upload directly
+                                        for (int f = 0; f < 6; f++)
+                                        {
+                                            var target = TextureTarget.TextureCubeMapPositiveX + f;
+                                            byte[] data = faceList[f] ?? Array.Empty<byte>();
+
+                                            if (data.Length == 0)
+                                            {
+                                                try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Face {f} mip {mip} has no data"); } catch { }
+                                                uploadFailed = true;
+                                                break;
+                                            }
+
+                                            try { Console.WriteLine($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
+
+                                            try
+                                            {
+                                                if (k.IsCompressed)
+                                                {
+                                                    // Use glCompressedTexImage2D for compressed formats
+                                                    GL.CompressedTexImage2D(target, mip, (InternalFormat)k.InternalFormat, mipW, mipH, 0, data.Length, data);
+                                                }
+                                                else
+                                                {
+                                                    // Use regular glTexImage2D for uncompressed formats
+                                                    GL.TexImage2D(target, mip, k.InternalFormat, mipW, mipH, 0, k.Format, k.Type, data);
+                                                }
+                                                
+                                                var error = GL.GetError();
+                                                if (error != OpenTK.Graphics.OpenGL4.ErrorCode.NoError)
+                                                {
+                                                    try { Console.WriteLine($"[TextureCache] GL ERROR uploading face {f} mip {mip}: {error}"); } catch { }
+                                                    uploadFailed = true;
+                                                    break;
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                try { Console.WriteLine($"[TextureCache] Exception uploading face {f}: {ex.Message}"); } catch { }
+                                                uploadFailed = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    try { Console.WriteLine($"[TextureCache] ProcessPending EXCEPTION: {ex.Message}"); } catch { }
+                                    uploadFailed = true;
+                                }
+
+                                if (uploadFailed)
+                                {
+                                    try { GL.DeleteTexture(handle); } catch { }
+                                    handle = White1x1;
+                                    try { Console.WriteLine($"[TextureCache] KTX upload FAILED, using white placeholder"); } catch { }
+                                }
+                                else
+                                {
+                                    try { Console.WriteLine($"[TextureCache] KTX upload SUCCESS"); } catch { }
+                                    // If KTX has only one mip level and is not compressed, generate mipmaps
+                                    // on the GPU so that diffuse IBL sampling can use high LODs to blur
+                                    // the cubemap and remove visible face geometry in reflections.
+                                    if (k.MipLevels == 1 && !k.IsCompressed)
+                                    {
+                                        try
+                                        {
+                                            GL.GenerateMipmap(GenerateMipmapTarget.TextureCubeMap);
+                                            int maxDim = Math.Max(k.Width, k.Height);
+                                            int mipCount = (int)Math.Floor(Math.Log(maxDim, 2)) + 1;
+                                            k.MipLevels = Math.Max(1, mipCount);
+                                            try { Console.WriteLine($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            try { Console.WriteLine($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
+                                        }
+                                    }
+
+                                    if (k.MipLevels > 1)
+                                    {
+                                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                                    }
+                                    else
+                                    {
+                                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                                    }
+
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                                    
+                                    // Enable seamless cubemap filtering to eliminate seams at edges
+                                    GL.Enable(EnableCap.TextureCubeMapSeamless);
+                                    
+                                    // Inform SkyboxRenderer (global) of max LOD for prefiltered environment
+                                    try { Engine.Rendering.SkyboxRenderer.PrefilterMaxLod = Math.Max(0.0f, (float)(k.MipLevels - 1)); } catch { }
+                                }
+
+                                // Restore default pixel store parameters
+                                GL.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+                                GL.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+                                GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
+                                GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
+
+                                GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                            }
+                        }
+                        else
+                        {
+                            // Create 2D texture from pixel data
+                            handle = GL.GenTexture();
+                            GL.BindTexture(TextureTarget.Texture2D, handle);
+                            GL.TexImage2D(TextureTarget.Texture2D, 0, pl.InternalFormat, pl.Width, pl.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pl.PixelData);
+
+                            if (!pl.IsHdr)
+                            {
+                                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+                                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                            
+                                if (GL.GetString(StringName.Extensions).Contains("GL_EXT_texture_filter_anisotropic"))
+                                {
+                                    float maxAniso;
+                                    GL.GetFloat((GetPName)0x84FF, out maxAniso);
+                                    GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, Math.Min(16.0f, maxAniso));
+                                }
+                            }
+                            else
+                            {
+                                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                            }
+
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+                            GL.BindTexture(TextureTarget.Texture2D, 0);
+                        }
 
                     var entry = new TextureEntry
                     {
@@ -359,8 +845,7 @@ namespace Engine.Rendering
                         IsResident = true
                     };
 
-                    // PERFORMANCE: Disabled log
-                    // try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
+                    try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
 
                     var node = new LRUNode { Key = pl.Guid, Value = entry };
                     _textureNodes[pl.Guid] = node;
@@ -370,9 +855,10 @@ namespace Engine.Rendering
 
                     _pendingLoads.Remove(pl.Guid);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // PERFORMANCE: Disabled log - upload failed silently
+                    try { Console.WriteLine($"[TextureCache] Failed to finalize upload for {pl.Path}: {ex.Message}"); } catch { }
+                    try { Console.WriteLine(ex.ToString()); } catch { }
                     _pendingLoads.Remove(pl.Guid);
                 }
 
@@ -442,12 +928,49 @@ namespace Engine.Rendering
         {
             using var fs = File.OpenRead(path);
             bool isHdr = path.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase);
+            bool isDds = path.EndsWith(".dds", StringComparison.OrdinalIgnoreCase);
             int handle = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, handle);
 
             int width, height;
             PixelInternalFormat internalFormat;
-            if (isHdr)
+            
+            if (isDds)
+            {
+                // Load DDS using BCnEncoder with ImageSharp
+                fs.Position = 0;
+                var decoder = new BcDecoder();
+                var image = decoder.DecodeToImageRgba32(fs);
+                
+                width = image.Width;
+                height = image.Height;
+                
+                // Manually extract RGBA data to ensure correct format for OpenGL
+                var rgba8Data = new byte[width * height * 4];
+                int idx = 0;
+                image.ProcessPixelRows(accessor =>
+                {
+                    for (int y = 0; y < accessor.Height; y++)
+                    {
+                        var row = accessor.GetRowSpan(y);
+                        for (int x = 0; x < accessor.Width; x++)
+                        {
+                            var pixel = row[x];
+                            rgba8Data[idx++] = pixel.R;
+                            rgba8Data[idx++] = pixel.G;
+                            rgba8Data[idx++] = pixel.B;
+                            rgba8Data[idx++] = pixel.A;
+                        }
+                    }
+                });
+                
+                internalFormat = ChooseOptimalFormat(rgba8Data, width, height);
+                GL.TexImage2D(TextureTarget.Texture2D, 0, internalFormat,
+                             width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, rgba8Data);
+                
+                image.Dispose();
+            }
+            else if (isHdr)
             {
                 // Load HDR with memory optimization for preview/UI use
                 fs.Position = 0;
@@ -520,7 +1043,7 @@ namespace Engine.Rendering
                 {
                     float maxAnisotropy;
                     GL.GetFloat((GetPName)0x84FF, out maxAnisotropy); // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
-                    GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, Math.Min(4.0f, maxAnisotropy)); // GL_TEXTURE_MAX_ANISOTROPY_EXT
+                    GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)0x84FE, Math.Min(16.0f, maxAnisotropy)); // GL_TEXTURE_MAX_ANISOTROPY_EXT
                 }
             }
             else
@@ -533,9 +1056,8 @@ namespace Engine.Rendering
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-            
             GL.BindTexture(TextureTarget.Texture2D, 0);
-            
+
             int sizeInBytes = CalculateTextureSize(width, height, internalFormat, !isHdr);
             
             return (handle, width, height, sizeInBytes);
@@ -561,6 +1083,7 @@ namespace Engine.Rendering
                 PixelInternalFormat.Rgb8 => 3,
                 PixelInternalFormat.Rgba8 => 4,
                 PixelInternalFormat.Rgba16f => 8,
+                PixelInternalFormat.Rgb16f => 6,
                 PixelInternalFormat.CompressedRgbaS3tcDxt1Ext => width * height / 2,
                 PixelInternalFormat.CompressedRgbaS3tcDxt5Ext => width * height,
                 _ => 4
@@ -652,6 +1175,55 @@ namespace Engine.Rendering
             }
 
             return ldrData;
+        }
+        
+        /// <summary>
+        /// Calculate bytes per pixel for a given format
+        /// </summary>
+        private static int GetBytesPerPixel(PixelInternalFormat internalFormat, PixelType type, PixelFormat format)
+        {
+            // Handle packed formats first
+            if (internalFormat == PixelInternalFormat.R11fG11fB10f || type == PixelType.UnsignedInt10F11F11FRev)
+            {
+                return 4; // R11F_G11F_B10F is 32-bit packed (4 bytes per pixel)
+            }
+            
+            // Calculate based on type and format
+            int bytesPerChannel = type switch
+            {
+                PixelType.UnsignedByte => 1,
+                PixelType.HalfFloat => 2,
+                PixelType.Float => 4,
+                _ => 1
+            };
+            
+            int channels = format switch
+            {
+                PixelFormat.Rgba => 4,
+                PixelFormat.Rgb => 3,
+                PixelFormat.Rg => 2,
+                PixelFormat.Red => 1,
+                _ => 4
+            };
+            
+            return bytesPerChannel * channels;
+        }
+        
+        /// <summary>
+        /// Get human-readable cubemap face name for debugging
+        /// </summary>
+        private static string GetFaceName(int faceIndex)
+        {
+            return faceIndex switch
+            {
+                0 => "+X (Right)",
+                1 => "-X (Left)",
+                2 => "+Y (Top)",
+                3 => "-Y (Bottom)",
+                4 => "+Z (Front)",
+                5 => "-Z (Back)",
+                _ => "Unknown"
+            };
         }
         
         // LRU management

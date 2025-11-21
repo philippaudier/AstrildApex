@@ -12,6 +12,10 @@ namespace Editor.Inspector
     /// </summary>
     public static class MeshRendererInspector
     {
+        // Cache pour éviter de charger le MeshAsset à chaque frame (cause des 6 FPS!)
+        private static Guid? _cachedMeshGuid = null;
+        private static MeshAsset? _cachedMeshAsset = null;
+        
         public static void Draw(MeshRendererComponent meshRenderer)
         {
             if (meshRenderer?.Entity == null) return;
@@ -23,6 +27,14 @@ namespace Editor.Inspector
             {
                 // Check if using custom mesh
                 bool usingCustomMesh = meshRenderer.IsUsingCustomMesh();
+                
+                // DEBUG: Afficher les valeurs brutes
+                if (ImGui.IsKeyDown(ImGuiKey.LeftShift))
+                {
+                    ImGui.TextDisabled($"[DEBUG] CustomMeshGuid: {meshRenderer.CustomMeshGuid}");
+                    ImGui.TextDisabled($"[DEBUG] IsUsingCustomMesh: {usingCustomMesh}");
+                    ImGui.TextDisabled($"[DEBUG] Mesh: {meshRenderer.Mesh}");
+                }
 
                 if (usingCustomMesh)
                 {
@@ -30,12 +42,21 @@ namespace Editor.Inspector
                     if (meshRenderer.CustomMeshGuid.HasValue)
                     {
                         var meshName = AssetDatabase.GetName(meshRenderer.CustomMeshGuid.Value);
-                        ImGui.Text($"Custom Mesh: {meshName}");
+                        
+                        ImGui.Text("Mesh Type:");
                         ImGui.SameLine();
-
+                        ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.8f, 0.4f, 1.0f), "Custom (Imported)");
+                        
+                        ImGui.Text("Mesh Asset:");
+                        ImGui.SameLine();
+                        ImGui.TextColored(new System.Numerics.Vector4(0.8f, 0.8f, 1.0f, 1.0f), meshName);
+                        
+                        ImGui.SameLine();
                         if (ImGui.SmallButton("Clear##CustomMesh"))
                         {
                             meshRenderer.ClearCustomMesh();
+                            _cachedMeshGuid = null; // Invalider le cache
+                            _cachedMeshAsset = null;
                         }
                         if (ImGui.IsItemHovered())
                         {
@@ -45,9 +66,13 @@ namespace Editor.Inspector
                 }
                 else
                 {
+                    ImGui.Text("Mesh Type:");
+                    ImGui.SameLine();
+                    ImGui.TextColored(new System.Numerics.Vector4(0.8f, 0.8f, 0.4f, 1.0f), "Primitive");
+                    
                     // Display primitive mesh selector
                     var mesh = meshRenderer.Mesh;
-                    InspectorWidgets.EnumField("Primitive", ref mesh, entityId, "Mesh",
+                    InspectorWidgets.EnumField("Shape", ref mesh, entityId, "Mesh",
                         tooltip: "Built-in primitive mesh shape");
                     meshRenderer.Mesh = mesh;
                 }
@@ -83,6 +108,8 @@ namespace Editor.Inspector
                         if (ImGui.Selectable("<None>", currentMeshGuid == Guid.Empty))
                         {
                             meshRenderer.ClearCustomMesh();
+                            _cachedMeshGuid = null; // Invalider le cache
+                            _cachedMeshAsset = null;
                         }
 
                         // List all available mesh assets
@@ -92,6 +119,8 @@ namespace Editor.Inspector
                             if (ImGui.Selectable($"{asset.Name} ({asset.Type})", isSelected))
                             {
                                 meshRenderer.SetCustomMesh(asset.Guid);
+                                _cachedMeshGuid = null; // Invalider le cache
+                                _cachedMeshAsset = null;
                             }
 
                             if (isSelected)
@@ -258,7 +287,16 @@ namespace Editor.Inspector
                 if (InspectorWidgets.Section("Mesh Info", defaultOpen: true,
                     tooltip: "Information about the loaded mesh"))
                 {
-                    var meshAsset = AssetDatabase.LoadMeshAsset(meshRenderer.CustomMeshGuid.Value);
+                    // Cache le MeshAsset pour éviter de le charger CHAQUE FRAME (cause des 6 FPS!)
+                    if (_cachedMeshGuid != meshRenderer.CustomMeshGuid.Value || _cachedMeshAsset == null)
+                    {
+                        _cachedMeshGuid = meshRenderer.CustomMeshGuid.Value;
+                        _cachedMeshAsset = AssetDatabase.LoadMeshAsset(_cachedMeshGuid.Value);
+                        Console.WriteLine($"[MeshRendererInspector] Loading mesh asset for inspection (cached)");
+                    }
+                    
+                    var meshAsset = _cachedMeshAsset;
+                    
                     if (meshAsset != null)
                     {
                         // Statistics
@@ -318,6 +356,49 @@ namespace Editor.Inspector
                     }
 
                     InspectorWidgets.EndSection();
+                }
+            }
+
+            // === COLLISION HELPER SECTION ===
+            if (meshRenderer.IsUsingCustomMesh() && meshRenderer.Entity != null)
+            {
+                // Vérifier si l'entité a déjà un MeshCollider spécifiquement
+                bool hasMeshCollider = meshRenderer.Entity.HasComponent<MeshCollider>();
+                bool hasAnyCollider = meshRenderer.Entity.HasComponent<Engine.Components.Collider>();
+
+                if (!hasMeshCollider)
+                {
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Spacing();
+
+                    if (!hasAnyCollider)
+                    {
+                        InspectorWidgets.InfoBox("💡 This mesh has no collision. Add a MeshCollider for precise collision detection.");
+                    }
+                    else
+                    {
+                        InspectorWidgets.InfoBox("💡 This mesh has a basic collider. Add a MeshCollider for precise collision detection.");
+                    }
+
+                    if (ImGui.Button("Add MeshCollider", new System.Numerics.Vector2(-1, 0)))
+                    {
+                        var meshCollider = meshRenderer.Entity.AddComponent<MeshCollider>();
+                        meshCollider.UseMeshRendererMesh = true;
+                        Console.WriteLine($"[MeshRendererInspector] Auto-added MeshCollider to '{meshRenderer.Entity.Name}'");
+                    }
+
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("Add a MeshCollider that follows the exact shape of this mesh");
+                    }
+                }
+                else
+                {
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Spacing();
+                    ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.8f, 0.4f, 1.0f), "✓ MeshCollider already added");
                 }
             }
         }

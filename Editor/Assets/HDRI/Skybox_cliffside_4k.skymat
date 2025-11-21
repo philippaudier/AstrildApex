@@ -1,0 +1,62 @@
+{
+  "Guid": "cc4f94ca-eedf-4979-8e2d-6b58509c0785",
+  "Name": "Skybox_cliffside_4k",
+  "Type": 3,
+  "SkyTint": [
+    0.5,
+    0.5,
+    0.5,
+    1
+  ],
+  "GroundColor": [
+    0.369,
+    0.349,
+    0.341,
+    1
+  ],
+  "Exposure": 1.3,
+  "AtmosphereThickness": 1,
+  "SunTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SunSize": 0.04,
+  "SunSizeConvergence": 5,
+  "CubemapTexture": "f46b0c88-0145-4af0-88a9-8405849a0c69",
+  "CubemapTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "CubemapExposure": 1,
+  "CubemapRotation": 0,
+  "FrontTexture": null,
+  "BackTexture": null,
+  "LeftTexture": null,
+  "RightTexture": null,
+  "UpTexture": null,
+  "DownTexture": null,
+  "SixSidedTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SixSidedExposure": 1.3,
+  "PanoramicTexture": "436f9504-5fed-454d-821c-ca11d983b941",
+  "PanoramicTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 0,
+  "Mapping": 0,
+  "MirrorOnBack": false,
+  "ImageType": 0,
+  "UseForFog": false
+}

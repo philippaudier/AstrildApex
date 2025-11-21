@@ -8,6 +8,7 @@ using OpenTK.Mathematics;
 using Engine.Scene;
 using Engine.Components;
 using Engine.Serialization;
+using Editor.Logging;
 
 namespace Editor.Serialization
 {
@@ -360,11 +361,11 @@ namespace Editor.Serialization
                                     try
                                     {
                                         var dbg = JsonSerializer.Serialize(componentData, _jsonOptions);
-                                        Console.WriteLine($"[SceneSerializer] Serializing {componentTypeName}: {dbg}");
+                                        LogManager.LogVerbose($"Serializing {componentTypeName}: {dbg}", "SceneSerializer");
                                     }
                                     catch (Exception ex)
                                     {
-                                        Console.WriteLine($"[SceneSerializer] Failed to serialize {componentTypeName}: {ex.Message}");
+                                        LogManager.LogWarning($"Failed to serialize {componentTypeName}: {ex.Message}", "SceneSerializer");
                                     }
                                 }
 
@@ -372,7 +373,7 @@ namespace Editor.Serialization
                         }
                         else
                         {
-                            Console.WriteLine($"[SceneSerializer] Component {componentTypeName} has no serializable data - skipping");
+                            LogManager.LogVerbose($"Component {componentTypeName} has no serializable data - skipping", "SceneSerializer");
                         }
                         break;
                 }
@@ -850,7 +851,7 @@ namespace Editor.Serialization
                                             }
                                             catch (Exception ex)
                                             {
-                                                Console.WriteLine($"[SceneSerializer] Fallback mesh mapping failed: {ex.Message}");
+                                                LogManager.LogWarning($"Fallback mesh mapping failed: {ex.Message}", "SceneSerializer");
                                             }
                                         }
                                     }
@@ -874,7 +875,7 @@ namespace Editor.Serialization
                                             }
                                             catch (Exception ex)
                                             {
-                                                Console.WriteLine($"[SceneSerializer] Fallback material mapping failed: {ex.Message}");
+                                                LogManager.LogWarning($"Fallback material mapping failed: {ex.Message}", "SceneSerializer");
                                             }
                                         }
                                     }
@@ -883,7 +884,7 @@ namespace Editor.Serialization
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[SceneSerializer] Fallback mapping encountered an error: {ex.Message}");
+                            LogManager.LogWarning($"Fallback mapping encountered an error: {ex.Message}", "SceneSerializer");
                         }
                     }
                 }
@@ -1071,17 +1072,17 @@ namespace Editor.Serialization
                             {
                                 terrain.GenerateTerrain();
                             }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"[SceneSerializer] Failed to generate terrain: {ex.Message}");
-                            }
+                                catch (Exception ex)
+                                {
+                                    LogManager.LogWarning($"Failed to generate terrain: {ex.Message}", "SceneSerializer");
+                                }
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SceneSerializer] Error loading {componentTypeName}: {ex.Message}");
+                LogManager.LogError($"Error loading {componentTypeName}: {ex.Message}", "SceneSerializer");
             }
         }
         

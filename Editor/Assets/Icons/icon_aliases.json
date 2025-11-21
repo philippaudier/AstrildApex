@@ -1,0 +1,15 @@
+{
+  "delete": "delete.png",
+  "folder": "folder.png",
+  "grid_view": "grid_view.png",
+  "light_component": "light_component.png",
+  "list_view": "list_view.png",
+  "material": "material.png",
+  "model": "model.png",
+  "pause": "pause.png",
+  "play": "play.png",
+  "refresh": "refresh.png",
+  "step": "step.png",
+  "stop": "stop.png",
+  "texture": "texture.png"
+}

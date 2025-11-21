@@ -4,6 +4,7 @@ using ImGuiNET;
 using OpenTK.Mathematics;
 using Editor.Rendering;
 using Editor.State;
+using Editor.Logging;
 using Editor.Icons;
 using Editor.UI;
 using Editor.UI.Overlays;
@@ -138,7 +139,7 @@ public class ViewportPanel
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ViewportPanel] Failed to apply saved camera state: {ex.Message}");
+                    LogManager.LogWarning($"Failed to apply saved camera state: {ex.Message}", "ViewportPanel");
                 }
             }
         }
@@ -381,7 +382,7 @@ public class ViewportPanel
                 _debugPickCount++;
                 if (_debugPickTimer.Elapsed.TotalSeconds >= 1.0)
                 {
-                    Console.WriteLine($"[PERF] Picks/sec: {_debugPickCount}");
+                    LogManager.LogVerbose($"[PERF] Picks/sec: {_debugPickCount}", "ViewportPanel");
                     _debugPickCount = 0;
                     _debugPickTimer.Restart();
                 }

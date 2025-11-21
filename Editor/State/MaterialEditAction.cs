@@ -69,7 +69,17 @@ namespace Editor.State
             NormalTexture = m.NormalTexture,
             NormalStrength = m.NormalStrength,
             Metallic = m.Metallic,
-            Roughness = m.Roughness
+            Roughness = m.Roughness,
+            TextureTiling = (float[])m.TextureTiling.Clone(),
+            TextureOffset = (float[])m.TextureOffset.Clone(),
+            Saturation = m.Saturation,
+            Brightness = m.Brightness,
+            Contrast = m.Contrast,
+            Hue = m.Hue,
+            Emission = m.Emission,
+            TransparencyMode = m.TransparencyMode,
+            Opacity = m.Opacity,
+            Shader = m.Shader
         };
     }
 }

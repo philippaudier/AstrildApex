@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using ImGuiNET;
 using Engine.Assets;
+using Editor.Logging;
 using Engine.Rendering;
 using OpenTK.Graphics.OpenGL4;
 
@@ -309,7 +310,7 @@ namespace Editor.Inspector
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to apply import settings: {ex.Message}");
+                LogManager.LogWarning($"Failed to apply import settings: {ex.Message}", "HeightmapTextureInspector");
             }
         }
 

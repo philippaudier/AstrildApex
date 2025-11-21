@@ -4,6 +4,7 @@ using System.Text.Json;
 using Engine.Rendering;
 using Editor.Rendering;
 using OpenTK.Mathematics;
+using Editor.Logging;
 
 namespace Editor.State
 {
@@ -35,8 +36,8 @@ namespace Editor.State
 
             public CameraStateData ViewportCamera { get; set; } = CameraStateData.CreateDefault();
 
-            // SSAO Rendering Settings
-            public SSAOSettingsData SSAO { get; set; } = new SSAOSettingsData();
+            // NOTE: SSAO Rendering Settings removed - SSAO is now configured via GlobalEffects component
+            // public SSAOSettingsData SSAO { get; set; } = new SSAOSettingsData();
 
             // Shadows settings
             public ShadowsSettingsData Shadows { get; set; } = new ShadowsSettingsData();
@@ -46,6 +47,9 @@ namespace Editor.State
 
             // Anti-Aliasing Mode (None, MSAA, TAA)
             public int AntiAliasingMode { get; set; } = 0; // 0 = None (default)
+
+            // Selection Outline Settings
+            public OutlineSettingsData Outline { get; set; } = new OutlineSettingsData();
 
             // Theme name
             public string ThemeName { get; set; } = "Dark Unity";
@@ -81,6 +85,10 @@ namespace Editor.State
             public string ScriptEditor { get; set; } = ""; // Path to external editor (VS Code, Rider, etc.)
             public string ScriptEditorArgs { get; set; } = "\"$(File)\" -g \"$(File):$(Line)\""; // Arguments with placeholders
             public bool AutoDetectEditor { get; set; } = true; // Auto-detect VS Code on first run
+            // Path to Filament cmgen executable (optional)
+            public string CmgenPath { get; set; } = "";
+            // If true, automatically run PMREM generation when dropping HDR/EXR into Assets
+            public bool AutoGeneratePMREMOnImport { get; set; } = false;
         }
 
         public class CameraStateData
@@ -130,16 +138,34 @@ namespace Editor.State
             }
         }
 
+        // Separate class for JSON serialization of selection outline settings
+        public class OutlineSettingsData
+        {
+            public bool Enabled { get; set; } = true;
+            public float Thickness { get; set; } = 2.0f;  // Outline thickness in pixels
+            public float ColorR { get; set; } = 1.0f;     // Orange color
+            public float ColorG { get; set; } = 0.5f;
+            public float ColorB { get; set; } = 0.0f;
+            public float ColorA { get; set; } = 1.0f;
+            
+            // Pulse/blink settings
+            public bool EnablePulse { get; set; } = true;
+            public float PulseSpeed { get; set; } = 2.0f;      // Cycles per second
+            public float PulseMinAlpha { get; set; } = 0.3f;   // Minimum alpha during pulse
+            public float PulseMaxAlpha { get; set; } = 1.0f;   // Maximum alpha during pulse
+        }
+
+        // NOTE: SSAO settings data removed - SSAO is now configured via GlobalEffects component
+        /*
         // Separate class for JSON serialization of SSAO settings
         public class SSAOSettingsData
         {
             public bool Enabled { get; set; } = true;
-            public float Radius { get; set; } = 0.5f;     // View-space sampling radius
-            public float Bias { get; set; } = 0.025f;     // Self-occlusion bias
-            public float Intensity { get; set; } = 1.0f;  // Power curve for intensity
-            public int SampleCount { get; set; } = 64;    // Number of samples (16, 32, 64)
-            public int BlurSize { get; set; } = 2;        // Blur kernel radius in pixels
-            public float Strength { get; set; } = 0.8f;   // Final SSAO strength multiplier
+            public float Radius { get; set; } = 1.0f;     // View-space sampling radius
+            public float Bias { get; set; } = 0.05f;      // Self-occlusion bias
+            public float Intensity { get; set; } = 1.5f;  // Power curve for intensity
+            public int SampleCount { get; set; } = 16;    // Number of samples (8, 16, 32, 64)
+            public int BlurSize { get; set; } = 3;        // Blur kernel radius in pixels
 
             // Convert to Engine SSAO settings
             public SSAORenderer.SSAOSettings ToEngineSettings()
@@ -151,8 +177,7 @@ namespace Editor.State
                     Bias = this.Bias,
                     Intensity = this.Intensity,
                     SampleCount = this.SampleCount,
-                    BlurSize = this.BlurSize,
-                    Strength = this.Strength
+                    BlurSize = this.BlurSize
                 };
             }
 
@@ -166,11 +191,11 @@ namespace Editor.State
                     Bias = settings.Bias,
                     Intensity = settings.Intensity,
                     SampleCount = settings.SampleCount,
-                    BlurSize = settings.BlurSize,
-                    Strength = settings.Strength
+                    BlurSize = settings.BlurSize
                 };
             }
         }
+        */
 
         // Separate class for JSON serialization of TAA settings
         public class TAASettingsData
@@ -468,6 +493,26 @@ namespace Editor.State
             }
         }
 
+        public static OutlineSettingsData Outline
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.Outline ?? new OutlineSettingsData();
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.Outline = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        // NOTE: SSAOSettings property removed - SSAO is now configured via GlobalEffects component
+        /*
         public static SSAORenderer.SSAOSettings SSAOSettings
         {
             get
@@ -486,6 +531,7 @@ namespace Editor.State
                 }
             }
         }
+        */
 
         public static ShadowsSettingsData ShadowsSettings
         {
@@ -614,6 +660,48 @@ namespace Editor.State
                 }
             }
         }
+
+        // Filament cmgen executable path
+        public static string CmgenPath
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ExternalTools?.CmgenPath ?? "";
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    if (_currentSettings.ExternalTools == null)
+                        _currentSettings.ExternalTools = new ExternalToolsData();
+                    _currentSettings.ExternalTools.CmgenPath = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        // Toggle: automatically generate PMREM when importing HDR/EXR
+        public static bool AutoGeneratePMREMOnImport
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ExternalTools?.AutoGeneratePMREMOnImport ?? false;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    if (_currentSettings.ExternalTools == null)
+                        _currentSettings.ExternalTools = new ExternalToolsData();
+                    _currentSettings.ExternalTools.AutoGeneratePMREMOnImport = value;
+                    SaveSettings();
+                }
+            }
+        }
         
         // Font settings
         public static string InterfaceFont
@@ -738,12 +826,12 @@ namespace Editor.State
             {
                 if (File.Exists(path))
                 {
-                    Console.WriteLine($"[EditorSettings] Auto-detected VS Code at: {path}");
+                    LogManager.LogInfo($"Auto-detected VS Code at: {path}", "EditorSettings");
                     return path;
                 }
             }
             
-            Console.WriteLine("[EditorSettings] VS Code not found in standard locations");
+            LogManager.LogInfo("VS Code not found in standard locations", "EditorSettings");
             return "";
         }
         
@@ -756,13 +844,13 @@ namespace Editor.State
             
             if (string.IsNullOrEmpty(editorPath))
             {
-                Console.WriteLine("[EditorSettings] No script editor configured. Please set one in Preferences > External Tools");
+                LogManager.LogInfo("No script editor configured. Please set one in Preferences > External Tools", "EditorSettings");
                 return;
             }
             
             if (!File.Exists(editorPath))
             {
-                Console.WriteLine($"[EditorSettings] Script editor not found at: {editorPath}");
+                LogManager.LogInfo($"Script editor not found at: {editorPath}", "EditorSettings");
                 return;
             }
             
@@ -783,11 +871,11 @@ namespace Editor.State
                 };
                 
                 System.Diagnostics.Process.Start(processInfo);
-                Console.WriteLine($"[EditorSettings] Opened {filePath} in external editor");
+                LogManager.LogInfo($"Opened {filePath} in external editor", "EditorSettings");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[EditorSettings] Failed to open external editor: {ex.Message}");
+                LogManager.LogWarning($"Failed to open external editor: {ex.Message}", "EditorSettings");
             }
         }
         

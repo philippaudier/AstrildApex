@@ -11,6 +11,8 @@ using System.Drawing;
 using DrawingPixelFormat = System.Drawing.Imaging.PixelFormat;
 using OpenGLPixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 using System.Drawing.Imaging;
+using System.Diagnostics;
+using Editor.Logging;
 
 namespace Editor.Icons
 {
@@ -51,7 +53,9 @@ namespace Editor.Icons
         
         #region Fields
         
-        private static IconSet? _iconSet;
+    private static IconSet? _iconSet;
+    // Optional alias map to force a specific filename for a given icon key
+    private static readonly Dictionary<string, string> _aliasMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<string, IconTexture> _textureCache = [];
         private static readonly Dictionary<string, nint> _imguiTextureCache = [];
         private static bool _isInitialized = false;
@@ -64,6 +68,13 @@ namespace Editor.Icons
         
         public static int DefaultIconSize { get; set; } = 16;
         public static Vector4 DefaultIconColor { get; set; } = new Vector4(0.8f, 0.8f, 0.8f, 1.0f);
+    // Path used by the Import UI (editable at runtime)
+    private static string _iconImportPath = "icons";
+    // Preview support
+    private static readonly List<uint> _previewTextureIds = new();
+    private static readonly List<string> _previewNames = new();
+    private static string _selectedFolderPath = string.Empty;
+    private static int _previewLimit = 48;
         
         #endregion
         
@@ -91,6 +102,30 @@ namespace Editor.Icons
                 }
                 
                 _isInitialized = true;
+
+                // Try to load optional alias mapping (icon_aliases.json) next to the icons JSON or in common icons folders
+                try
+                {
+                    var aliasesPaths = new[] {
+                        Path.Combine(Path.GetDirectoryName(iconsFilePath) ?? string.Empty, "icon_aliases.json"),
+                        Path.Combine(Directory.GetCurrentDirectory(), "export", "icons", "icon_aliases.json"),
+                        Path.Combine(Directory.GetCurrentDirectory(), "Editor", "Assets", "Icons", "icon_aliases.json")
+                    };
+                    foreach (var ap in aliasesPaths)
+                    {
+                        if (File.Exists(ap))
+                        {
+                            var t = File.ReadAllText(ap);
+                            var map = JsonSerializer.Deserialize<Dictionary<string, string>>(t, _jsonOptions);
+                            if (map != null)
+                            {
+                                foreach (var kv in map) _aliasMap[kv.Key] = kv.Value;
+                            }
+                            break;
+                        }
+                    }
+                }
+                catch { }
                 
                 return true;
             }
@@ -112,6 +147,8 @@ namespace Editor.Icons
             
             _textureCache.Clear();
             _imguiTextureCache.Clear();
+            // also clear any preview textures
+            try { ClearPreviewTextures(); } catch { }
             _isInitialized = false;
             
         }
@@ -152,23 +189,20 @@ namespace Editor.Icons
 
             var cacheKey = $"{iconKey}_{size}";
             if (_imguiTextureCache.TryGetValue(cacheKey, out var ptr)) return ptr;
-
-            // 1) PNG first
+            // Prepare search directories (project-relative and common locations)
             string[] searchDirs = { @"export\icons", @"..\export\icons", @"Assets\Icons", @"Editor\Assets\Icons" };
-            foreach (var dir in searchDirs)
+            // Try to resolve a file path for the requested icon key (supports variants and normalization)
+            string? resolved = FindIconFile(iconKey, searchDirs);
+            if (!string.IsNullOrEmpty(resolved) && File.Exists(resolved))
             {
-                var p = Path.Combine(dir, iconKey + ".png");
-                if (File.Exists(p))
+                if (OperatingSystem.IsWindowsVersionAtLeast(6, 1))
                 {
-                    if (OperatingSystem.IsWindowsVersionAtLeast(6, 1))
-                    {
-                        using var bmp = new Bitmap(p);
-                        var tex = new IconTexture { TextureId = CreateOpenGLTexture(bmp), Width = bmp.Width, Height = bmp.Height, Name = iconKey };
-                        var handle = new nint(tex.TextureId);
-                        _textureCache[cacheKey] = tex;
-                        _imguiTextureCache[cacheKey] = handle;
-                        return handle;
-                    }
+                    using var bmp = new Bitmap(resolved);
+                    var tex = new IconTexture { TextureId = CreateOpenGLTexture(bmp), Width = bmp.Width, Height = bmp.Height, Name = Path.GetFileNameWithoutExtension(resolved) };
+                    var handle = new nint(tex.TextureId);
+                    _textureCache[cacheKey] = tex;
+                    _imguiTextureCache[cacheKey] = handle;
+                    return handle;
                 }
             }
 
@@ -185,6 +219,86 @@ namespace Editor.Icons
                 }
             }
             return nint.Zero;
+        }
+
+        // Try several heuristics to find an existing icon file (.png or .svg) for the given key
+        private static string? FindIconFile(string iconKey, string[] searchDirs)
+        {
+            // If an alias mapping exists, try it first
+            if (!string.IsNullOrWhiteSpace(iconKey) && _aliasMap.TryGetValue(iconKey, out var alias))
+            {
+                // If alias is absolute path and exists, return it
+                try
+                {
+                    if (Path.IsPathRooted(alias) && File.Exists(alias)) return alias;
+                }
+                catch { }
+
+                // Otherwise try the alias name in each search dir (with common extensions)
+                foreach (var dir in searchDirs)
+                {
+                    if (string.IsNullOrEmpty(dir)) continue;
+                    var aliasCandidates = new[] { alias, alias + ".png", alias + ".svg" };
+                    foreach (var c in aliasCandidates)
+                    {
+                        var p = Path.Combine(dir, c);
+                        if (File.Exists(p)) return p;
+                    }
+                }
+            }
+            // Candidate filename patterns to try, in order
+            var candidates = new List<string>
+            {
+                "{0}.png",
+                "{0}_active.png",
+                "{0}_disabled.png",
+                "{0}.svg",
+                "{0}_active.svg",
+                "{0}_disabled.svg"
+            };
+
+            // Normal forms to try
+            var forms = new List<string> { iconKey, iconKey.ToLowerInvariant(), iconKey.Replace('-', '_'), iconKey.Replace('_', '-') };
+
+            foreach (var dir in searchDirs)
+            {
+                foreach (var form in forms)
+                {
+                    foreach (var pattern in candidates)
+                    {
+                        var fname = string.Format(pattern, form);
+                        var p = Path.Combine(dir, fname);
+                        if (File.Exists(p)) return p;
+                    }
+                }
+
+                // If still not found, attempt substring matching against filenames in dir
+                try
+                {
+                    if (Directory.Exists(dir))
+                    {
+                        var files = Directory.EnumerateFiles(dir).ToList();
+                        // exact token match
+                        foreach (var f in files)
+                        {
+                            var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
+                            if (n == iconKey.ToLowerInvariant() || n.Contains(iconKey.ToLowerInvariant())) return f;
+                        }
+                        // tokened partial match
+                        var tokens = iconKey.ToLowerInvariant().Split(new[] { '_', '-' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var f in files)
+                        {
+                            var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
+                            bool all = true;
+                            foreach (var t in tokens) if (!n.Contains(t)) { all = false; break; }
+                            if (all) return f;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return null;
         }
         
         /// <summary>
@@ -257,6 +371,34 @@ namespace Editor.Icons
             return _isInitialized && _iconSet?.Icons.TryGetValue(iconKey, out var icon) == true 
                 ? icon 
                 : null;
+        }
+
+        /// <summary>
+        /// Write a simple report listing icon keys and whether a file was found for them.
+        /// Useful to generate alias mappings for missing keys.
+        /// </summary>
+        public static void GenerateMissingIconReport(string outPath)
+        {
+            try
+            {
+                using var sw = new StreamWriter(outPath, false);
+                sw.WriteLine("iconKey,found,path");
+                if (_iconSet?.Icons != null)
+                {
+                    string[] searchDirs = { Path.Combine(Directory.GetCurrentDirectory(), "export", "icons"), Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Icons"), Path.Combine(Directory.GetCurrentDirectory(), "Editor", "Assets", "Icons") };
+                    foreach (var key in _iconSet.Icons.Keys)
+                    {
+                        var p = FindIconFile(key, searchDirs);
+                        if (!string.IsNullOrEmpty(p) && File.Exists(p)) sw.WriteLine($"{key},true,{p}");
+                        else sw.WriteLine($"{key},false,");
+                    }
+                }
+                else
+                {
+                    sw.WriteLine("(no icons loaded)");
+                }
+            }
+            catch { }
         }
         
         #endregion
@@ -515,6 +657,54 @@ namespace Editor.Icons
             
             if (ImGui.Begin($"🎨 Icon Manager - {_iconSet.Name}"))
             {
+                // Small importer UI: allow importing an external icons folder into the project's icon folders
+                ImGui.Text("Import icons from a folder (SVG package)");
+                ImGui.InputText("Source folder##icon_import_path", ref _iconImportPath, 260);
+                ImGui.SameLine();
+                if (ImGui.Button("Load Preview"))
+                {
+                    // Load a preview of SVGs from the path in the input field
+                    try
+                    {
+                        if (Directory.Exists(_iconImportPath))
+                        {
+                            _selectedFolderPath = _iconImportPath;
+                            ClearPreviewTextures();
+                            LoadPreviewFromFolder(_selectedFolderPath, Math.Min(_previewLimit, 48));
+                        }
+                        else
+                        {
+                            LogManager.LogWarning($"IconManager: preview path not found: {_iconImportPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogError($"Icon preview failed: {ex.Message}");
+                    }
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Open Folder"))
+                {
+                    try { Process.Start(new ProcessStartInfo("explorer", _iconImportPath) { UseShellExecute = true }); } catch { }
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Import icons"))
+                {
+                    // Run import and report using the editor log manager
+                    try
+                    {
+                        var ok = IconImporter.ImportIcons(_iconImportPath, copySvgs: true, convertPng: true, clearExportIcons: true);
+                        if (ok) LogManager.LogInfo($"Icons imported from '{_iconImportPath}'");
+                        else LogManager.LogWarning($"Icon import completed with no icons or errors. See detailed logs.");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogError($"Icon import failed: {ex.Message}");
+                    }
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Clear Preview")) { ClearPreviewTextures(); }
+
                 ImGui.Text($"Version: {_iconSet.Version}");
                 ImGui.Text($"Description: {_iconSet.Description}");
                 ImGui.Text($"Icons loaded: {_iconSet.Count}");
@@ -554,8 +744,89 @@ namespace Editor.Icons
                     
                     iconIndex++;
                 }
+
+                // Preview area for selected folder (before import)
+                if (!string.IsNullOrEmpty(_selectedFolderPath))
+                {
+                    ImGui.Separator();
+                    ImGui.Text($"Preview (from: {_selectedFolderPath})");
+                    var cols = 6;
+                    for (int i = 0; i < _previewTextureIds.Count; i++)
+                    {
+                        if (i > 0 && i % cols != 0) ImGui.SameLine();
+                        var texId = _previewTextureIds[i];
+                        var name = _previewNames[i];
+                        var handle = new nint(texId);
+                        ImGui.BeginChild($"pv_{i}", new Vector2(80, 60), ImGuiNET.ImGuiChildFlags.None);
+                        ImGui.SetCursorPosX((80 - DefaultIconSize) / 2);
+                        ImGui.SetCursorPosY(8);
+                        ImGui.Image(handle, new Vector2(DefaultIconSize, DefaultIconSize));
+                        var txtWidth = ImGui.CalcTextSize(name).X;
+                        ImGui.SetCursorPosX(Math.Max(0, (80 - txtWidth) / 2));
+                        ImGui.Text(name);
+                        ImGui.EndChild();
+                    }
+                }
             }
             ImGui.End();
+        }
+
+        /// <summary>
+        /// Dispose preview textures and clear preview lists
+        /// </summary>
+        private static void ClearPreviewTextures()
+        {
+            try
+            {
+                foreach (var id in _previewTextureIds)
+                {
+                    try { GL.DeleteTexture((int)id); } catch { }
+                }
+            }
+            catch { }
+            _previewTextureIds.Clear();
+            _previewNames.Clear();
+        }
+
+        /// <summary>
+        /// Load small preview textures from a folder (png/svg). Will generate temporary GL textures.
+        /// </summary>
+        private static void LoadPreviewFromFolder(string folder, int limit)
+        {
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+            try
+            {
+                var files = Directory.EnumerateFiles(folder)
+                    .Where(f => f.EndsWith(".svg", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+                    .Take(limit)
+                    .ToList();
+
+                foreach (var f in files)
+                {
+                    try
+                    {
+                        if (f.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var svg = File.ReadAllText(f);
+                            var tex = CreateTextureFromSvg(svg, DefaultIconSize, DefaultIconColor);
+                            if (tex != null)
+                            {
+                                _previewTextureIds.Add(tex.TextureId);
+                                _previewNames.Add(Path.GetFileNameWithoutExtension(f));
+                            }
+                        }
+                        else
+                        {
+                            using var bmp = new Bitmap(f);
+                            var texId = CreateOpenGLTexture(bmp);
+                            _previewTextureIds.Add(texId);
+                            _previewNames.Add(Path.GetFileNameWithoutExtension(f));
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
         
         #endregion

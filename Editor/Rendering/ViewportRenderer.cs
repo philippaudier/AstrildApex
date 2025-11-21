@@ -5481,7 +5481,12 @@ void main(){
                     var colr = new Vector4(0.2f, 1.0f, 1.0f, 1.0f);
                     if (col.IsTrigger) colr.W = 0.55f;
 
-                    if (comp is Engine.Components.SphereCollider sc)
+                    if (comp is Engine.Components.MeshCollider mc)
+                    {
+                        // Dessiner les triangles du MeshCollider
+                        DrawMeshColliderWire(mc, colr);
+                    }
+                    else if (comp is Engine.Components.SphereCollider sc)
                     {
                         ComputeSphereWorld(sc, out var c, out var r);
                         DrawSphereWire(c, r, colr, 32);
@@ -5712,6 +5717,17 @@ void main(){
             GL.UniformMatrix4(_locMvp, false, ref mvp);
             GL.Uniform4(_locAlbColor, color.X, color.Y, color.Z, color.W);
             GL.DrawArrays(PrimitiveType.Lines, 0, 2);
+        }
+
+        /// <summary>
+        /// Draw MeshCollider wireframe by rendering all triangle edges
+        /// </summary>
+        private void DrawMeshColliderWire(Engine.Components.MeshCollider meshCollider, in Vector4 color)
+        {
+            // MeshCollider gizmo disabled - drawing 300k+ triangles or even bounding boxes
+            // causes severe performance issues. Use the mesh renderer visualization instead.
+            // The collision still works perfectly without the gizmo.
+            return;
         }
 
         private void DrawObbWire(in Engine.Physics.OBB obb, in Vector4 color)

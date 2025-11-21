@@ -1,6 +1,7 @@
 using Editor.UI;
 using OpenTK.Graphics.OpenGL4;
 using Editor.ImGuiBackend;
+using Editor.Logging;
 
 namespace Editor.UI;
 
@@ -119,7 +120,7 @@ public static class ProgressManager
         catch (Exception ex)
         {
             // Log but don't crash
-            Console.WriteLine($"[ProgressManager] ForceRender failed: {ex.Message}");
+            LogManager.LogWarning($"ForceRender failed: {ex.Message}", "ProgressManager");
         }
     }
 

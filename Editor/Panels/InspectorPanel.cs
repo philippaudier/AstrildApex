@@ -245,10 +245,25 @@ namespace Editor.Panels
                 }
                 else
                 {
-                    ImGui.TextDisabled("No custom inspector for this asset type.");
-                    ImGui.TextWrapped(Engine.Assets.AssetDatabase.TryGet(assetGuidToShow, out var rec)
-                        ? rec.Path
-                        : "(unindexed)");
+                    // Check if it's an audio file by extension
+                    bool isAudioFile = false;
+                    if (Engine.Assets.AssetDatabase.TryGet(assetGuidToShow, out var audioRecord))
+                    {
+                        string ext = System.IO.Path.GetExtension(audioRecord.Path).ToLowerInvariant();
+                        if (ext == ".mp3" || ext == ".ogg" || ext == ".wav")
+                        {
+                            Editor.Inspector.AudioClipInspector.Draw(assetGuidToShow);
+                            isAudioFile = true;
+                        }
+                    }
+
+                    if (!isAudioFile)
+                    {
+                        ImGui.TextDisabled("No custom inspector for this asset type.");
+                        ImGui.TextWrapped(Engine.Assets.AssetDatabase.TryGet(assetGuidToShow, out var rec)
+                            ? rec.Path
+                            : "(unindexed)");
+                    }
                 }
 
                 ImGui.End();
@@ -718,7 +733,7 @@ namespace Editor.Panels
                     DrawLightComponent(light);
                     break;
                 case MeshRendererComponent meshRenderer:
-                    DrawMeshRendererComponent(entity, meshRenderer);
+                    Editor.Inspector.MeshRendererInspector.Draw(meshRenderer);
                     break;
                 case CameraComponent cam:
                     Editor.Inspector.CameraInspector.Draw(cam);
@@ -734,6 +749,9 @@ namespace Editor.Panels
                     break;
                 case CapsuleCollider capsule:
                     Editor.Inspector.CapsuleColliderInspector.Draw(capsule);
+                    break;
+                case MeshCollider meshCollider:
+                    Editor.Inspector.MeshColliderInspector.Draw(meshCollider);
                     break;
                 case HeightfieldCollider heightfield:
                     Editor.Inspector.HeightfieldColliderInspector.Draw(heightfield);
@@ -763,6 +781,15 @@ namespace Editor.Panels
                     break;
                 case Engine.Components.UI.UIButtonComponent uiButton:
                     Editor.Inspector.UIButtonInspector.Draw(uiButton);
+                    break;
+                case Engine.Audio.Components.AudioSource audioSource:
+                    Editor.Inspector.AudioSourceInspector.Draw(audioSource);
+                    break;
+                case Engine.Audio.Components.AudioListenerComponent audioListener:
+                    Editor.Inspector.AudioListenerInspector.Draw(audioListener);
+                    break;
+                case Engine.Audio.Components.ReverbZoneComponent reverbZone:
+                    Editor.Inspector.ReverbZoneInspector.DrawInspector(reverbZone);
                     break;
                 case Engine.Scripting.MonoBehaviour script:
                     Editor.Inspector.ReflectionInspector.DrawMembers(script, script.GetType(), "");
@@ -825,6 +852,16 @@ namespace Editor.Panels
                         entity.AddComponent<CapsuleCollider>();
                         ImGui.CloseCurrentPopup();
                     }
+                    if (ImGui.MenuItem("Mesh Collider") && !entity.HasComponent<MeshCollider>())
+                    {
+                        var meshCollider = entity.AddComponent<MeshCollider>();
+                        // Auto-configure si l'entité a un MeshRenderer
+                        if (entity.HasComponent<MeshRendererComponent>())
+                        {
+                            meshCollider.UseMeshRendererMesh = true;
+                        }
+                        ImGui.CloseCurrentPopup();
+                    }
                     if (ImGui.MenuItem("Character Controller") && !entity.HasComponent<CharacterController>())
                     {
                         entity.AddComponent<CharacterController>();
@@ -866,6 +903,27 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Environment Settings") && !entity.HasComponent<EnvironmentSettings>())
                     {
                         entity.AddComponent<EnvironmentSettings>();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.EndMenu();
+                }
+
+                // Audio category
+                if (ImGui.BeginMenu("Audio"))
+                {
+                    if (ImGui.MenuItem("Audio Source") && !entity.HasComponent<Engine.Audio.Components.AudioSource>())
+                    {
+                        entity.AddComponent<Engine.Audio.Components.AudioSource>();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    if (ImGui.MenuItem("Audio Listener") && !entity.HasComponent<Engine.Audio.Components.AudioListenerComponent>())
+                    {
+                        entity.AddComponent<Engine.Audio.Components.AudioListenerComponent>();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    if (ImGui.MenuItem("Reverb Zone") && !entity.HasComponent<Engine.Audio.Components.ReverbZoneComponent>())
+                    {
+                        entity.AddComponent<Engine.Audio.Components.ReverbZoneComponent>();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();

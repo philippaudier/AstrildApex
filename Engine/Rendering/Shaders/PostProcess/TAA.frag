@@ -74,7 +74,8 @@ void SampleNeighborhood(vec2 uv, out vec3 colorMin, out vec3 colorMax, out vec3 
         for (int y = -1; y <= 1; y++)
         {
             vec2 offset = vec2(float(x), float(y)) * texelSize;
-            vec3 color = texture(u_CurrentFrame, uv + offset).rgb;
+            // Include current-frame jitter when sampling the current frame for neighborhood
+            vec3 color = texture(u_CurrentFrame, uv + u_Jitter + offset).rgb;
 
             if (u_UseYCoCg == 1)
                 color = RGBToYCoCg(color);
@@ -125,7 +126,8 @@ vec3 ClipAABB(vec3 color, vec3 colorMin, vec3 colorMax)
 // Motion Vector / Reprojection
 // ============================================================================
 
-vec2 GetVelocity(vec2 uv)
+// Returns screen-space velocity and previous clip-space depth (as .z)
+vec3 GetVelocity(vec2 uv)
 {
     // Option 1: Use motion vector texture if available
     // return texture(u_Velocity, uv).xy;
@@ -144,7 +146,9 @@ vec2 GetVelocity(vec2 uv)
     vec2 prevUV = prevClip.xy * 0.5 + 0.5;
 
     // Velocity in screen space
-    return prevUV - uv;
+    // prevClip.z is in NDC [-1,1]; convert to normalized depth [0,1]
+    float prevDepth = prevClip.z * 0.5 + 0.5;
+    return vec3(prevUV - uv, prevDepth);
 }
 
 // ============================================================================
@@ -155,8 +159,8 @@ void main()
 {
     vec2 uv = vUV;
 
-    // Sample current frame (jittered)
-    vec3 currentColor = texture(u_CurrentFrame, uv).rgb;
+    // Sample current frame (jittered). Account for the projection jitter here
+    vec3 currentColor = texture(u_CurrentFrame, uv + u_Jitter).rgb;
 
     // DEBUG: Output current color directly to test if input is valid
     // Uncomment this to bypass TAA and see if input texture is valid
@@ -173,15 +177,18 @@ void main()
     // Read current depth and early-out for sky / far-plane pixels which often
     // produce invalid reprojection (skybox, clear color). This avoids ringing
     // and black pixels for background.
-    float currDepth = texture(u_Depth, uv).r;
+    // Sample depth at jittered UV (depth buffer was rendered with camera jitter)
+    float currDepth = texture(u_Depth, uv + u_Jitter).r;
     if (currDepth <= 0.0001 || currDepth >= 0.9999)
     {
         FragColor = vec4(currentColor, 1.0);
         return;
     }
 
-    // Get velocity and reproject to previous frame
-    vec2 velocity = GetVelocity(uv);
+    // Get velocity and reproject to previous frame (also receive previous depth)
+    vec3 velAndPrevDepth = GetVelocity(uv + u_Jitter);
+    vec2 velocity = velAndPrevDepth.xy;
+    float prevDepth = velAndPrevDepth.z;
     vec2 prevUV = uv + velocity;
 
     // Check if previous sample is valid (on screen)
@@ -200,10 +207,10 @@ void main()
     // Sample history
     vec3 historyColor = texture(u_HistoryFrame, prevUV).rgb;
 
-    // Depth consistency test: sample depth at reprojected UV and ensure it is
-    // similar to current depth. Large differences indicate disocclusion and we
-    // should not use history for that pixel.
-    float prevDepth = texture(u_Depth, prevUV).r;
+    // Depth consistency test: use reprojected previous depth computed from
+    // the previous view-projection of the world position (more robust than
+    // sampling the current depth at prevUV). Large differences indicate
+    // disocclusion and we should not use history for that pixel.
     if (abs(prevDepth - currDepth) > 0.02)
     {
         FragColor = vec4(currentColor, 1.0);

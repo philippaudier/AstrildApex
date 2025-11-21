@@ -72,6 +72,22 @@ namespace Engine.Assets
         /// Material index for this submesh (index into MeshAsset.MaterialGuids)
         /// </summary>
         public int MaterialIndex { get; set; } = 0;
+        
+        /// <summary>
+        /// Local transform matrix for this submesh (4x4 row-major)
+        /// Stores position, rotation, and scale relative to model root
+        /// </summary>
+        public float[]? LocalTransform { get; set; } = null;
+        
+        /// <summary>
+        /// Node name in the original model hierarchy
+        /// </summary>
+        public string? NodeName { get; set; }
+        
+        /// <summary>
+        /// Index of parent submesh (-1 if root)
+        /// </summary>
+        public int ParentIndex { get; set; } = -1;
 
         /// <summary>
         /// Number of vertices in this submesh
@@ -82,6 +98,12 @@ namespace Engine.Assets
         /// Number of triangles in this submesh
         /// </summary>
         public int TriangleCount => Indices.Length / 3;
+
+        /// <summary>
+        /// Bounding box center for this submesh calculated at import time
+        /// Useful for placing baked submeshes when node transforms are identity
+        /// </summary>
+        public System.Numerics.Vector3 BoundsCenter { get; set; } = new System.Numerics.Vector3(0, 0, 0);
     }
 
     /// <summary>

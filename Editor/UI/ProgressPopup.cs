@@ -68,7 +68,7 @@ public class ProgressPopup
         _animationTime += ImGui.GetIO().DeltaTime;
 
         var viewport = ImGui.GetMainViewport();
-        var drawList = ImGui.GetForegroundDrawList(viewport);
+        var backgroundDrawList = ImGui.GetBackgroundDrawList(viewport);
 
         // ===== MODAL OVERLAY - Blur the background if possible =====
         // Fast fallback blur: sample the main viewport color texture multiple times
@@ -92,7 +92,7 @@ public class ProgressPopup
                 // Draw several passes with offsets and low alpha to simulate blur
                 // Center pass (base)
                 uint baseCol = ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.55f));
-                drawList.AddImage(texId, pos, new Vector2(pos.X + size.X, pos.Y + size.Y), uv0, uv1, baseCol);
+                backgroundDrawList.AddImage(texId, pos, new Vector2(pos.X + size.X, pos.Y + size.Y), uv0, uv1, baseCol);
 
                 // Additional passes
                 var offsets = new Vector2[] {
@@ -104,11 +104,11 @@ public class ProgressPopup
                 {
                     var p0 = new Vector2(pos.X + off.X, pos.Y + off.Y);
                     var p1 = new Vector2(p0.X + size.X, p0.Y + size.Y);
-                    drawList.AddImage(texId, p0, p1, uv0, uv1, passCol);
+                    backgroundDrawList.AddImage(texId, p0, p1, uv0, uv1, passCol);
                 }
 
                 // Slight dim on top to match previous overlay darkness
-                drawList.AddRectFilled(pos, new Vector2(pos.X + size.X, pos.Y + size.Y), ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.15f)));
+                backgroundDrawList.AddRectFilled(pos, new Vector2(pos.X + size.X, pos.Y + size.Y), ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.15f)));
 
                 drewBlur = true;
             }
@@ -118,7 +118,7 @@ public class ProgressPopup
         if (!drewBlur)
         {
             // Fallback to the original semi-transparent black overlay
-            drawList.AddRectFilled(
+            backgroundDrawList.AddRectFilled(
                 viewport.Pos,
                 new Vector2(viewport.Pos.X + viewport.Size.X, viewport.Pos.Y + viewport.Size.Y),
                 ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.6f)) // Semi-transparent black overlay
@@ -144,9 +144,9 @@ public class ProgressPopup
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(30, 30));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 1f);
 
-        // Dark modern background with subtle transparency
-        ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.08f, 0.10f, 0.98f));
-        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.25f, 0.25f, 0.30f, 0.8f));
+        // Dark modern background - FULLY OPAQUE so it stands out above the overlay
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, new Vector4(0.08f, 0.08f, 0.10f, 1.0f));
+        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.35f, 0.35f, 0.40f, 1.0f));
 
         // Force this window to be on top
         ImGui.SetNextWindowFocus();

@@ -12,16 +12,22 @@
 
   <ItemGroup>
   <PackageReference Include="AssimpNet" Version="5.0.0-beta1" />
+  <PackageReference Include="BCnEncoder.Net" Version="2.2.1" />
+  <PackageReference Include="BCnEncoder.Net.ImageSharp" Version="1.1.2" />
   <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
   <PackageReference Include="SixLabors.Fonts" Version="2.1.3" />
   <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
   <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
     <PackageReference Include="OpenTK" Version="4.9.4" />
+    <PackageReference Include="OpenTK.Audio.OpenAL" Version="4.9.4" />
     <PackageReference Include="Serilog" Version="4.3.0" />
     <PackageReference Include="SharpGLTF.Core" Version="1.0.5" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <!-- Audio Decoders -->
+    <PackageReference Include="NVorbis" Version="0.10.5" />
+    <PackageReference Include="NLayer" Version="1.16.0" />
     <!-- Modular PBR Shaders -->
     <None Update="Rendering\Shaders\Forward\ForwardBase.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -69,34 +75,53 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Includes\IBL.glsl</Link>
     </None>
-    <None Update="Rendering\Shaders\Includes\SSAO.glsl">
+    <!-- NOTE: SSAO.glsl include removed - SSAO is now a post-processing effect -->
+    <!-- AO Shaders (GTAO only, SSAO removed) -->
+    <None Update="Rendering\Shaders\AO\Prefilter.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Includes\SSAO.glsl</Link>
+      <Link>Engine\Rendering\Shaders\AO\Prefilter.vert</Link>
     </None>
-    <!-- SSAO Shaders -->
-    <None Update="Rendering\Shaders\SSAO\SSAOGeometry.vert">
+    <None Update="Rendering\Shaders\AO\Prefilter.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOGeometry.vert</Link>
+      <Link>Engine\Rendering\Shaders\AO\Prefilter.frag</Link>
     </None>
-    <None Update="Rendering\Shaders\SSAO\SSAOGeometry.frag">
+    <!-- NOTE: SSAO shaders removed - SSAO is now in PostProcess/ directory -->
+    <None Update="Rendering\Shaders\AO\GTAO.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOGeometry.frag</Link>
+      <Link>Engine\Rendering\Shaders\AO\GTAO.vert</Link>
     </None>
-    <None Update="Rendering\Shaders\SSAO\SSAOCalc.vert">
+    <None Update="Rendering\Shaders\AO\GTAO.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOCalc.vert</Link>
+      <Link>Engine\Rendering\Shaders\AO\GTAO.frag</Link>
     </None>
-    <None Update="Rendering\Shaders\SSAO\SSAOCalc.frag">
+    <None Update="Rendering\Shaders\AO\Denoise.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOCalc.frag</Link>
+      <Link>Engine\Rendering\Shaders\AO\Denoise.vert</Link>
     </None>
-    <None Update="Rendering\Shaders\SSAO\SSAOBlur.vert">
+    <None Update="Rendering\Shaders\AO\Denoise.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOBlur.vert</Link>
+      <Link>Engine\Rendering\Shaders\AO\Denoise.frag</Link>
     </None>
-    <None Update="Rendering\Shaders\SSAO\SSAOBlur.frag">
+    <!-- Effects Shaders -->
+    <None Update="Rendering\Shaders\Effects\SelectionOutline.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\SSAO\SSAOBlur.frag</Link>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutline.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutline.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutline.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineEdge.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineEdge.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineEdge.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineEdge.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\EdgeDetection.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\EdgeDetection.frag</Link>
     </None>
     <!-- Post-Process Shaders -->
     <None Update="Rendering\Shaders\PostProcess\fullscreen.vert">
@@ -130,6 +155,48 @@
     <None Update="Rendering\Shaders\PostProcess\TAA.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\TAA.frag</Link>
+    </None>
+    <!-- SSAO Post-Process Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\ssao.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\ssao.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\ssao_blur.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\ssao_blur.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\ssao_blur_separable.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\ssao_blur_separable.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\ssao_combine.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\ssao_combine.frag</Link>
+    </None>
+    <!-- GTAO Post-Process Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\gtao.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\gtao.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\gtao_blur.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\gtao_blur.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\gtao_temporal.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\gtao_temporal.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\gtao_depth_mipmap.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\gtao_depth_mipmap.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\fxaa.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\fxaa.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\fxaa.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\fxaa.frag</Link>
     </None>
     <None Update="Rendering\Shaders\PostProcess\Blit.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

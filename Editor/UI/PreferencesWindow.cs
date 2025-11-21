@@ -5,6 +5,7 @@ using System.Numerics;
 using ImGuiNET;
 using Editor.Themes;
 using Editor.State;
+using Editor.Logging;
 using Editor.Utils;
 
 namespace Editor.UI
@@ -46,7 +47,7 @@ namespace Editor.UI
 
             // Load available fonts from system
             _availableFonts = FontManager.GetAvailableFonts();
-            Console.WriteLine($"[Preferences] Loaded {_availableFonts.Count} system fonts");
+            LogManager.LogInfo($"Loaded {_availableFonts.Count} system fonts", "Preferences");
 
             // Load font settings from EditorSettings
             string savedFont = EditorSettings.InterfaceFont;
@@ -352,21 +353,21 @@ namespace Editor.UI
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + indentAmount);
             }
 
-            if (ImGui.Button("Apply##Theme", new Vector2(buttonWidth, 0)))
+                if (ImGui.Button("Apply##Theme", new Vector2(buttonWidth, 0)))
             {
                 // Apply the current preview theme
                 _selectedThemeName = _previewThemeName;
                 SaveThemeToSettings(_selectedThemeName);
                 ThemeManager.ApplyThemeByName(_selectedThemeName);
-                Console.WriteLine($"[Preferences] Theme '{_selectedThemeName}' applied and saved.");
+                    LogManager.LogInfo($"Theme '{_selectedThemeName}' applied and saved.", "Preferences");
             }
             ImGui.SameLine();
-            if (ImGui.Button("Reset##Theme", new Vector2(buttonWidth, 0)))
+                if (ImGui.Button("Reset##Theme", new Vector2(buttonWidth, 0)))
             {
                 // Reset to the last saved theme
                 _previewThemeName = _selectedThemeName;
                 ThemeManager.ApplyThemeByName(_selectedThemeName);
-                Console.WriteLine($"[Preferences] Theme reset to '{_selectedThemeName}'.");
+                    LogManager.LogInfo($"Theme reset to '{_selectedThemeName}'.", "Preferences");
             }
 
             ImGui.Spacing();
@@ -514,18 +515,18 @@ namespace Editor.UI
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + fontIndentAmount);
             }
 
-            if (ImGui.Button("Apply##Font", new Vector2(fontButtonWidth, 0)))
+                    if (ImGui.Button("Apply##Font", new Vector2(fontButtonWidth, 0)))
             {
                 if (_selectedFontIndex >= 0 && _selectedFontIndex < _availableFonts.Count)
                 {
                     var selectedFont = _availableFonts[_selectedFontIndex];
                     SaveFontSettings(selectedFont.DisplayName, selectedFont.FilePath, _selectedFontSize);
-                    Console.WriteLine($"[Preferences] Font changed to: {selectedFont.DisplayName} ({_selectedFontSize}px)");
-                    Console.WriteLine("[Preferences] Restart editor to apply changes.");
+                            LogManager.LogInfo($"Font changed to: {selectedFont.DisplayName} ({_selectedFontSize}px)", "Preferences");
+                            LogManager.LogInfo("Restart editor to apply changes.", "Preferences");
                 }
             }
             ImGui.SameLine();
-            if (ImGui.Button("Reset##Font", new Vector2(fontButtonWidth, 0)))
+                if (ImGui.Button("Reset##Font", new Vector2(fontButtonWidth, 0)))
             {
                 // Reset to current saved settings
                 string savedFont = EditorSettings.InterfaceFont;
@@ -536,7 +537,7 @@ namespace Editor.UI
                     _selectedFontIndex = 0;
 
                 _selectedFontSize = savedSize;
-                Console.WriteLine($"[Preferences] Font reset to saved settings: {savedFont} ({savedSize}px)");
+                LogManager.LogInfo($"Font reset to saved settings: {savedFont} ({savedSize}px)", "Preferences");
             }
         }
         
@@ -619,18 +620,18 @@ namespace Editor.UI
             
             ImGui.SameLine();
             
-            if (ImGui.Button("Auto-detect VS Code", new Vector2(150, 0)))
+                if (ImGui.Button("Auto-detect VS Code", new Vector2(150, 0)))
             {
                 var detectedPath = TryDetectVSCode();
                 if (!string.IsNullOrEmpty(detectedPath))
                 {
                     _tempScriptEditorPath = detectedPath;
                     EditorSettings.ScriptEditor = detectedPath;
-                    Console.WriteLine($"[Preferences] VS Code detected at: {detectedPath}");
+                        LogManager.LogInfo($"VS Code detected at: {detectedPath}", "Preferences");
                 }
                 else
                 {
-                    Console.WriteLine("[Preferences] VS Code not found in standard locations");
+                        LogManager.LogInfo("VS Code not found in standard locations", "Preferences");
                 }
             }
                 if (ImGui.IsItemHovered())
@@ -651,7 +652,7 @@ namespace Editor.UI
                 }
                 else
                 {
-                    Console.WriteLine("[Preferences] No test file available");
+                    LogManager.LogInfo("No test file available", "Preferences");
                 }
             }
                 if (ImGui.IsItemHovered())
@@ -767,9 +768,79 @@ namespace Editor.UI
             ImGui.Spacing();
             ImGui.Spacing();
             
-            ImGui.PushStyleColor(ImGuiCol.Text, currentTheme.TextDisabled);
-            ImGui.TextWrapped("Scene view settings will be available soon. Configure gizmos, grid, and viewport rendering.");
-            ImGui.PopStyleColor();
+            // Selection Outline Settings
+            ImGui.SeparatorText("Selection Outline");
+            
+            var outline = EditorSettings.Outline;
+            bool outlineEnabled = outline.Enabled;
+            if (ImGui.Checkbox("Enable Selection Outline", ref outlineEnabled))
+            {
+                outline.Enabled = outlineEnabled;
+                EditorSettings.Outline = outline; // Trigger save via setter
+            }
+            
+            if (outlineEnabled)
+            {
+                float thickness = outline.Thickness;
+                if (ImGui.SliderFloat("Outline Thickness", ref thickness, 1.0f, 5.0f, "%.1f px"))
+                {
+                    outline.Thickness = thickness;
+                    EditorSettings.Outline = outline;
+                }
+                
+                var color = new System.Numerics.Vector4(
+                    outline.ColorR,
+                    outline.ColorG,
+                    outline.ColorB,
+                    outline.ColorA
+                );
+                
+                if (ImGui.ColorEdit4("Outline Color", ref color))
+                {
+                    outline.ColorR = color.X;
+                    outline.ColorG = color.Y;
+                    outline.ColorB = color.Z;
+                    outline.ColorA = color.W;
+                    EditorSettings.Outline = outline;
+                }
+                
+                ImGui.Spacing();
+                ImGui.SeparatorText("Pulse Effect");
+                
+                bool pulseEnabled = outline.EnablePulse;
+                if (ImGui.Checkbox("Enable Soft Pulse", ref pulseEnabled))
+                {
+                    outline.EnablePulse = pulseEnabled;
+                    EditorSettings.Outline = outline;
+                }
+                
+                if (pulseEnabled)
+                {
+                    float pulseSpeed = outline.PulseSpeed;
+                    if (ImGui.SliderFloat("Pulse Speed", ref pulseSpeed, 0.5f, 5.0f, "%.1f Hz"))
+                    {
+                        outline.PulseSpeed = pulseSpeed;
+                        EditorSettings.Outline = outline;
+                    }
+                    
+                    float pulseMin = outline.PulseMinAlpha;
+                    if (ImGui.SliderFloat("Min Alpha", ref pulseMin, 0.0f, 1.0f, "%.2f"))
+                    {
+                        outline.PulseMinAlpha = pulseMin;
+                        EditorSettings.Outline = outline;
+                    }
+                    
+                    float pulseMax = outline.PulseMaxAlpha;
+                    if (ImGui.SliderFloat("Max Alpha", ref pulseMax, 0.0f, 1.0f, "%.2f"))
+                    {
+                        outline.PulseMaxAlpha = pulseMax;
+                        EditorSettings.Outline = outline;
+                    }
+                }
+            }
+            
+            ImGui.Spacing();
+            ImGui.Spacing();
         }
         
         private void DrawGridSnapSettings(Editor.Themes.EditorTheme currentTheme)
@@ -785,34 +856,34 @@ namespace Editor.UI
         
         private void SaveThemeToSettings(string themeName)
         {
-            try
-            {
-                EditorSettings.ThemeName = themeName;
-                Console.WriteLine($"Theme '{themeName}' saved to EditorSettings.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to save theme to settings: {ex.Message}");
-            }
+                try
+                {
+                    EditorSettings.ThemeName = themeName;
+                    LogManager.LogInfo($"Theme '{themeName}' saved to EditorSettings.", "Preferences");
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogError($"Failed to save theme to settings: {ex.Message}", "Preferences");
+                }
         }
         
         private void SaveFontSettings(string fontDisplayName, string fontFilePath, float fontSize)
         {
-            try
-            {
-                // Save to EditorSettings
-                EditorSettings.InterfaceFont = fontDisplayName;
-                EditorSettings.InterfaceFontPath = fontFilePath; // Add this to EditorSettings if needed
-                EditorSettings.InterfaceFontSize = fontSize;
+                try
+                {
+                    // Save to EditorSettings
+                    EditorSettings.InterfaceFont = fontDisplayName;
+                    EditorSettings.InterfaceFontPath = fontFilePath; // Add this to EditorSettings if needed
+                    EditorSettings.InterfaceFontSize = fontSize;
 
-                Console.WriteLine($"[Preferences] Font settings saved: {fontDisplayName} @ {fontSize}px");
-                Console.WriteLine($"[Preferences] Font path: {fontFilePath}");
-                Console.WriteLine("[Preferences] Font changes will be applied on next editor restart.");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Preferences] Failed to save font settings: {ex.Message}");
-            }
+                    LogManager.LogInfo($"Font settings saved: {fontDisplayName} @ {fontSize}px", "Preferences");
+                    LogManager.LogInfo($"Font path: {fontFilePath}", "Preferences");
+                    LogManager.LogInfo("Font changes will be applied on next editor restart.", "Preferences");
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogError($"Failed to save font settings: {ex.Message}", "Preferences");
+                }
         }
     }
 }

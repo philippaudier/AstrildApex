@@ -139,15 +139,11 @@ namespace Engine.Assets
             return ext switch
             {
                 ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" => "Texture2D",
-                ".hdr" => "TextureHDR",
+                ".hdr" or ".exr" => "TextureHDR",
                 ".gltf" or ".glb" => "ModelGLTF",
                 ".fbx" => "ModelFBX",
                 ".obj" => "ModelOBJ",
                 ".dae" => "ModelDAE",
-                ".3ds" => "Model3DS",
-                ".blend" => "ModelBlend",
-                ".ply" => "ModelPLY",
-                ".stl" => "ModelSTL",
                 ".meshasset" => "MeshAsset",
                 ".skymat" => "SkyboxMaterial",
                 ".ttf" or ".otf" or ".woff" or ".woff2" => "TrueTypeFont",
@@ -544,11 +540,23 @@ namespace Engine.Assets
                 Name = string.IsNullOrWhiteSpace(newName) ? (src.Name + " (Instance)") : newName,
                 AlbedoColor = src.AlbedoColor != null ? (float[])src.AlbedoColor.Clone() : new float[] { 1, 1, 1, 1 },
                 AlbedoTexture = src.AlbedoTexture.GetValueOrDefault(Guid.Empty),
+                NormalTexture = src.NormalTexture,
+                NormalStrength = src.NormalStrength,
                 Metallic = src.Metallic,
-                Roughness = src.Roughness
+                Roughness = src.Roughness,
+                TextureTiling = src.TextureTiling != null ? (float[])src.TextureTiling.Clone() : new float[] { 1, 1 },
+                TextureOffset = src.TextureOffset != null ? (float[])src.TextureOffset.Clone() : new float[] { 0, 0 },
+                Saturation = src.Saturation,
+                Brightness = src.Brightness,
+                Contrast = src.Contrast,
+                Hue = src.Hue,
+                Emission = src.Emission,
+                TransparencyMode = src.TransparencyMode,
+                Opacity = src.Opacity,
+                Shader = src.Shader
             };
 
-            var rec = CreateMaterial(clone.Name);   // crée l’asset, enregistre et renvoie l’enregistrement
+            var rec = CreateMaterial(clone.Name);   // crée l'asset, enregistre et renvoie l'enregistrement
             clone.Guid = rec.Guid; SaveMaterial(clone);         // persiste les champs (si ta SaveMaterial a une surcharge (Guid, asset))
 
             return rec.Guid;
@@ -777,11 +785,7 @@ namespace Engine.Assets
                     }
                 }
 
-                // DIAGNOSTIC: Log where the mesh is being loaded from to find duplicate loads
-                var caller = new System.Diagnostics.StackTrace(2, false).GetFrame(0);
-                var callerMethod = caller?.GetMethod();
-                var callerType = callerMethod?.DeclaringType?.Name ?? "Unknown";
-                Console.WriteLine($"[AssetDatabase] ⚡ Loaded mesh from cache: {Path.GetFileName(cachePath)} (called by {callerType}.{callerMethod?.Name})");
+                // Log removed to reduce verbosity
                 return true;
             }
             catch (Exception ex)

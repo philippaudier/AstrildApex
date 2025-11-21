@@ -1,0 +1,15 @@
+﻿iconKey,found,path,definedInJson
+delete,true,export\\icons\delete.png,True
+folder,true,export\\icons\folder.png,True
+grid_view,true,export\\icons\grid_view.png,True
+light_component,true,export\\icons\light_component.png,True
+list_view,true,export\\icons\list_view.png,True
+material,true,export\\icons\material.png,True
+model,true,export\\icons\model.png,True
+pause,true,export\\icons\pause.png,False
+play,true,export\\icons\play.png,False
+refresh,true,export\\icons\refresh.png,True
+skybox,false,,False
+step,true,export\\icons\step.png,False
+stop,true,export\\icons\stop.png,False
+texture,true,export\\icons\texture.png,True

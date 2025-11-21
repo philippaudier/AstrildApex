@@ -22,7 +22,8 @@ namespace Editor.Panels
         private static LogLevel[] _filterLevels = Enum.GetValues(typeof(LogLevel)).Cast<LogLevel>().ToArray();
         private static readonly Dictionary<LogLevel, bool> _levelFilters = new()
         {
-            { LogLevel.Verbose, true },
+            // Hide Verbose by default to reduce noisy logs in the Console panel.
+            { LogLevel.Verbose, false },
             { LogLevel.Info, true },
             { LogLevel.Warning, true },
             { LogLevel.Error, true },
@@ -82,6 +83,9 @@ namespace Editor.Panels
             {
                 var color = GetColor(entry.Level);
                 ImGui.PushStyleColor(ImGuiCol.Text, color);
+
+                // Ensure each selectable has a unique ID so identical messages don't collide.
+                ImGui.PushID(idx);
                 string msg = _showTimestamps ? $"[{entry.Timestamp:HH:mm:ss}] {entry.Message}" : entry.Message;
                 if (ImGui.Selectable(msg, _selectedIndex == idx))
                     _selectedIndex = idx;
@@ -90,6 +94,8 @@ namespace Editor.Panels
                     ImGui.SameLine();
                     ImGui.TextUnformatted($"x{entry.Count}");
                 }
+                ImGui.PopID();
+
                 ImGui.PopStyleColor();
                 idx++;
             }

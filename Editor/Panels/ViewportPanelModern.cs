@@ -6,6 +6,7 @@ using OpenTK.Mathematics;
 using Editor.Rendering;
 using Editor.State;
 using Editor.UI;
+using Editor.Logging;
 using Vector2 = System.Numerics.Vector2;
 using Vector3 = System.Numerics.Vector3;
 using Vector4 = System.Numerics.Vector4;
@@ -53,6 +54,9 @@ public class ViewportPanelModern
     private float _arrowVelocityX = 0f;
     private float _arrowVelocityY = 0f;
     private CameraView _previousView = CameraView.Perspective;
+    
+    // Track if we just started animating to reset distance tracking
+    private bool _wasAnimating = false;
     
     // === Camera Settings ===
     private float _arrowSpeed = 1.0f;
@@ -126,7 +130,7 @@ public class ViewportPanelModern
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ViewportPanel] Failed to apply saved camera state: {ex.Message}");
+                    LogManager.LogWarning($"Failed to apply saved camera state: {ex.Message}", "ViewportPanel");
                 }
             }
         }
@@ -184,7 +188,7 @@ public class ViewportPanelModern
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[ViewportPanelModern] Failed to set VSync: {ex.Message}");
+                    LogManager.LogWarning($"Failed to set VSync: {ex.Message}", "ViewportPanelModern");
                 }
             }
             
@@ -363,15 +367,37 @@ public class ViewportPanelModern
             }
         }
         
-        // Smoothing
-        _yaw = _yaw + (_targetYaw - _yaw) * _smoothFactor;
-        _pitch = _pitch + (_targetPitch - _pitch) * _smoothFactor;
-        _dist = _dist + (_targetDist - _dist) * _smoothFactor;
-        
         if (Renderer != null)
         {
             Renderer.ResetToOrbitalCamera();
-            if (Renderer.IsCameraAnimating) _dist = Renderer.Distance;
+            
+            bool isAnimating = Renderer.IsCameraAnimating;
+            
+            // Detect animation start (transition from not-animating to animating)
+            if (isAnimating && !_wasAnimating)
+            {
+                // Animation just started - force immediate sync with renderer's goal
+                // This must happen BEFORE smoothing to avoid overwriting the new goal
+                _dist = Renderer.Distance;
+                _targetDist = Renderer.DistanceGoal;
+            }
+            else if (isAnimating)
+            {
+                // During camera animation (focus/frame), sync our distance with renderer's animated distance
+                // This allows the panel to follow the renderer's smooth distance interpolation
+                _dist = Renderer.Distance;
+                _targetDist = Renderer.DistanceGoal; // Use the goal, not current distance
+            }
+            else
+            {
+                // Only apply smoothing when NOT animating (normal user input)
+                _yaw = _yaw + (_targetYaw - _yaw) * _smoothFactor;
+                _pitch = _pitch + (_targetPitch - _pitch) * _smoothFactor;
+                _dist = _dist + (_targetDist - _dist) * _smoothFactor;
+            }
+            
+            _wasAnimating = isAnimating;
+            
             Renderer.SetCamera(_yaw, _pitch, _dist);
         }
         
@@ -825,15 +851,15 @@ public class ViewportPanelModern
         // Check if it's a mesh asset
         if (!Engine.Assets.AssetDatabase.TryGet(assetGuid, out var assetRec))
         {
-            Console.WriteLine($"[ViewportPanel] Dropped asset GUID not found in AssetDatabase: {assetGuid}");
+            LogManager.LogWarning($"Dropped asset GUID not found in AssetDatabase: {assetGuid}", "ViewportPanel");
             return;
         }
 
-        Console.WriteLine($"[ViewportPanel] Dropped asset: GUID={assetGuid}, Path={assetRec.Path}, Type={assetRec.Type}");
+    LogManager.LogInfo($"Dropped asset: GUID={assetGuid}, Path={assetRec.Path}, Type={assetRec.Type}", "ViewportPanel");
 
         if (!Engine.Assets.AssetDatabase.IsMeshAsset(assetGuid))
         {
-            Console.WriteLine($"[ViewportPanel] Dropped asset is not a mesh: {assetRec.Type}");
+            LogManager.LogWarning($"Dropped asset is not a mesh: {assetRec.Type}", "ViewportPanel");
             return;
         }
 
@@ -852,11 +878,24 @@ public class ViewportPanelModern
         var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(assetGuid);
         if (meshAsset == null)
         {
-            Console.WriteLine($"[ViewportPanel] LoadMeshAsset returned null for GUID={assetGuid}, path={assetRec.Path}");
+            LogManager.LogWarning($"LoadMeshAsset returned null for GUID={assetGuid}, path={assetRec.Path}", "ViewportPanel");
             return;
         }
 
-        Console.WriteLine($"[ViewportPanel] Loaded MeshAsset GUID={meshAsset.Guid}, SubMeshes={meshAsset.SubMeshes.Count}, Materials={meshAsset.MaterialGuids.Count}");
+    LogManager.LogInfo($"Loaded MeshAsset GUID={meshAsset.Guid}, SubMeshes={meshAsset.SubMeshes.Count}, Materials={meshAsset.MaterialGuids.Count}", "ViewportPanel");
+        
+        // DEBUG: Print submesh and material information
+        for (int i = 0; i < meshAsset.SubMeshes.Count; i++)
+        {
+            var submesh = meshAsset.SubMeshes[i];
+            // Use the submesh's MaterialIndex to lookup the material GUID (material list is indexed by material slot)
+            Guid? matGuid = null;
+            if (submesh.MaterialIndex >= 0 && submesh.MaterialIndex < meshAsset.MaterialGuids.Count)
+                matGuid = meshAsset.MaterialGuids[submesh.MaterialIndex];
+
+            var matName = matGuid.HasValue ? Engine.Assets.AssetDatabase.GetName(matGuid.Value) : "<none>";
+            LogManager.LogVerbose($"DEBUG: Submesh[{i}] Name={submesh.Name}, MaterialIndex={submesh.MaterialIndex}, AssignedMaterial={matName}", "ViewportPanel");
+        }
 
         // Create parent entity
         var parentEntity = new Engine.Scene.Entity
@@ -869,31 +908,69 @@ public class ViewportPanelModern
         // Add to scene first so child entities can reference the parent
         Renderer.Scene.Entities.Add(parentEntity);
 
-        // If there's only one submesh, add it to the parent entity
+        // Decide whether this model was authored with per-node transforms (non-identity LocalTransform)
+        // Check if any submesh has a LocalTransform with meaningful translation (not just at origin)
+        const float epsilon = 0.01f;
+        bool hasNodeTransforms = meshAsset.SubMeshes.Any(sm =>
+        {
+            if (sm.LocalTransform == null || sm.LocalTransform.Length != 16)
+                return false;
+            var mat = FloatArrayToMatrix(sm.LocalTransform);
+            // Extract translation component (M41, M42, M43)
+            float tx = mat.M41;
+            float ty = mat.M42;
+            float tz = mat.M43;
+            float translationMagnitude = (float)Math.Sqrt(tx * tx + ty * ty + tz * tz);
+            return translationMagnitude > epsilon;
+        });
+        
+    LogManager.LogVerbose($"===== Model '{assetRec.Name}' has {(hasNodeTransforms ? "MEANINGFUL node" : "IDENTITY/BAKED")} transforms =====", "ViewportPanel");
+    LogManager.LogVerbose($"Mesh bounds center: ({meshAsset.Bounds.Center.X:F3}, {meshAsset.Bounds.Center.Y:F3}, {meshAsset.Bounds.Center.Z:F3})", "ViewportPanel");
+
+            // If there's only one submesh, add it to the parent entity
         if (meshAsset.SubMeshes.Count == 1)
         {
             var meshRenderer = parentEntity.AddComponent<Engine.Components.MeshRendererComponent>();
             meshRenderer.SetCustomMesh(assetGuid, 0);
+            
+            LogManager.LogInfo($"SetCustomMesh called with GUID={assetGuid}, submesh=0", "ViewportPanel");
+            LogManager.LogInfo($"CustomMeshGuid after set: {meshRenderer.CustomMeshGuid}", "ViewportPanel");
+            LogManager.LogInfo($"IsUsingCustomMesh: {meshRenderer.IsUsingCustomMesh()}", "ViewportPanel");
 
             // Assign material
-            if (meshAsset.MaterialGuids.Count > 0)
-            {
-                var matGuid0 = meshAsset.MaterialGuids[0];
-                if (matGuid0.HasValue)
-                    meshRenderer.SetMaterial(matGuid0.Value);
-                else
-                    meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
-            }
-            else
-            {
-                meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
-            }
+            // Use the submesh's MaterialIndex to find the correct material GUID
+            var sm = meshAsset.SubMeshes[0];
+            Guid? matGuid0 = null;
+            if (sm.MaterialIndex >= 0 && sm.MaterialIndex < meshAsset.MaterialGuids.Count)
+                matGuid0 = meshAsset.MaterialGuids[sm.MaterialIndex];
 
-            Console.WriteLine($"[ViewportPanel] Created single-submesh entity '{parentEntity.Name}' at {worldPos}");
+            if (matGuid0.HasValue)
+                meshRenderer.SetMaterial(matGuid0.Value);
+            else
+                meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
+            
+            // Automatically add MeshCollider for imported meshes
+            var meshCollider = parentEntity.AddComponent<Engine.Components.MeshCollider>();
+            meshCollider.UseMeshRendererMesh = true;
+            LogManager.LogInfo($"Auto-added MeshCollider to '{parentEntity.Name}'", "ViewportPanel");
+
+            LogManager.LogVerbose($"Created single-submesh entity '{parentEntity.Name}' at {worldPos}", "ViewportPanel");
         }
         else
         {
             // Multiple submeshes: create child entities for each submesh
+            // IMPORTANT: For models with baked transforms (vertices already in world space),
+            // we DON'T move the submeshes - they stay at origin relative to parent
+            // If we detected node transforms, apply them per-child. Otherwise assume the model
+            // vertices are baked in place and recenter the parent so the model is placed at drop position.
+            // Compute mesh center once so we can place children relative to it when needed
+            var meshCenter = meshAsset.Bounds.Center;
+            if (!hasNodeTransforms)
+            {
+                // Recentering: offset parent so the mesh center lands on worldPos
+                parentEntity.Transform.Position = new OpenTK.Mathematics.Vector3(worldPos.X - meshCenter.X, worldPos.Y - meshCenter.Y, worldPos.Z - meshCenter.Z);
+            }
+
             for (int i = 0; i < meshAsset.SubMeshes.Count; i++)
             {
                 var submesh = meshAsset.SubMeshes[i];
@@ -903,27 +980,58 @@ public class ViewportPanelModern
                     Name = string.IsNullOrWhiteSpace(submesh.Name) ? $"Submesh_{i}" : submesh.Name
                 };
 
-                // Set parent (this will automatically add to parent's children list)
+                // Set parent - this keeps the child at local (0,0,0) unless we override below
                 childEntity.SetParent(parentEntity, keepWorld: false);
+                childEntity.Transform.Rotation = OpenTK.Mathematics.Quaternion.Identity;
+                childEntity.Transform.Scale = OpenTK.Mathematics.Vector3.One;
 
-                // Child position is relative to parent
-                childEntity.Transform.Position = OpenTK.Mathematics.Vector3.Zero;
+                // If this model contains meaningful node transforms, apply the stored LocalTransform
+                if (hasNodeTransforms && submesh.LocalTransform != null && submesh.LocalTransform.Length == 16)
+                {
+                    var mat = FloatArrayToMatrix(submesh.LocalTransform);
+                    ApplyMatrixToTransform(childEntity.Transform, mat);
+                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' placed using node LocalTransform", "ViewportPanel");
+                }
+                else if (!hasNodeTransforms)
+                {
+                    // For baked geometry (no meaningful node transforms), place the child at the
+                    // submesh centroid relative to the mesh center so parts (e.g. wheels) sit in the expected spot
+                    var subCenter = submesh.BoundsCenter; // System.Numerics.Vector3
+                    var local = new System.Numerics.Vector3(subCenter.X - meshCenter.X, subCenter.Y - meshCenter.Y, subCenter.Z - meshCenter.Z);
+                    childEntity.Transform.Position = new OpenTK.Mathematics.Vector3(local.X, local.Y, local.Z);
+                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' placed at centroid offset ({local.X:F3}, {local.Y:F3}, {local.Z:F3})", "ViewportPanel");
+                }
+                else
+                {
+                    // Mixed case: keep at origin
+                    childEntity.Transform.Position = OpenTK.Mathematics.Vector3.Zero;
+                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' kept at local origin (mixed transforms)", "ViewportPanel");
+                }
 
                 var meshRenderer = childEntity.AddComponent<Engine.Components.MeshRendererComponent>();
                 meshRenderer.SetCustomMesh(assetGuid, i);
+                
+                LogManager.LogVerbose($"Child[{i}] SetCustomMesh: GUID={assetGuid}, submesh={i}, IsUsingCustomMesh={meshRenderer.IsUsingCustomMesh()}", "ViewportPanel");
 
-                // Assign corresponding material
-                var matGuid = (i < meshAsset.MaterialGuids.Count) ? meshAsset.MaterialGuids[i] : (Guid?)null;
+                // Assign corresponding material using submesh.MaterialIndex
+                Guid? matGuid = null;
+                if (submesh.MaterialIndex >= 0 && submesh.MaterialIndex < meshAsset.MaterialGuids.Count)
+                    matGuid = meshAsset.MaterialGuids[submesh.MaterialIndex];
+
                 if (matGuid.HasValue)
                     meshRenderer.SetMaterial(matGuid.Value);
                 else
                     meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
+                
+                // Automatically add MeshCollider for each submesh
+                var meshCollider = childEntity.AddComponent<Engine.Components.MeshCollider>();
+                meshCollider.UseMeshRendererMesh = true;
+                LogManager.LogVerbose($"Auto-added MeshCollider to child '{childEntity.Name}'", "ViewportPanel");
 
                 Renderer.Scene.Entities.Add(childEntity);
-                Console.WriteLine($"[ViewportPanel] Created child entity '{childEntity.Name}' (submesh {i}) with material index {submesh.MaterialIndex}");
             }
 
-            Console.WriteLine($"[ViewportPanel] Created multi-submesh entity '{parentEntity.Name}' with {meshAsset.SubMeshes.Count} children at {worldPos}");
+            LogManager.LogVerbose($"Created multi-submesh entity '{parentEntity.Name}' with {meshAsset.SubMeshes.Count} children at {worldPos}", "ViewportPanel");
         }
 
         // Select the parent entity
@@ -932,6 +1040,45 @@ public class ViewportPanelModern
 
         // Mark scene as modified
         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+    }
+
+    /// <summary>
+    /// Convert float array to System.Numerics.Matrix4x4
+    /// </summary>
+    private System.Numerics.Matrix4x4 FloatArrayToMatrix(float[] array)
+    {
+        if (array == null || array.Length != 16)
+            return System.Numerics.Matrix4x4.Identity;
+
+        return new System.Numerics.Matrix4x4(
+            array[0], array[1], array[2], array[3],
+            array[4], array[5], array[6], array[7],
+            array[8], array[9], array[10], array[11],
+            array[12], array[13], array[14], array[15]
+        );
+    }
+
+    /// <summary>
+    /// Apply matrix transform to entity Transform component
+    /// Decomposes matrix into position, rotation, and scale
+    /// </summary>
+    private void ApplyMatrixToTransform(Engine.Scene.Transform transform, System.Numerics.Matrix4x4 matrix)
+    {
+        // Decompose matrix
+        if (!System.Numerics.Matrix4x4.Decompose(matrix, out var scale, out var rotation, out var translation))
+        {
+            LogManager.LogWarning("Failed to decompose transform matrix, using identity", "ViewportPanel");
+            return;
+        }
+
+        // Apply translation
+        transform.Position = new OpenTK.Mathematics.Vector3(translation.X, translation.Y, translation.Z);
+
+        // Apply rotation (convert System.Numerics.Quaternion to OpenTK.Quaternion)
+        transform.Rotation = new OpenTK.Mathematics.Quaternion(rotation.X, rotation.Y, rotation.Z, rotation.W);
+
+        // Apply scale
+        transform.Scale = new OpenTK.Mathematics.Vector3(scale.X, scale.Y, scale.Z);
     }
 
     /// <summary>

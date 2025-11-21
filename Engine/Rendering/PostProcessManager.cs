@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Engine.Components;
 using OpenTK.Graphics.OpenGL4;
+using Engine.Rendering.PostProcess;
 
 namespace Engine.Rendering
 {
@@ -27,6 +28,10 @@ namespace Engine.Rendering
             RegisterRenderer<BloomEffect>(new BloomRenderer());
             RegisterRenderer<ToneMappingEffect>(new ToneMappingRenderer());
             RegisterRenderer<ChromaticAberrationEffect>(new ChromaticAberrationRenderer());
+            // FXAA anti-aliasing (fast, post-process)
+            RegisterRenderer<FXAAEffect>(new FXAARenderer());
+            RegisterRenderer<SSAOEffect>(new SSAOPostEffectRenderer());
+            RegisterRenderer<GTAOEffect>(new GTAORenderer());
 
 
             // Initialiser tous les renderers
@@ -84,6 +89,14 @@ namespace Engine.Rendering
         }
 
         /// <summary>
+        /// Essaie de récupérer un renderer pour un type d'effet donné
+        /// </summary>
+        public static bool TryGetRenderer(Type effectType, out IPostProcessRenderer renderer)
+        {
+            return _renderers.TryGetValue(effectType, out renderer!);
+        }
+
+        /// <summary>
         /// Applique tous les effets de post-processing actifs
         /// </summary>
         public static void ApplyEffects(PostProcessContext context)
@@ -123,9 +136,17 @@ namespace Engine.Rendering
                 if (globalEffect.Enabled == false) continue;
                 if (globalEffect.Effects == null) continue;
 
-                foreach (var effect in globalEffect.Effects.OrderBy(e => e?.Priority ?? 0))
+                // Get all active effects sorted by priority
+                var activeEffects = globalEffect.Effects
+                    .Where(e => e?.Enabled == true)
+                    .OrderBy(e => e?.Priority ?? 0)
+                    .ToList();
+
+                foreach (var effect in activeEffects)
                 {
-                    if (effect?.Enabled == false) continue;
+                    if (effect == null) continue;
+
+                    Console.WriteLine($"[PostProcessManager] Applying effect: {effect.GetType().Name}, Enabled={effect.Enabled}, Intensity={effect.Intensity}");
 
                     try
                     {
@@ -134,9 +155,17 @@ namespace Engine.Rendering
                     }
                     catch (Exception) { }
 
-                    if (_renderers.TryGetValue(effect!.GetType(), out var renderer))
+                    if (_renderers.TryGetValue(effect.GetType(), out var renderer))
                     {
+                        Console.WriteLine($"[PostProcessManager] Found renderer for {effect.GetType().Name}, calling Render()...");
                         renderer.Render(effect, context);
+                        
+                        // IMPORTANT: After rendering an effect, the result is now in the target framebuffer.
+                        // For subsequent effects to read the result of this effect (instead of the original
+                        // source), we need to update the context to read from the framebuffer's texture.
+                        // This creates a chain where each effect reads the result of the previous one.
+                        // NOTE: This assumes the target framebuffer has a texture attachment that we can read from.
+                        // For ViewportRenderer, this is _postTex attached to _postFbo.
                     }
                     else
                     {

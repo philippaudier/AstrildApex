@@ -2,7 +2,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using OpenTK.Mathematics;
+using System;
 using Engine.Components;
+using Engine.Assets;
 
 namespace Engine.Scene
 {
@@ -60,6 +62,77 @@ namespace Engine.Scene
                 L.FogDensity = envSettings.FogDensity;
                 L.SkyboxTint = envSettings.SkyboxTint;
                 L.SkyboxExposure = envSettings.SkyboxExposure;
+                // If a skybox material asset is assigned, prefer its tint/exposure
+                // and derive ambient/IBL from it so editor material changes take effect.
+                if (!string.IsNullOrWhiteSpace(envSettings.SkyboxMaterialPath))
+                {
+                    try
+                    {
+                        // Try GUID first
+                        AssetDatabase.AssetRecord? rec = null;
+                        if (Guid.TryParse(envSettings.SkyboxMaterialPath, out Guid skyGuid))
+                        {
+                            if (AssetDatabase.TryGet(skyGuid, out var r) && string.Equals(r.Type, "SkyboxMaterial", System.StringComparison.OrdinalIgnoreCase))
+                                rec = r;
+                        }
+                        else if (System.IO.File.Exists(envSettings.SkyboxMaterialPath))
+                        {
+                            if (AssetDatabase.TryGetByPath(envSettings.SkyboxMaterialPath, out var r2) && string.Equals(r2.Type, "SkyboxMaterial", System.StringComparison.OrdinalIgnoreCase))
+                                rec = r2;
+                        }
+
+                        if (rec != null)
+                        {
+                            var mat = SkyboxMaterialAsset.Load(rec.Path);
+                            if (mat != null)
+                            {
+                                // Choose correct tint/exposure based on skybox type
+                                float[] tintArr = mat.SkyTint;
+                                float matExposure = mat.Exposure;
+                                switch (mat.Type)
+                                {
+                                    case SkyboxType.Procedural:
+                                        tintArr = mat.SkyTint;
+                                        matExposure = mat.Exposure;
+                                        break;
+                                    case SkyboxType.Cubemap:
+                                        tintArr = mat.CubemapTint;
+                                        matExposure = mat.CubemapExposure;
+                                        break;
+                                    case SkyboxType.SixSided:
+                                        tintArr = mat.SixSidedTint;
+                                        matExposure = mat.SixSidedExposure;
+                                        break;
+                                    case SkyboxType.Panoramic:
+                                        tintArr = mat.PanoramicTint;
+                                        matExposure = mat.PanoramicExposure;
+                                        break;
+                                }
+
+                                if (tintArr != null && tintArr.Length >= 3)
+                                {
+                                    var matTint = new Vector3(tintArr[0], tintArr[1], tintArr[2]);
+                                    // envSettings.SkyboxTint acts as a multiplier to material tint (Unity-like)
+                                    L.SkyboxTint = new Vector3(matTint.X * envSettings.SkyboxTint.X,
+                                                              matTint.Y * envSettings.SkyboxTint.Y,
+                                                              matTint.Z * envSettings.SkyboxTint.Z);
+                                }
+
+                                // Combine exposures (material * env multiplier)
+                                L.SkyboxExposure = matExposure * envSettings.SkyboxExposure;
+
+                                // If ambient mode is Skybox, derive ambient color from the skybox tint/exposure
+                                if (envSettings.AmbientMode == Engine.Components.AmbientMode.Skybox)
+                                {
+                                    // Simple approximation: ambient color = sky tint, ambient intensity = exposure * ambientIntensity
+                                    L.AmbientColor = new Vector3(L.SkyboxTint.X, L.SkyboxTint.Y, L.SkyboxTint.Z);
+                                    L.AmbientIntensity = L.SkyboxExposure * envSettings.AmbientIntensity;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
                 
                 // Handle sun/moon light selection based on time of day
                 var activeLightId = envSettings.GetActiveLightId();

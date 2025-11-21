@@ -1,143 +1,368 @@
-{
-  "name": "AstrildApex Engine Icons",
-  "version": "1.0.0",
-  "description": "Complete SVG icon set for AstrildApex game engine editor",
-  "count": 27,
-  "icons": {
-    "new_file": {
-      "name": "New File",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/>\n                    <path d=\"M14 2v6h6\"/>\n                    <line x1=\"12\" y1=\"18\" x2=\"12\" y2=\"12\"/>\n                    <line x1=\"9\" y1=\"15\" x2=\"15\" y2=\"15\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "save": {
-      "name": "Save",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z\"/>\n                    <polyline points=\"17,21 17,13 7,13 7,21\"/>\n                    <polyline points=\"7,3 7,8 15,8\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "load": {
-      "name": "Load",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/>\n                    <polyline points=\"7,10 12,15 17,10\"/>\n                    <line x1=\"12\" y1=\"15\" x2=\"12\" y2=\"3\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "move": {
-      "name": "Move (W)",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3\"/>\n                    <line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/>\n                    <line x1=\"12\" y1=\"2\" x2=\"12\" y2=\"22\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "rotate": {
-      "name": "Rotate (E)",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M21 2v6h-6\"/>\n                    <path d=\"M3 12a9 9 0 1 0 9-9c-2.52 0-4.93 1-6.74 2.74L3 8\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "scale": {
-      "name": "Scale (R)",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M21 3l-6 6\"/>\n                    <path d=\"M21 9V3h-6\"/>\n                    <path d=\"M3 21l6-6\"/>\n                    <path d=\"M9 21H3v-6\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "hierarchy": {
-      "name": "Hierarchy",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"3\" width=\"18\" height=\"4\" rx=\"2\"/>\n                    <rect x=\"3\" y=\"10\" width=\"18\" height=\"4\" rx=\"2\"/>\n                    <rect x=\"3\" y=\"17\" width=\"18\" height=\"4\" rx=\"2\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "inspector": {
-      "name": "Inspector",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/>\n                    <path d=\"M14 2v6h6\"/>\n                    <line x1=\"16\" y1=\"13\" x2=\"8\" y2=\"13\"/>\n                    <line x1=\"16\" y1=\"17\" x2=\"8\" y2=\"17\"/>\n                    <line x1=\"10\" y1=\"9\" x2=\"8\" y2=\"9\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "viewport": {
-      "name": "Viewport",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/>\n                    <path d=\"M9 9h6v6H9z\"/>\n                    <path d=\"M15 3v6\"/>\n                    <path d=\"M21 9h-6\"/>\n                    <path d=\"M9 21v-6\"/>\n                    <path d=\"M3 15h6\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "console": {
-      "name": "Console",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/>\n                    <path d=\"M6 8l4 4-4 4\"/>\n                    <path d=\"M12 16h6\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "material": {
-      "name": "Material",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <circle cx=\"12\" cy=\"12\" r=\"8\"/>\n                    <path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>\n                    <path d=\"M2 12h20\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "texture": {
-      "name": "Texture",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\"/>\n                    <circle cx=\"8.5\" cy=\"8.5\" r=\"1.5\"/>\n                    <path d=\"M21 15l-5-5L5 21\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "model": {
-      "name": "Model",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M12 2L2 7l10 5 10-5-10-5z\"/>\n                    <path d=\"M2 17l10 5 10-5\"/>\n                    <path d=\"M2 12l10 5 10-5\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "folder": {
-      "name": "Folder",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "scene_file": {
-      "name": "Scene File",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"4\" width=\"18\" height=\"16\" rx=\"2\"/>\n                    <path d=\"M7 8h10\"/>\n                    <circle cx=\"9\" cy=\"12\" r=\"2\"/>\n                    <path d=\"M13 12h4\"/>\n                    <path d=\"M7 16h6\"/>\n                    <path d=\"M15 16h2\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "add": {
-      "name": "Add",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <circle cx=\"12\" cy=\"12\" r=\"10\"/>\n                    <line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"16\"/>\n                    <line x1=\"8\" y1=\"12\" x2=\"16\" y2=\"12\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "delete": {
-      "name": "Delete",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <polyline points=\"3,6 5,6 21,6\"/>\n                    <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>\n                    <line x1=\"10\" y1=\"11\" x2=\"10\" y2=\"17\"/>\n                    <line x1=\"14\" y1=\"11\" x2=\"14\" y2=\"17\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "duplicate": {
-      "name": "Duplicate",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\"/>\n                    <path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "refresh": {
-      "name": "Refresh",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M23 4v6h-6\"/>\n                    <path d=\"M20.49 15a9 9 0 1 1-2.12-9.36L23 10\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "lock": {
-      "name": "Lock",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/>\n                    <circle cx=\"12\" cy=\"16\" r=\"1\"/>\n                    <path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "unlock": {
-      "name": "Unlock",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\"/>\n                    <circle cx=\"12\" cy=\"16\" r=\"1\"/>\n                    <path d=\"M7 11V7a5 5 0 0 1 9.9-1\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "grid_view": {
-      "name": "Grid View",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/>\n                    <rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/>\n                    <rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/>\n                    <rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "list_view": {
-      "name": "List View",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <line x1=\"8\" y1=\"6\" x2=\"21\" y2=\"6\"/>\n                    <line x1=\"8\" y1=\"12\" x2=\"21\" y2=\"12\"/>\n                    <line x1=\"8\" y1=\"18\" x2=\"21\" y2=\"18\"/>\n                    <line x1=\"3\" y1=\"6\" x2=\"3.01\" y2=\"6\"/>\n                    <line x1=\"3\" y1=\"12\" x2=\"3.01\" y2=\"12\"/>\n                    <line x1=\"3\" y1=\"18\" x2=\"3.01\" y2=\"18\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "settings": {
-      "name": "Settings",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <circle cx=\"12\" cy=\"12\" r=\"3\"/>\n                    <path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1 1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "light_component": {
-      "name": "Light Component",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <circle cx=\"12\" cy=\"12\" r=\"5\"/>\n                    <line x1=\"12\" y1=\"1\" x2=\"12\" y2=\"3\"/>\n                    <line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"23\"/>\n                    <line x1=\"4.22\" y1=\"4.22\" x2=\"5.64\" y2=\"5.64\"/>\n                    <line x1=\"18.36\" y1=\"18.36\" x2=\"19.78\" y2=\"19.78\"/>\n                    <line x1=\"1\" y1=\"12\" x2=\"3\" y2=\"12\"/>\n                    <line x1=\"21\" y1=\"12\" x2=\"23\" y2=\"12\"/>\n                    <line x1=\"4.22\" y1=\"19.78\" x2=\"5.64\" y2=\"18.36\"/>\n                    <line x1=\"18.36\" y1=\"5.64\" x2=\"19.78\" y2=\"4.22\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "cube": {
-      "name": "Cube",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <path d=\"M12 2l8 4.6v10.8L12 22l-8-4.6V6.6L12 2z\"/>\n                    <path d=\"M12 22v-10.8\"/>\n                    <path d=\"M4 6.6l8 4.6 8-4.6\"/>\n                    <path d=\"M4 17.4l8-4.6\"/>\n                    <path d=\"M20 17.4l-8-4.6\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    },
-    "sphere": {
-      "name": "Sphere",
-      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\">\n                    <circle cx=\"12\" cy=\"12\" r=\"10\"/>\n                    <path d=\"M2 12h20\"/>\n                    <path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/>\n                </svg>",
-      "viewBox": "0 0 24 24"
-    }
-  }
+﻿{
+    "description":  "Complete icon set for AstrildApex game engine editor (PNG-based)",
+    "name":  "AstrildApex Engine Icons",
+    "version":  "2.0.0",
+    "count":  72,
+    "icons":  {
+                  "hierarchy":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Hierarchy",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "game":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Game",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "snap_to_grid":  {
+                                       "viewBox":  "0 0 24 24",
+                                       "name":  "Snap To Grid",
+                                       "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                   },
+                  "delete":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Delete",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "stop":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Stop",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "save":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Save",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "prefab":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Prefab",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "list_view":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "List View",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "filter":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Filter",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "redo":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Redo",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "refresh":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Refresh",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "script":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Script",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "rotate":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Rotate",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "scene":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Scene",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "cylinder":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Cylinder",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "play":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Play",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "hidden":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Hidden",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "console":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Console",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "scene_file":  {
+                                     "viewBox":  "0 0 24 24",
+                                     "name":  "Scene File",
+                                     "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                 },
+                  "expand":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Expand",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "cut":  {
+                              "viewBox":  "0 0 24 24",
+                              "name":  "Cut",
+                              "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                          },
+                  "inspector":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Inspector",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "new_file":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "New File",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "shader":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Shader",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "audio":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Audio",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "project":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Project",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "material":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Material",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "transform":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Transform",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "collider":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Collider",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "undo":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Undo",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "font":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Font",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "scale":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Scale",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "cube":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Cube",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "model":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Model",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "settings":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Settings",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "capsule":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Capsule",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "grid":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Grid",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "folder":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Folder",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "sphere":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Sphere",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "copy":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Copy",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "visible":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Visible",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "file":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "File",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "camera":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Camera",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "paste":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Paste",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "add":  {
+                              "viewBox":  "0 0 24 24",
+                              "name":  "Add",
+                              "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                          },
+                  "step":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Step",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "mesh":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Mesh",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "open":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Open",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "grid_view":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Grid View",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "mesh_renderer":  {
+                                        "viewBox":  "0 0 24 24",
+                                        "name":  "Mesh Renderer",
+                                        "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                    },
+                  "collapse":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Collapse",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "select":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Select",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "light_component":  {
+                                          "viewBox":  "0 0 24 24",
+                                          "name":  "Light Component",
+                                          "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                      },
+                  "folder_open":  {
+                                      "viewBox":  "0 0 24 24",
+                                      "name":  "Folder Open",
+                                      "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                  },
+                  "profiler":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Profiler",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "pause":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Pause",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "empty_object":  {
+                                       "viewBox":  "0 0 24 24",
+                                       "name":  "Empty Object",
+                                       "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                   },
+                  "unlock":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Unlock",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "viewport":  {
+                                   "viewBox":  "0 0 24 24",
+                                   "name":  "Viewport",
+                                   "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                               },
+                  "rigidbody":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Rigidbody",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "move":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Move",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "remove":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Remove",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             },
+                  "plane":  {
+                                "viewBox":  "0 0 24 24",
+                                "name":  "Plane",
+                                "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                            },
+                  "save_as":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Save As",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "particle_system":  {
+                                          "viewBox":  "0 0 24 24",
+                                          "name":  "Particle System",
+                                          "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                      },
+                  "terrain":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Terrain",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "duplicate":  {
+                                    "viewBox":  "0 0 24 24",
+                                    "name":  "Duplicate",
+                                    "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                },
+                  "camera_component":  {
+                                           "viewBox":  "0 0 24 24",
+                                           "name":  "Camera Component",
+                                           "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                                       },
+                  "sort_az":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Sort Az",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "lock":  {
+                               "viewBox":  "0 0 24 24",
+                               "name":  "Lock",
+                               "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                           },
+                  "texture":  {
+                                  "viewBox":  "0 0 24 24",
+                                  "name":  "Texture",
+                                  "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                              },
+                  "search":  {
+                                 "viewBox":  "0 0 24 24",
+                                 "name":  "Search",
+                                 "svg":  "\u003csvg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"\u003e\u003crect width=\"24\" height=\"24\" fill=\"currentColor\"/\u003e\u003c/svg\u003e"
+                             }
+              }
 }

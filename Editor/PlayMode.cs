@@ -1,6 +1,7 @@
 using System;
 using Engine.Scene;
 using Engine.Components;
+using Editor.Logging;
 using Editor.Panels;
 
 namespace Editor
@@ -42,31 +43,115 @@ namespace Editor
             _originalScene = currentScene;
             _playScene = currentScene.Clone(Program.ScriptHost);
 
+            // Diagnostic: enumerate cloned entities and report MeshRendererComponent material GUIDs
+            try
+            {
+                if (_playScene != null)
+                {
+                    int reported = 0;
+                    int totalMeshRenders = 0;
+                    foreach (var e in _playScene.Entities)
+                    {
+                        var mr = e.GetComponent<Engine.Components.MeshRendererComponent>();
+                        if (mr == null) continue;
+                        totalMeshRenders++;
+                            if (reported < 100)
+                            {
+                                var mg = mr.MaterialGuid.HasValue ? mr.MaterialGuid.Value.ToString() : "<none>";
+                                Engine.Utils.DebugLogger.Log($"[PlayMode][Diag] Cloned Entity {e.Id} MeshRenderer.MaterialGuid={mg}");
+                                reported++;
+                            }
+                    }
+                    Engine.Utils.DebugLogger.Log($"[PlayMode][Diag] Cloned play scene has {totalMeshRenders} entities with MeshRendererComponent (reported {Math.Min(100, totalMeshRenders)})");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogManager.LogWarning($"Failed enumerating cloned entities: {ex.Message}", "PlayMode");
+            }
+
             // IMPORTANT: Do NOT replace the editor viewport's scene with the play scene.
             // Rendering the play scene must be done by the GamePanel's GameRenderer only.
             // This prevents duplicate rendering where both the Viewport and Game panels
             // draw the same runtime scene simultaneously.
 
+            // --- Preload materials/textures used by the cloned play scene ---
+            // Trigger MaterialRuntime.FromAsset for each material referenced by mesh renderers
+            // so TextureCache.GetOrLoad schedules background decoding before we flush uploads.
+            try
+            {
+                int preloadCount = 0;
+                Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
+                if (_playScene != null)
+                {
+                    foreach (var ent in _playScene.Entities)
+                    {
+                        try
+                        {
+                            var mr = ent.GetComponent<Engine.Components.MeshRendererComponent>();
+                            if (mr == null) continue;
+                            if (mr.MaterialGuid.HasValue && mr.MaterialGuid.Value != Guid.Empty)
+                            {
+                                try
+                                {
+                                    var mat = Engine.Assets.AssetDatabase.LoadMaterial(mr.MaterialGuid.Value);
+                                    // Calling FromAsset will call TextureCache.GetOrLoad which schedules background loads
+                                    Engine.Rendering.MaterialRuntime.FromAsset(mat, resolver);
+                                    preloadCount++;
+                                }
+                                catch { }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                if (preloadCount > 0)
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] Preloaded {preloadCount} material(s) for Play Scene");
+            }
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Material preload failed: {ex.Message}");
+            }
+
             // DO NOT clear material/texture cache when entering Play Mode
             // The global cache should be preserved so GameRenderer can reuse loaded materials
-            Console.WriteLine("[PlayMode] Entering Play Mode - preserving material/texture cache");
+            Engine.Utils.DebugLogger.Log("[PlayMode] Entering Play Mode - preserving material/texture cache");
 
             // PERFORMANCE: Flush any pending texture uploads immediately when entering Play Mode
             // This ensures all textures are ready before the first frame renders
             try
             {
-                System.Threading.Thread.Sleep(50); // Give background threads time to decode images
+                System.Threading.Thread.Sleep(10); // Give background threads time to decode images
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                int uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(50);
-                sw.Stop();
-                if (uploaded > 0)
+
+                // Upload all pending textures in batches until complete
+                int totalUploaded = 0;
+                int batchCount = 0;
+                int uploaded;
+                const int maxBatches = 20; // Safety limit to prevent infinite loop
+
+                do
                 {
-                    Console.WriteLine($"[PlayMode] ⚡ Flushed {uploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms");
+                    // Wait a bit for background decoding to catch up
+                    if (batchCount > 0)
+                        System.Threading.Thread.Sleep(5);
+
+                    uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
+                    totalUploaded += uploaded;
+                    batchCount++;
+                }
+                while (uploaded > 0 && batchCount < maxBatches);
+
+                sw.Stop();
+
+                if (totalUploaded > 0)
+                {
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] ⚡ Flushed {totalUploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms ({batchCount} batches)");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[PlayMode] FlushPendingUploads failed: {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[PlayMode] FlushPendingUploads failed: {ex.Message}");
             }
 
             // Configurer les contextes d'input pour le mode Play
@@ -80,7 +165,7 @@ namespace Editor
             {
                 Panels.GamePanel.SetMaximized(true);
             }
-            
+                   
             _state = PlayState.Playing;
             // Play Mode started
         }
@@ -121,7 +206,7 @@ namespace Editor
             
             // Force menu state to closed (in case Play Mode stopped with menu open)
             Engine.Input.InputManager.Instance?.SetMenuVisible(false);
-            Console.WriteLine("[PlayMode] Stop - Forced menu state to closed");
+            Engine.Utils.DebugLogger.Log("[PlayMode] Stop - Forced menu state to closed");
 
             // Reset GamePanel cursor state and restore safe cursor state
             Panels.GamePanel.ResetCursorState();
@@ -134,7 +219,7 @@ namespace Editor
             Engine.Input.Cursor.lockState = Engine.Input.CursorLockMode.None;
             Engine.Input.Cursor.visible = true;
             
-            Console.WriteLine("[PlayMode] Stop - Cursor unlocked and reset to normal");
+            Engine.Utils.DebugLogger.Log("[PlayMode] Stop - Cursor unlocked and reset to normal");
             
             // Call OnDestroy() on all components before cleanup
             if (_playScene != null)
@@ -162,7 +247,7 @@ namespace Editor
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[PlayMode] Warning: Failed to reload TerrainForward shader: {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Warning: Failed to reload TerrainForward shader: {ex.Message}");
             }
             
             // Exit maximized mode before disposing (ensures clean state)
@@ -174,11 +259,11 @@ namespace Editor
                 var main = EditorUI.MainViewport.Renderer;
                 if (main != null)
                 {
-                    Console.WriteLine($"[PlayMode] Before Dispose - MainViewport: instances={Editor.Rendering.ViewportRenderer.InstanceCount}, LastFrameCpuMs={main.LastFrameCpuMs}, DrawCalls={main.DrawCallsThisFrame}, Triangles={main.TrianglesThisFrame}");
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] Before Dispose - MainViewport: instances={Editor.Rendering.ViewportRenderer.InstanceCount}, LastFrameCpuMs={main.LastFrameCpuMs}, DrawCalls={main.DrawCallsThisFrame}, Triangles={main.TrianglesThisFrame}");
                 }
                 else
                 {
-                    Console.WriteLine($"[PlayMode] Before Dispose - MainViewport: NULL, instances={Editor.Rendering.ViewportRenderer.InstanceCount}");
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] Before Dispose - MainViewport: NULL, instances={Editor.Rendering.ViewportRenderer.InstanceCount}");
                 }
             }
             catch { }
@@ -190,33 +275,54 @@ namespace Editor
             // This ensures the editor viewport has all textures loaded
             try
             {
-                System.Threading.Thread.Sleep(50); // Give background threads time
+                System.Threading.Thread.Sleep(10); // Give background threads time
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                int uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(50);
-                sw.Stop();
-                if (uploaded > 0)
+
+                // Upload all pending textures in batches until complete
+                int totalUploaded = 0;
+                int batchCount = 0;
+                int uploaded;
+                const int maxBatches = 20; // Safety limit to prevent infinite loop
+
+                do
                 {
-                    Console.WriteLine($"[PlayMode] ⚡ Exit: Flushed {uploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms");
+                    // Wait a bit for background decoding to catch up
+                    if (batchCount > 0)
+                        System.Threading.Thread.Sleep(5);
+
+                    uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
+                    totalUploaded += uploaded;
+                    batchCount++;
+                }
+                while (uploaded > 0 && batchCount < maxBatches);
+
+                sw.Stop();
+
+                if (totalUploaded > 0)
+                {
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] ⚡ Exit: Flushed {totalUploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms ({batchCount} batches)");
                     // Clear material cache to force reload with fresh texture handles
                     Engine.Rendering.MaterialRuntime.ClearGlobalCache();
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[PlayMode] Exit FlushPendingUploads failed: {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Exit FlushPendingUploads failed: {ex.Message}");
             }
 
             // Diagnostic: log ViewportRenderer instance count and main viewport renderer after dispose
             try
             {
                 var main2 = EditorUI.MainViewport.Renderer;
-                Console.WriteLine($"[PlayMode] After Dispose - ViewportRenderer instances={Editor.Rendering.ViewportRenderer.InstanceCount}, EditorUI.MainViewport.Renderer is {(main2 == null ? "NULL" : "NOT NULL")}");
+                Engine.Utils.DebugLogger.Log($"[PlayMode] After Dispose - ViewportRenderer instances={Editor.Rendering.ViewportRenderer.InstanceCount}, EditorUI.MainViewport.Renderer is {(main2 == null ? "NULL" : "NOT NULL")}");
                 if (main2 != null)
                 {
-                    Console.WriteLine($"[PlayMode] After Dispose - MainViewport: LastFrameCpuMs={main2.LastFrameCpuMs}, DrawCalls={main2.DrawCallsThisFrame}, Triangles={main2.TrianglesThisFrame}");
+                    Engine.Utils.DebugLogger.Log($"[PlayMode] After Dispose - MainViewport: LastFrameCpuMs={main2.LastFrameCpuMs}, DrawCalls={main2.DrawCallsThisFrame}, Triangles={main2.TrianglesThisFrame}");
                 }
             }
             catch { }
+            
+            
             
             _state = PlayState.Edit;
         }

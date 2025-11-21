@@ -3,6 +3,7 @@ using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ImGuiNET;
+using Editor.Logging;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -251,12 +252,12 @@ public sealed class ImGuiController : IDisposable
             string fontPath = Editor.State.EditorSettings.InterfaceFontPath;
             float fontSize = Editor.State.EditorSettings.InterfaceFontSize;
 
-            Console.WriteLine($"[ImGuiController] Loading font: {fontName} @ {fontSize}px");
+            LogManager.LogInfo($"Loading font: {fontName} @ {fontSize}px", "ImGuiController");
 
             // If no font path is specified or it's the default font, use ImGui's default
             if (string.IsNullOrEmpty(fontPath) || fontName == "Default (Proggy Clean)")
             {
-                Console.WriteLine("[ImGuiController] Using default ImGui font (Proggy Clean)");
+                LogManager.LogInfo("Using default ImGui font (Proggy Clean)", "ImGuiController");
                 return;
             }
 
@@ -265,18 +266,18 @@ public sealed class ImGuiController : IDisposable
             {
                 // Load the font with specified size
                 io.Fonts.AddFontFromFileTTF(fontPath, fontSize);
-                Console.WriteLine($"[ImGuiController] Successfully loaded font from: {fontPath}");
+                LogManager.LogInfo($"Successfully loaded font from: {fontPath}", "ImGuiController");
             }
             else
             {
-                Console.WriteLine($"[ImGuiController] Font file not found: {fontPath}, using default");
-                Console.WriteLine($"[ImGuiController] Font was: {fontName}");
+                LogManager.LogWarning($"Font file not found: {fontPath}, using default", "ImGuiController");
+                LogManager.LogInfo($"Font was: {fontName}", "ImGuiController");
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[ImGuiController] Failed to load custom font: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                LogManager.LogWarning($"Failed to load custom font: {ex.Message}", "ImGuiController");
+            }
     }
 
     private unsafe void CreateFontTexture()

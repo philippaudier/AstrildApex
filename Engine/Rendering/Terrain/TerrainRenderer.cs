@@ -92,7 +92,8 @@ namespace Engine.Rendering.Terrain
             Matrix4 modelMatrix = default,
             float shadowBiasConst = 0.004f,
             float shadowSlopeScale = 1.5f,
-            int globalUBO = 0)
+            int globalUBO = 0,
+            uint entityId = 0)
         {
             // Log first call only to avoid spamming
             try
@@ -209,6 +210,9 @@ namespace Engine.Rendering.Terrain
             var normalMat = new Matrix3(model);
             _shader.SetMat3("u_NormalMat", normalMat);
 
+            // Set entity ID for object picking and selection outline
+            _shader.SetUInt("u_ObjectId", entityId);
+
             // Set camera and lighting
             _shader.SetVec3("u_ViewPos", viewPos);
             _shader.SetVec3("uCameraPos", viewPos); // Compatibility
@@ -254,6 +258,20 @@ namespace Engine.Rendering.Terrain
                 GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                 _shader.SetInt("u_SSAOTexture", 16);
             }
+
+            // IBL - Bind dummy cubemaps to avoid InvalidOperation
+            // Terrain doesn't use IBL yet, but shader includes IBL.glsl so uniforms must be bound
+            _shader.SetInt("u_HasIBL", 0); // Disable IBL for terrain
+            GL.ActiveTexture(TextureUnit.Texture20);
+            GL.BindTexture(TextureTarget.TextureCubeMap, 0); // Bind null cubemap (or use a dummy if needed)
+            _shader.SetInt("u_IrradianceMap", 20);
+            GL.ActiveTexture(TextureUnit.Texture21);
+            GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+            _shader.SetInt("u_PrefilteredEnvMap", 21);
+            GL.ActiveTexture(TextureUnit.Texture22);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            _shader.SetInt("u_BRDFLUT", 22);
+            _shader.SetFloat("u_PrefilterMaxLod", 6.0f);
 
             // Shadows - CRITICAL: Always bind a texture to u_ShadowMap to avoid InvalidOperation
             GL.ActiveTexture(TextureUnit.Texture17);

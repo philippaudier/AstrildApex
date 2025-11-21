@@ -21,6 +21,12 @@ namespace Engine.Scene
         
         internal void SetOwner(Entity owner) => _owner = owner;
         
+        /// <summary>
+        /// Indicates if this transform is expected to move dynamically (non-static).
+        /// Used by the physics system to optimize sleeping/waking of colliders.
+        /// </summary>
+        public bool HasDynamicMovement { get; set; } = false;
+        
         [Editable("Position")]
         public Vector3 Position 
         { 
@@ -33,6 +39,39 @@ namespace Engine.Scene
                     _owner?.NotifyTransformChanged(); 
                 } 
             } 
+        }
+
+        /// <summary>
+        /// Copy simple data from one PostProcessEffect instance to another of the same runtime type.
+        /// This is used to clone effects when duplicating GlobalEffects for Play Mode.
+        /// </summary>
+        private static void CopyPostProcessEffectData(Engine.Components.PostProcessEffect source, Engine.Components.PostProcessEffect target)
+        {
+            var type = source.GetType();
+
+            // Copy fields (skip readonly literals)
+            foreach (var field in type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            {
+                if (field.IsLiteral || field.IsInitOnly) continue;
+                try
+                {
+                    var value = field.GetValue(source);
+                    field.SetValue(target, value);
+                }
+                catch { }
+            }
+
+            // Copy properties
+            foreach (var property in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                if (!property.CanRead || !property.CanWrite) continue;
+                try
+                {
+                    var value = property.GetValue(source);
+                    property.SetValue(target, value);
+                }
+                catch { }
+            }
         }
         
         [Editable("Rotation")]
@@ -205,6 +244,37 @@ namespace Engine.Scene
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Remove and destroy all components attached to this entity.
+        /// This is used when deleting an entity to ensure each component's
+        /// lifecycle hooks are invoked (OnDestroy / OnDetached) and that
+        /// systems (eg. Physics) get properly unregistered.
+        /// </summary>
+        public void RemoveAllComponents()
+        {
+            // Make a snapshot to avoid modifying the collection while iterating
+            var comps = new System.Collections.Generic.List<Component>(_components.Values);
+            foreach (var comp in comps)
+            {
+                try
+                {
+                    comp.OnDestroy();
+                }
+                catch { }
+                try
+                {
+                    comp.OnDetached();
+                }
+                catch { }
+                try
+                {
+                    comp.Entity = null;
+                }
+                catch { }
+            }
+            _components.Clear();
         }
         
         public IEnumerable<Component> GetAllComponents()
@@ -794,12 +864,15 @@ namespace Engine.Scene
                         // Regular component creation
                         clonedComponent = (Component)Activator.CreateInstance(componentType)!;
                     }
-                    
-                    // Copy component data using reflection
-                    CopyComponentData(component, clonedComponent);
-                    
+
+                    // IMPORTANT: Add component FIRST (before copying data)
+                    // This ensures OnAttached() is called with default values,
+                    // THEN we overwrite with the cloned data afterward.
+                    // This fixes the MaterialGuid being reset to white in MeshRendererComponent.OnAttached()
                     try {
                         cloned.AddComponent(clonedComponent);
+                        // Copy component data AFTER attachment
+                        CopyComponentData(component, clonedComponent);
                     }
                     catch (InvalidOperationException) {
                         // If component already exists, copy data to existing one instead
@@ -816,6 +889,30 @@ namespace Engine.Scene
             }
 
             targetScene.Entities.Add(cloned);
+            // Special-case: GlobalEffects contains a private readonly list of PostProcessEffect
+            // which cannot be assigned by reflection easily. Copy each effect individually
+            // so post-processing settings are preserved when cloning the scene for Play Mode.
+            try
+            {
+                var srcGlobal = original.GetComponent<Engine.Components.GlobalEffects>();
+                var dstGlobal = cloned.GetComponent<Engine.Components.GlobalEffects>();
+                if (srcGlobal != null && dstGlobal != null)
+                {
+                    foreach (var effect in srcGlobal.Effects)
+                    {
+                        try
+                        {
+                            var effType = effect.GetType();
+                            var newEff = (Engine.Components.PostProcessEffect)Activator.CreateInstance(effType)!;
+                            // Copy basic properties (Enabled, Intensity, Priority) and any public props/fields
+                            CopyPostProcessEffectData(effect, newEff);
+                            dstGlobal.AddEffect(newEff);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
             return cloned;
         }
 
@@ -852,6 +949,22 @@ namespace Engine.Scene
                     property.SetValue(target, value);
                 }
                 catch { }
+            }
+        }
+
+        // Copy post-process effect instance data
+        private static void CopyPostProcessEffectData(Engine.Components.PostProcessEffect source, Engine.Components.PostProcessEffect target)
+        {
+            var type = source.GetType();
+            foreach (var field in type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance))
+            {
+                if (field.IsLiteral || field.IsInitOnly) continue;
+                try { field.SetValue(target, field.GetValue(source)); } catch { }
+            }
+            foreach (var prop in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                if (!prop.CanRead || !prop.CanWrite) continue;
+                try { prop.SetValue(target, prop.GetValue(source)); } catch { }
             }
         }
     }

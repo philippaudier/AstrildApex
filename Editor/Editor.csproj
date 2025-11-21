@@ -55,35 +55,7 @@
       <Link>Engine/Rendering/Shaders/Includes/IBL.glsl</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="..\Engine\Rendering\Shaders\Includes\SSAO.glsl">
-      <Link>Engine/Rendering/Shaders/Includes/SSAO.glsl</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <!-- SSAO Shaders -->
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOGeometry.vert">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOGeometry.vert</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOGeometry.frag">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOGeometry.frag</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOCalc.vert">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOCalc.vert</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOCalc.frag">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOCalc.frag</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOBlur.vert">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOBlur.vert</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="..\Engine\Rendering\Shaders\SSAO\SSAOBlur.frag">
-      <Link>Engine/Rendering/Shaders/SSAO/SSAOBlur.frag</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- NOTE: SSAO include and shaders removed - SSAO is now in PostProcess/ directory -->
     <!-- Legacy PBR Shaders (kept for backward compatibility) -->
     <None Include="..\Engine\Rendering\Shaders\pbr.vert">
       <Link>Engine/Rendering/Shaders/pbr.vert</Link>
@@ -91,6 +63,15 @@
     </None>
     <None Include="..\Engine\Rendering\Shaders\pbr.frag">
       <Link>Engine/Rendering/Shaders/pbr.frag</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Icon System: Copy all PNG icons to output directory -->
+    <None Include="..\export\icons\**\*.png">
+      <Link>export\icons\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\export\icons\**\*.svg">
+      <Link>export\icons\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

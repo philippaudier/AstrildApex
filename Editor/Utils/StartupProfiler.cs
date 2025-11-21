@@ -36,9 +36,9 @@ namespace Editor.Utils
             _stack.Clear();
             _currentDepth = 0;
             _totalTimer.Restart();
-            Console.WriteLine("╔════════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║          STARTUP PROFILER - Measuring Load Times                   ║");
-            Console.WriteLine("╚════════════════════════════════════════════════════════════════════╝");
+            try { Engine.Utils.DebugLogger.Log("╔════════════════════════════════════════════════════════════════════╗"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("║          STARTUP PROFILER - Measuring Load Times                   ║"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("╚════════════════════════════════════════════════════════════════════╝"); } catch { }
         }
 
         public static void BeginSection(string name)
@@ -67,15 +67,15 @@ namespace Editor.Utils
 
             _totalTimer.Stop();
 
-            Console.WriteLine("\n╔════════════════════════════════════════════════════════════════════╗");
-            Console.WriteLine("║                    STARTUP PROFILING REPORT                        ║");
-            Console.WriteLine("╠════════════════════════════════════════════════════════════════════╣");
+            try { Engine.Utils.DebugLogger.Log("\n╔════════════════════════════════════════════════════════════════════╗"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("║                    STARTUP PROFILING REPORT                        ║"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("╠════════════════════════════════════════════════════════════════════╣"); } catch { }
 
             // Sort entries by time (descending) to show bottlenecks first
             var sortedByTime = _entries.OrderByDescending(e => e.ElapsedMs).ToList();
 
-            Console.WriteLine("║ TOP BOTTLENECKS (by time):                                         ║");
-            Console.WriteLine("╟────────────────────────────────────────────────────────────────────╢");
+            try { Engine.Utils.DebugLogger.Log("║ TOP BOTTLENECKS (by time):                                         ║"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("╟────────────────────────────────────────────────────────────────────╢"); } catch { }
 
             for (int i = 0; i < Math.Min(10, sortedByTime.Count); i++)
             {
@@ -87,12 +87,12 @@ namespace Editor.Utils
                 var bar = GenerateBar((int)percentage);
                 var indent = new string(' ', entry.Depth * 2);
 
-                Console.WriteLine($"║ {i+1,2}. {indent}{entry.Name,-40} {entry.ElapsedMs,6}ms {percentage,5:F1}% {bar}");
+                try { Engine.Utils.DebugLogger.Log($"║ {i+1,2}. {indent}{entry.Name,-40} {entry.ElapsedMs,6}ms {percentage,5:F1}% {bar}"); } catch { }
             }
 
-            Console.WriteLine("╟────────────────────────────────────────────────────────────────────╢");
-            Console.WriteLine("║ COMPLETE TIMELINE:                                                 ║");
-            Console.WriteLine("╟────────────────────────────────────────────────────────────────────╢");
+            try { Engine.Utils.DebugLogger.Log("╟────────────────────────────────────────────────────────────────────╢"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("║ COMPLETE TIMELINE:                                                 ║"); } catch { }
+            try { Engine.Utils.DebugLogger.Log("╟────────────────────────────────────────────────────────────────────╢"); } catch { }
 
             long cumulative = 0;
             foreach (var entry in _entries)
@@ -105,25 +105,25 @@ namespace Editor.Utils
                 var indent = new string(' ', entry.Depth * 2);
                 var arrow = entry.Depth > 0 ? "└─ " : "▶ ";
 
-                Console.WriteLine($"║ {indent}{arrow}{entry.Name,-45} {entry.ElapsedMs,6}ms {percentage,5:F1}%");
+                try { Engine.Utils.DebugLogger.Log($"║ {indent}{arrow}{entry.Name,-45} {entry.ElapsedMs,6}ms {percentage,5:F1}%"); } catch { }
             }
 
-            Console.WriteLine("╠════════════════════════════════════════════════════════════════════╣");
-            Console.WriteLine($"║ TOTAL STARTUP TIME: {_totalTimer.ElapsedMilliseconds,6} ms ({_totalTimer.Elapsed.TotalSeconds:F2}s)");
+            try { Engine.Utils.DebugLogger.Log("╠════════════════════════════════════════════════════════════════════╣"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"║ TOTAL STARTUP TIME: {_totalTimer.ElapsedMilliseconds,6} ms ({_totalTimer.Elapsed.TotalSeconds:F2}s)"); } catch { }
 
             // Identify slow sections (> 500ms)
             var slowSections = _entries.Where(e => e.ElapsedMs > 500).ToList();
             if (slowSections.Any())
             {
-                Console.WriteLine("╟────────────────────────────────────────────────────────────────────╢");
-                Console.WriteLine("║ ⚠️  SLOW SECTIONS (>500ms):                                        ║");
+                try { Engine.Utils.DebugLogger.Log("╟────────────────────────────────────────────────────────────────────╢"); } catch { }
+                try { Engine.Utils.DebugLogger.Log("║ ⚠️  SLOW SECTIONS (>500ms):                                        ║"); } catch { }
                 foreach (var entry in slowSections)
                 {
-                    Console.WriteLine($"║    • {entry.Name,-50} {entry.ElapsedMs,6}ms");
+                    try { Engine.Utils.DebugLogger.Log($"║    • {entry.Name,-50} {entry.ElapsedMs,6}ms"); } catch { }
                 }
             }
 
-            Console.WriteLine("╚════════════════════════════════════════════════════════════════════╝\n");
+            try { Engine.Utils.DebugLogger.Log("╚════════════════════════════════════════════════════════════════════╝\n"); } catch { }
         }
 
         private static string GenerateBar(int percentage)

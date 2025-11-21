@@ -9,6 +9,8 @@ namespace Editor.Inspector
     {
         // Petits verrous "live edit" par champ pour pousser une action Undo cohérente
         static bool _editCol, _editMetal, _editSmooth, _editNormStr, _editTiling, _editOffset;
+        static bool _editSat, _editBright, _editContrast, _editHue, _editEmission;
+        static bool _editOcclusionStr, _editEmissiveCol, _editHeightScale;
         static MaterialAsset? _before;
         // Cache temporaire pour éviter que l'Inspector recharge depuis le disque
         // immédiatement après avoir sauvegardé (évite écrasements/reverts visibles).
@@ -24,17 +26,49 @@ namespace Editor.Inspector
             AlbedoColor = (float[])m.AlbedoColor.Clone(),
             NormalTexture = m.NormalTexture,
             NormalStrength = m.NormalStrength,
+            // PBR Textures
+            MetallicTexture = m.MetallicTexture,
+            RoughnessTexture = m.RoughnessTexture,
+            MetallicRoughnessTexture = m.MetallicRoughnessTexture,
+            OcclusionTexture = m.OcclusionTexture,
+            EmissiveTexture = m.EmissiveTexture,
+            HeightTexture = m.HeightTexture,
+            DetailMaskTexture = m.DetailMaskTexture,
+            DetailAlbedoTexture = m.DetailAlbedoTexture,
+            DetailNormalTexture = m.DetailNormalTexture,
+            // PBR Parameters
             Metallic = m.Metallic,
             Roughness = m.Roughness,
+            OcclusionStrength = m.OcclusionStrength,
+            EmissiveColor = m.EmissiveColor != null ? (float[])m.EmissiveColor.Clone() : new float[] { 1f, 1f, 1f },
+            HeightScale = m.HeightScale,
             TextureTiling = (float[])m.TextureTiling.Clone(),
-            TextureOffset = (float[])m.TextureOffset.Clone()
+            TextureOffset = (float[])m.TextureOffset.Clone(),
+            Saturation = m.Saturation,
+            Brightness = m.Brightness,
+            Contrast = m.Contrast,
+            Hue = m.Hue,
+            Emission = m.Emission
         };
 
         public static void Draw(Guid guid)
         {
             MaterialAsset mat;
+            
+            // If we are currently live-editing ANY property, use the cached _before material
+            // to avoid reloading from disk (which would lose unsaved edits)
+            bool isLiveEditing = _editCol || _editMetal || _editSmooth || _editNormStr || 
+                                 _editTiling || _editOffset || _editSat || _editBright || 
+                                 _editContrast || _editHue || _editEmission ||
+                                 _editOcclusionStr || _editEmissiveCol || _editHeightScale;
+            
+            if (isLiveEditing && _before != null)
+            {
+                // Use the current in-memory state during live editing
+                mat = _before;
+            }
             // If we recently (<=1s) saved this material from this inspector, prefer the cached copy
-            if (_lastSavedGuid == guid && _lastSavedMaterial != null && (DateTime.UtcNow - _lastSavedTime).TotalMilliseconds < 1000)
+            else if (_lastSavedGuid == guid && _lastSavedMaterial != null && (DateTime.UtcNow - _lastSavedTime).TotalMilliseconds < 1000)
             {
                 // PERFORMANCE: Disabled log - try { Console.WriteLine($"[MaterialAssetInspector] Using cached saved material for {guid}"); } catch { }
                 mat = Clone(_lastSavedMaterial);
@@ -309,7 +343,7 @@ namespace Editor.Inspector
 
                         // Strength
                         float str = layer.Strength;
-                        if (ImGui.SliderFloat($"Strength##layer{i}", ref str, 0f, 2f))
+                        if (ImGui.SliderFloat($"Strength##layer{i}", ref str, 0f, 10f))
                         {
                             _before ??= Clone(mat);
                             layer.Strength = str;
@@ -344,7 +378,7 @@ namespace Editor.Inspector
                 var btn = mat.AlbedoTexture.HasValue && mat.AlbedoTexture.Value != Guid.Empty
                     ? AssetDatabase.GetName(mat.AlbedoTexture.Value)
                     : "<none>";
-                ImGui.Button(btn);
+                ImGui.Button(btn + "##AlbedoBtn");
 
                 if (ImGui.BeginDragDropTarget())
                 {
@@ -381,7 +415,7 @@ namespace Editor.Inspector
                 var btn = mat.NormalTexture.HasValue && mat.NormalTexture.Value != Guid.Empty
                     ? AssetDatabase.GetName(mat.NormalTexture.Value)
                     : "<none>";
-                ImGui.Button(btn);
+                ImGui.Button(btn + "##NormalBtn");
 
                 if (ImGui.BeginDragDropTarget())
                 {
@@ -410,7 +444,7 @@ namespace Editor.Inspector
                     }
 
                     float ns = mat.NormalStrength;
-                    if (ImGui.SliderFloat("Normal Strength", ref ns, 0.0f, 2.0f, "%.2f"))
+                    if (ImGui.SliderFloat("Normal Strength", ref ns, 0.0f, 10.0f, "%.2f"))
                     {
                         BeginLive(ref _editNormStr, mat);
                         mat.NormalStrength = ns;
@@ -419,6 +453,397 @@ namespace Editor.Inspector
                         UndoRedo.TouchEdit();
                     }
                     EndLiveIfReleased(guid, "Normal Strength", ref _editNormStr, ref _before, mat);
+                }
+            }
+
+            // === PBR TEXTURES SECTION ===
+            ImGui.Separator();
+            ImGui.Text("PBR Textures");
+            
+            // --- Metallic Texture ---
+            {
+                ImGui.Text("Metallic Texture:");
+                ImGui.SameLine();
+                var btn = mat.MetallicTexture.HasValue && mat.MetallicTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.MetallicTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##MetallicBtn");
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.MetallicTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Metallic", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.MetallicTexture.HasValue && mat.MetallicTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearMetallic"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.MetallicTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Metallic", ref _before);
+                    }
+                }
+            }
+
+            // --- Roughness Texture ---
+            {
+                ImGui.Text("Roughness Texture:");
+                ImGui.SameLine();
+                var btn = mat.RoughnessTexture.HasValue && mat.RoughnessTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.RoughnessTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##RoughnessBtn");
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.RoughnessTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Roughness", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.RoughnessTexture.HasValue && mat.RoughnessTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearRoughness"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.RoughnessTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Roughness", ref _before);
+                    }
+                }
+            }
+
+            // --- Metallic-Roughness Combined (GLTF) ---
+            {
+                ImGui.Text("Metallic-Roughness (GLTF):");
+                ImGui.SameLine();
+                var btn = mat.MetallicRoughnessTexture.HasValue && mat.MetallicRoughnessTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.MetallicRoughnessTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##MetallicRoughnessBtn");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("GLTF 2.0 combined texture (G=roughness, B=metallic)");
+                }
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.MetallicRoughnessTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Metallic-Roughness", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.MetallicRoughnessTexture.HasValue && mat.MetallicRoughnessTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearMetallicRoughness"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.MetallicRoughnessTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Metallic-Roughness", ref _before);
+                    }
+                }
+            }
+
+            // --- Occlusion Texture ---
+            {
+                ImGui.Text("Occlusion Texture:");
+                ImGui.SameLine();
+                var btn = mat.OcclusionTexture.HasValue && mat.OcclusionTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.OcclusionTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##OcclusionBtn");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Ambient occlusion (R channel)");
+                }
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.OcclusionTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Occlusion", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.OcclusionTexture.HasValue && mat.OcclusionTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearOcclusion"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.OcclusionTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Occlusion", ref _before);
+                    }
+
+                    // Occlusion Strength slider
+                    float occStr = mat.OcclusionStrength;
+                    if (ImGui.SliderFloat("Occlusion Strength", ref occStr, 0.0f, 1.0f, "%.2f"))
+                    {
+                        BeginLive(ref _editOcclusionStr, mat);
+                        mat.OcclusionStrength = occStr;
+                        try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                        UndoRedo.TouchEdit();
+                    }
+                    EndLiveIfReleased(guid, "Occlusion Strength", ref _editOcclusionStr, ref _before, mat);
+                }
+            }
+
+            // --- Emissive Texture ---
+            {
+                ImGui.Text("Emissive Texture:");
+                ImGui.SameLine();
+                var btn = mat.EmissiveTexture.HasValue && mat.EmissiveTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.EmissiveTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##EmissiveBtn");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Self-illumination texture (RGB)");
+                }
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.EmissiveTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Emissive", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.EmissiveTexture.HasValue && mat.EmissiveTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearEmissive"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.EmissiveTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Emissive", ref _before);
+                    }
+
+                    // Emissive Color tint
+                    mat.EmissiveColor ??= new float[] { 1f, 1f, 1f };
+                    var emCol = new System.Numerics.Vector3(mat.EmissiveColor[0], mat.EmissiveColor[1], mat.EmissiveColor[2]);
+                    if (ImGui.ColorEdit3("Emissive Color", ref emCol, ImGuiColorEditFlags.DisplayRGB))
+                    {
+                        BeginLive(ref _editEmissiveCol, mat);
+                        mat.EmissiveColor = new[] { emCol.X, emCol.Y, emCol.Z };
+                        try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                        UndoRedo.TouchEdit();
+                    }
+                    EndLiveIfReleased(guid, "Emissive Color", ref _editEmissiveCol, ref _before, mat);
+                }
+            }
+
+            // --- Height Texture ---
+            {
+                ImGui.Text("Height Texture:");
+                ImGui.SameLine();
+                var btn = mat.HeightTexture.HasValue && mat.HeightTexture.Value != Guid.Empty
+                    ? AssetDatabase.GetName(mat.HeightTexture.Value)
+                    : "<none>";
+                ImGui.Button(btn + "##HeightBtn");
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Height/Parallax map (R channel)");
+                }
+
+                if (ImGui.BeginDragDropTarget())
+                {
+                    if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                        AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                    {
+                        _before ??= Clone(mat);
+                        mat.HeightTexture = dropped;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Assign Height", ref _before);
+                    }
+                    ImGui.EndDragDropTarget();
+                }
+
+                if (mat.HeightTexture.HasValue && mat.HeightTexture.Value != Guid.Empty)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.Button("X##ClearHeight"))
+                    {
+                        _before ??= Clone(mat);
+                        mat.HeightTexture = null;
+                        AssetDatabase.SaveMaterial(mat);
+                        UndoRedo.RaiseAfterChange();
+                        PushUndoIfNeeded(guid, "Clear Height", ref _before);
+                    }
+
+                    // Height Scale slider
+                    float heightScale = mat.HeightScale;
+                    if (ImGui.SliderFloat("Height Scale", ref heightScale, 0.0f, 0.2f, "%.3f"))
+                    {
+                        BeginLive(ref _editHeightScale, mat);
+                        mat.HeightScale = heightScale;
+                        try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                        UndoRedo.TouchEdit();
+                    }
+                    EndLiveIfReleased(guid, "Height Scale", ref _editHeightScale, ref _before, mat);
+                }
+            }
+
+            // --- Detail Textures (Collapsible) ---
+            if (ImGui.CollapsingHeader("Detail Textures (Advanced)"))
+            {
+                // Detail Mask
+                {
+                    ImGui.Text("Detail Mask:");
+                    ImGui.SameLine();
+                    var btn = mat.DetailMaskTexture.HasValue && mat.DetailMaskTexture.Value != Guid.Empty
+                        ? AssetDatabase.GetName(mat.DetailMaskTexture.Value)
+                        : "<none>";
+                    ImGui.Button(btn + "##DetailMaskBtn");
+
+                    if (ImGui.BeginDragDropTarget())
+                    {
+                        if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                            AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailMaskTexture = dropped;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Assign Detail Mask", ref _before);
+                        }
+                        ImGui.EndDragDropTarget();
+                    }
+
+                    if (mat.DetailMaskTexture.HasValue && mat.DetailMaskTexture.Value != Guid.Empty)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("X##ClearDetailMask"))
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailMaskTexture = null;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Clear Detail Mask", ref _before);
+                        }
+                    }
+                }
+
+                // Detail Albedo
+                {
+                    ImGui.Text("Detail Albedo:");
+                    ImGui.SameLine();
+                    var btn = mat.DetailAlbedoTexture.HasValue && mat.DetailAlbedoTexture.Value != Guid.Empty
+                        ? AssetDatabase.GetName(mat.DetailAlbedoTexture.Value)
+                        : "<none>";
+                    ImGui.Button(btn + "##DetailAlbedoBtn");
+
+                    if (ImGui.BeginDragDropTarget())
+                    {
+                        if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                            AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailAlbedoTexture = dropped;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Assign Detail Albedo", ref _before);
+                        }
+                        ImGui.EndDragDropTarget();
+                    }
+
+                    if (mat.DetailAlbedoTexture.HasValue && mat.DetailAlbedoTexture.Value != Guid.Empty)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("X##ClearDetailAlbedo"))
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailAlbedoTexture = null;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Clear Detail Albedo", ref _before);
+                        }
+                    }
+                }
+
+                // Detail Normal
+                {
+                    ImGui.Text("Detail Normal:");
+                    ImGui.SameLine();
+                    var btn = mat.DetailNormalTexture.HasValue && mat.DetailNormalTexture.Value != Guid.Empty
+                        ? AssetDatabase.GetName(mat.DetailNormalTexture.Value)
+                        : "<none>";
+                    ImGui.Button(btn + "##DetailNormalBtn");
+
+                    if (ImGui.BeginDragDropTarget())
+                    {
+                        if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
+                            AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailNormalTexture = dropped;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Assign Detail Normal", ref _before);
+                        }
+                        ImGui.EndDragDropTarget();
+                    }
+
+                    if (mat.DetailNormalTexture.HasValue && mat.DetailNormalTexture.Value != Guid.Empty)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("X##ClearDetailNormal"))
+                        {
+                            _before ??= Clone(mat);
+                            mat.DetailNormalTexture = null;
+                            AssetDatabase.SaveMaterial(mat);
+                            UndoRedo.RaiseAfterChange();
+                            PushUndoIfNeeded(guid, "Clear Detail Normal", ref _before);
+                        }
+                    }
                 }
             }
 
@@ -445,6 +870,8 @@ namespace Editor.Inspector
                         _before ??= Clone(mat);
                         mat.TransparencyMode = Math.Clamp(mode, 0, 1);
                         AssetDatabase.SaveMaterial(mat);
+                        // Update ONLY TransparencyMode in cached MaterialRuntime (not other properties)
+                        Editor.Panels.EditorUI.MainViewport.Renderer?.UpdateMaterialTransparency(guid, mat.TransparencyMode);
                         UndoRedo.RaiseAfterChange();
                         PushUndoIfNeeded(guid, "Render Mode", ref _before);
                     }
@@ -526,6 +953,114 @@ namespace Editor.Inspector
             {
                 ImGui.SetTooltip("Reset tiling to (1,1) and offset to (0,0)");
             }
+
+            // --- Stylization Parameters ---
+            ImGui.Separator();
+            ImGui.Text("Stylization");
+            
+            // Saturation slider
+            {
+                float sat = mat.Saturation;
+                if (ImGui.SliderFloat("Saturation", ref sat, 0, 2))
+                {
+                    BeginLive(ref _editSat, mat);
+                    mat.Saturation = sat;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Saturation", ref _editSat, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0.0 = grayscale, 1.0 = normal, 2.0 = oversaturated");
+                }
+            }
+
+            // Brightness slider
+            {
+                float bright = mat.Brightness;
+                if (ImGui.SliderFloat("Brightness", ref bright, 0, 2))
+                {
+                    BeginLive(ref _editBright, mat);
+                    mat.Brightness = bright;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Brightness", ref _editBright, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0.0 = black, 1.0 = normal, 2.0 = brighter");
+                }
+            }
+
+            // Contrast slider
+            {
+                float cont = mat.Contrast;
+                if (ImGui.SliderFloat("Contrast", ref cont, 0, 2))
+                {
+                    BeginLive(ref _editContrast, mat);
+                    mat.Contrast = cont;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Contrast", ref _editContrast, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0.0 = flat gray, 1.0 = normal, 2.0 = high contrast");
+                }
+            }
+
+            // Hue shift slider
+            {
+                float hue = mat.Hue;
+                if (ImGui.SliderFloat("Hue Shift", ref hue, -1, 1))
+                {
+                    BeginLive(ref _editHue, mat);
+                    mat.Hue = hue;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Hue Shift", ref _editHue, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("-1.0 to 1.0, shifts hue on the color wheel");
+                }
+            }
+
+            // Emission slider
+            {
+                float emission = mat.Emission;
+                if (ImGui.SliderFloat("Emission", ref emission, 0, 5))
+                {
+                    BeginLive(ref _editEmission, mat);
+                    mat.Emission = emission;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Emission", ref _editEmission, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0.0 = no emission, >0.0 = emissive/glow strength");
+                }
+            }
+
+            // Reset stylization button
+            ImGui.Spacing();
+            if (ImGui.Button("Reset Stylization"))
+            {
+                _before ??= Clone(mat);
+                mat.Saturation = 1.0f;
+                mat.Brightness = 1.0f;
+                mat.Contrast = 1.0f;
+                mat.Hue = 0.0f;
+                mat.Emission = 0.0f;
+                AssetDatabase.SaveMaterial(mat);
+                UndoRedo.RaiseAfterChange();
+                PushUndoIfNeeded(guid, "Reset Stylization", ref _before);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Reset all stylization parameters to default values");
+            }
         }
 
         static void BeginLive(ref bool flag, MaterialAsset current)
@@ -552,6 +1087,14 @@ namespace Editor.Inspector
                         flag = false;
                         before = null;
                         return;
+                    }
+                    
+                    // CRITICAL FIX: Preserve TransparencyMode from disk
+                    // When live-editing properties like Smoothness, we don't want to accidentally
+                    // overwrite TransparencyMode with a stale in-memory value.
+                    if (onDisk != null)
+                    {
+                        current.TransparencyMode = onDisk.TransparencyMode;
                     }
                 }
                 catch { /* ignore load errors and attempt save */ }
@@ -586,6 +1129,11 @@ namespace Editor.Inspector
             if (a.Roughness != b.Roughness) return false;
             if (a.NormalStrength != b.NormalStrength) return false;
             if (a.TransparencyMode != b.TransparencyMode) return false;
+            if (a.Saturation != b.Saturation) return false;
+            if (a.Brightness != b.Brightness) return false;
+            if (a.Contrast != b.Contrast) return false;
+            if (a.Hue != b.Hue) return false;
+            if (a.Emission != b.Emission) return false;
             if (!ArrayEquals(a.AlbedoColor, b.AlbedoColor)) return false;
             if (!ArrayEquals(a.TextureTiling, b.TextureTiling)) return false;
             if (!ArrayEquals(a.TextureOffset, b.TextureOffset)) return false;

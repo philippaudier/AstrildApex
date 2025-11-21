@@ -47,6 +47,11 @@ namespace Engine.Components
         private int _indexCount = 0;
         private bool _meshGenerated = false;
 
+        // Public accessors for rendering
+        public int VAO => _vao;
+        public int IndexCount => _indexCount;
+        public bool HasMesh() => _meshGenerated && _vao != 0 && _indexCount > 0;
+
         // Water plane rendering
         private int _waterVao = 0, _waterVbo = 0, _waterEbo = 0;
 
@@ -135,8 +140,16 @@ namespace Engine.Components
                     var heightfieldCollider = Entity.GetComponent<HeightfieldCollider>();
                     if (heightfieldCollider != null)
                     {
+                        // First sync resolution/spacing so the collider uses the same mesh resolution
+                        try
+                        {
+                            heightfieldCollider.SyncResolutionWithTerrain(this);
+                        }
+                        catch { }
+
+                        // Then update bounds (broadphase)
                         heightfieldCollider.UpdateWorldBounds();
-                        Console.WriteLine("[Terrain] Updated HeightfieldCollider bounds after terrain regeneration");
+                        Console.WriteLine("[Terrain] Updated HeightfieldCollider bounds and resolution after terrain regeneration");
                     }
                 }
             }
@@ -827,7 +840,8 @@ namespace Engine.Components
             if (debugVis)
             {
                 GL.Disable(EnableCap.CullFace);
-                GL.PolygonMode(OpenTK.Graphics.OpenGL4.TriangleFace.FrontAndBack, OpenTK.Graphics.OpenGL4.PolygonMode.Line);
+                // Use the TriangleFace overload to avoid obsolete API warnings
+                GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
             }
 
             // Always disable face culling to ensure terrain is visible from all angles
@@ -835,20 +849,12 @@ namespace Engine.Components
 
             GL.BindVertexArray(_vao);
             GL.DrawElements(PrimitiveType.Triangles, _indexCount, DrawElementsType.UnsignedInt, 0);
-
-            // Check for OpenGL errors
-            var errorCode = GL.GetError();
-            if (errorCode != ErrorCode.NoError)
-            {
-                Console.WriteLine($"[Terrain] GL error during rendering: {errorCode}");
-            }
-
             GL.BindVertexArray(0);
 
             if (debugVis)
             {
-                GL.PolygonMode(OpenTK.Graphics.OpenGL4.TriangleFace.FrontAndBack, OpenTK.Graphics.OpenGL4.PolygonMode.Fill);
-                GL.Disable(EnableCap.CullFace);
+                GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
+                GL.Enable(EnableCap.CullFace);
             }
         }
 
@@ -967,19 +973,29 @@ namespace Engine.Components
 
             // Get terrain entity world position
             float terrainWorldY = 0f;
+            float localX = worldX;
+            float localZ = worldZ;
+            
             if (Entity != null)
             {
                 Entity.GetWorldTRS(out var wpos, out var wrot, out var wscl);
                 terrainWorldY = wpos.Y;
 
-                // Convert world position to local terrain space
-                worldX -= wpos.X;
-                worldZ -= wpos.Z;
+                // Convert world position to terrain local space (apply inverse rotation)
+                OpenTK.Mathematics.Vector3 worldPos = new OpenTK.Mathematics.Vector3(worldX, 0, worldZ);
+                OpenTK.Mathematics.Vector3 offset = worldPos - new OpenTK.Mathematics.Vector3(wpos.X, 0, wpos.Z);
+                
+                // Apply inverse rotation using conjugate quaternion
+                OpenTK.Mathematics.Quaternion invRot = OpenTK.Mathematics.Quaternion.Conjugate(wrot);
+                OpenTK.Mathematics.Vector3 localPos = invRot * offset;
+                
+                localX = localPos.X;
+                localZ = localPos.Z;
             }
 
             // Convert local position to UV
-            float u = (worldX + TerrainWidth * 0.5f) / TerrainWidth;
-            float v = (worldZ + TerrainLength * 0.5f) / TerrainLength;
+            float u = (localX + TerrainWidth * 0.5f) / TerrainWidth;
+            float v = (localZ + TerrainLength * 0.5f) / TerrainLength;
 
             // Clamp to valid range
             u = Math.Clamp(u, 0f, 1f);

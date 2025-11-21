@@ -8,6 +8,7 @@ using Editor.State;
 using Engine.Scene;
 using Engine.Components;
 using Editor.Icons;
+using Editor.Logging;
 // Résolution d'ambiguïté pour Vector3/Vector4 d'OpenTK :
 using Vec3 = OpenTK.Mathematics.Vector3;
 using Vec4 = OpenTK.Mathematics.Vector4;
@@ -480,6 +481,31 @@ namespace Editor.Panels
                 Editor.Panels.InspectorPanel.AutoUnlockFromDrag();
             }
 
+            // ===================== KEYBOARD - DELETE KEY =====================
+            // Handle Delete key when window is focused
+            if (ImGui.IsWindowFocused() && ImGui.IsKeyPressed(ImGuiKey.Delete))
+            {
+                var selectedIds = Selection.Selected.ToList();
+                if (selectedIds.Count > 0)
+                {
+                    LogManager.LogInfo($"Delete key pressed - deleting {selectedIds.Count} entities", "HierarchyPanel");
+
+                    foreach (var id in selectedIds)
+                    {
+                        var entity = scene.GetById(id);
+                        if (entity != null)
+                        {
+                            LogManager.LogInfo($"Deleting entity '{entity.Name}' (ID: {id})", "HierarchyPanel");
+                            DeleteRecursive(scene, entity);
+                        }
+                    }
+
+                    Selection.Clear();
+                    FinalizeSelection();
+                    _lastAnchorId = 0;
+                }
+            }
+
             ImGui.End();
         }
 
@@ -627,6 +653,17 @@ namespace Editor.Panels
                 }
             }
 
+            // Double-click to focus in viewport
+            if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            {
+                // Frame the entity in the viewport
+                var viewport = EditorUI.MainViewport?.Renderer;
+                if (viewport != null)
+                {
+                    viewport.FrameSelection(new List<uint> { e.Id}, smooth: true);
+                }
+            }
+
 
             // Menu contextuel (attaché à l’item courant)
             if (ImGui.BeginPopupContextItem())
@@ -742,6 +779,10 @@ namespace Editor.Panels
         {
             foreach (var c in e.Children.ToArray())
                 DeleteRecursive(scene, c);
+            // Ensure components are properly destroyed/detached so systems (physics, rendering)
+            // unregister and free resources (eg. MeshCollider caches)
+            try { e.RemoveAllComponents(); } catch { }
+
             if (e.Parent != null) e.Parent.Children.Remove(e);
             scene.Entities.Remove(e);
         }

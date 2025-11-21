@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using ImGuiNET;
 using Editor.Inspector;
+using Editor.Logging;
 
 namespace Editor.Themes
 {
@@ -151,7 +152,7 @@ namespace Editor.Themes
             }
             else
             {
-                Console.WriteLine($"Theme '{themeName}' not found, using default theme.");
+                LogManager.LogWarning($"Theme '{themeName}' not found, using default theme.", "ThemeManager");
                 ApplyTheme(BuiltInThemes.DarkUnity());
             }
         }

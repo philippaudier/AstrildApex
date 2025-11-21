@@ -263,6 +263,80 @@ namespace Editor.Panels
 
             // Resolve after refresh by path
             importedPaths.Add(destAbs);
+            Console.WriteLine($"[Assets] Copied imported file to: {destAbs}");
+
+            // If the imported file is HDR/EXR and the user enabled auto PMREM, run the importer
+            try
+            {
+                var ext = Path.GetExtension(destAbs)?.ToLowerInvariant() ?? "";
+                if (ext == ".hdr" || ext == ".exr")
+                {
+                    Console.WriteLine($"[Assets] Detected HDR/EXR file: {destAbs}");
+                    if (!Editor.State.EditorSettings.AutoGeneratePMREMOnImport)
+                    {
+                        Console.WriteLine("[Assets] Auto PMREM generation is disabled in Editor settings. Skipping PMREM generation.");
+                    }
+                    else
+                    {
+                        // Build out folder under Assets/Generated/Env/<basename>
+                        var baseName = Path.GetFileNameWithoutExtension(destAbs);
+                        var outRel = Path.Combine("Generated", "Env", baseName).Replace(Path.DirectorySeparatorChar, '/');
+
+                        // Prefer configured cmgen path if available
+                        var cmgen = Editor.State.EditorSettings.CmgenPath;
+                        var cmgenDisplay = string.IsNullOrEmpty(cmgen) ? "(system PATH)" : cmgen;
+                        Console.WriteLine($"[Assets] Auto PMREM enabled — invoking cmgen {cmgenDisplay} for {baseName} -> Assets/{outRel}");
+
+                        var args = new string[] {
+                            "--cmgen", cmgen,
+                            "--input", destAbs,
+                            "--out", outRel,
+                            "--size", "512"
+                        };
+
+                        Console.WriteLine("[Assets] Starting PMREM generation (running asynchronously)...");
+
+                        // Show a progress popup immediately
+                        var pmremTitle = $"Generating PMREM: {baseName}";
+                        Editor.UI.ProgressManager.Show(pmremTitle, "Running cmgen...");
+                        try { Editor.UI.ProgressManager.ForceRender(); } catch { }
+
+                        // Run cmgen in background so UI stays responsive
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                var ret = Editor.Tools.PMREMImporter.RunFromArgs(args);
+                                if (ret != 0)
+                                {
+                                    Console.WriteLine($"[Assets] PMREM generation failed for {destAbs} (exit {ret})");
+                                    Editor.UI.ProgressManager.Update(1.0f, "PMREM failed");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"[Assets] PMREM generation completed successfully. Outputs placed under Assets/{outRel}");
+                                    Editor.UI.ProgressManager.Update(1.0f, "PMREM generation complete");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[Assets] PMREM generation threw exception: {ex.Message}");
+                                Editor.UI.ProgressManager.Update(1.0f, "PMREM failed");
+                            }
+                            finally
+                            {
+                                // Give user a short moment to read the final message, then hide
+                                try { System.Threading.Thread.Sleep(600); } catch { }
+                                Editor.UI.ProgressManager.Hide();
+                            }
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[Assets] Auto PMREM import failed: " + ex.Message);
+            }
         }
 
         // ============= Toolbar =============
@@ -279,7 +353,7 @@ namespace Editor.Panels
                 _newPopupJustOpened = true;
             }
             ImGui.SameLine();
-            if (IconManager.IconButton("skybox", "New Skybox Material"))
+            if (IconManager.IconButton("sphere", "New Skybox Material"))
             {
                 _newKind = NewKind.SkyboxMaterial;
                 _newName = "NewSkyboxMaterial";
@@ -457,9 +531,22 @@ namespace Editor.Panels
         // ============= Content (droite) =============
         private static void DrawContent()
         {
-            // Build dataset
+            // Build dataset with thread-safe snapshot
             var childDirs = ListChildDirsFs(_currentDir); // dossiers directs
-            var filesInDir = FilterByDirectory(AssetDatabase.All(), _currentDir);
+            
+            // Create a snapshot to avoid race conditions during import
+            List<AssetRecord> allAssets;
+            try
+            {
+                allAssets = AssetDatabase.All().ToList();
+            }
+            catch (InvalidOperationException)
+            {
+                // Collection was modified during enumeration - skip this frame
+                return;
+            }
+            
+            var filesInDir = FilterByDirectory(allAssets, _currentDir);
             var filtered = ApplySearch(filesInDir, _search);
             filtered = SortAssets(filtered.ToList(), _sort);
 
@@ -845,6 +932,150 @@ namespace Editor.Panels
                 }
                 
                 if (ImGui.MenuItem("Reveal in Explorer")) RevealFile(a.Path);
+
+                // If this is an HDR-like texture, offer quick creation of a skybox material
+                try
+                {
+                    var ext = Path.GetExtension(a.Path).ToLowerInvariant();
+                    bool isHdr = a.Type.Equals("TextureHDR", StringComparison.OrdinalIgnoreCase) || ext == ".hdr" || ext == ".exr";
+                    if (isHdr)
+                    {
+                        if (ImGui.MenuItem("Create Skybox Material from HDR"))
+                        {
+                            try
+                            {
+                                var rec = a; // small alias
+                                var skyboxMat = new Engine.Assets.SkyboxMaterialAsset
+                                {
+                                    Guid = Guid.NewGuid(),
+                                    Name = $"Skybox_{Path.GetFileNameWithoutExtension(rec.Path)}",
+                                    // Default to panoramic; we may switch to cubemap if PMREM outputs are present
+                                    Type = Engine.Assets.SkyboxType.Panoramic,
+                                    PanoramicTexture = rec.Guid,
+                                    PanoramicTint = new float[] { 1f, 1f, 1f, 1f },
+                                    PanoramicExposure = 1.0f,
+                                    PanoramicRotation = 0.0f,
+                                    Mapping = Engine.Assets.PanoramicMapping.Latitude_Longitude_Layout,
+                                    ImageType = Engine.Assets.PanoramicImageType.Degrees360
+                                };
+
+                                // If PMREM outputs were generated for this HDR (Assets/Generated/Env/<basename>), prefer the generated cubemap
+                                try
+                                {
+                                    var baseName = Path.GetFileNameWithoutExtension(rec.Path);
+                                    var pmremFolder = Path.Combine(AssetDatabase.AssetsRoot, "Generated", "Env", baseName);
+                                    if (Directory.Exists(pmremFolder))
+                                    {
+                                        // Look for a generated skybox cubemap file (ktx)
+                                        var files = Directory.GetFiles(pmremFolder, "*_skybox.ktx", SearchOption.TopDirectoryOnly);
+                                        if (files.Length == 0)
+                                        {
+                                            // fallback: look for any .ktx in the folder
+                                            files = Directory.GetFiles(pmremFolder, "*.ktx", SearchOption.TopDirectoryOnly);
+                                        }
+                                        if (files.Length > 0)
+                                        {
+                                            var ktxPath = files[0];
+                                            // Convert to project-relative path for AssetDatabase lookup
+                                            var rel = Path.GetRelativePath(AssetDatabase.AssetsRoot, ktxPath);
+                                            var abs = ktxPath;
+                                            if (Engine.Assets.AssetDatabase.TryGetByPath(abs, out var recKtx))
+                                            {
+                                                skyboxMat.Type = Engine.Assets.SkyboxType.Cubemap;
+                                                skyboxMat.CubemapTexture = recKtx.Guid;
+                                                skyboxMat.CubemapExposure = 1.0f;
+                                                Console.WriteLine($"[Assets] Detected PMREM cubemap and linked to SkyboxMaterial: {rel}");
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+
+                                    // Additionally, look for PNG face outputs (cmgen -f png) and create a six-sided skybox if present
+                                    try
+                                    {
+                                        var baseName = Path.GetFileNameWithoutExtension(rec.Path);
+                                        var pmremFolder = Path.Combine(AssetDatabase.AssetsRoot, "Generated", "Env", baseName);
+                                        if (Directory.Exists(pmremFolder))
+                                        {
+                                            var pngs = Directory.GetFiles(pmremFolder, "*.png", SearchOption.TopDirectoryOnly);
+                                            if (pngs.Length >= 6)
+                                            {
+                                                // Attempt to map by common face name patterns
+                                                string?[] faces = new string?[6]; // +X, -X, +Y, -Y, +Z, -Z
+                                                foreach (var p in pngs)
+                                                {
+                                                    var n = Path.GetFileNameWithoutExtension(p).ToLowerInvariant();
+                                                    if (n.Contains("posx") || n.Contains("px") || n.Contains("right")) faces[0] = p;
+                                                    else if (n.Contains("negx") || n.Contains("nx") || n.Contains("left")) faces[1] = p;
+                                                    else if (n.Contains("posy") || n.Contains("py") || n.Contains("up") || n.Contains("top")) faces[2] = p;
+                                                    else if (n.Contains("negy") || n.Contains("ny") || n.Contains("down") || n.Contains("bottom")) faces[3] = p;
+                                                    else if (n.Contains("posz") || n.Contains("pz") || n.Contains("front")) faces[4] = p;
+                                                    else if (n.Contains("negz") || n.Contains("nz") || n.Contains("back")) faces[5] = p;
+                                                }
+
+                                                // If any face missing, fallback to first 6 alphabetical files
+                                                if (faces.Any(f => f == null))
+                                                {
+                                                    Array.Sort(pngs, StringComparer.OrdinalIgnoreCase);
+                                                    for (int i = 0; i < 6; i++) faces[i] = pngs[i];
+                                                }
+
+                                                // Resolve paths to asset GUIDs
+                                                Guid? TryGetGuid(string? path)
+                                                {
+                                                    if (path == null) return null;
+                                                    if (Engine.Assets.AssetDatabase.TryGetByPath(path, out var r)) return r.Guid;
+                                                    return null;
+                                                }
+
+                                                var g0 = TryGetGuid(faces[0]);
+                                                var g1 = TryGetGuid(faces[1]);
+                                                var g2 = TryGetGuid(faces[2]);
+                                                var g3 = TryGetGuid(faces[3]);
+                                                var g4 = TryGetGuid(faces[4]);
+                                                var g5 = TryGetGuid(faces[5]);
+
+                                                if (g0.HasValue && g1.HasValue && g2.HasValue && g3.HasValue && g4.HasValue && g5.HasValue)
+                                                {
+                                                    skyboxMat.Type = Engine.Assets.SkyboxType.SixSided;
+                                                    skyboxMat.RightTexture = g0; // +X
+                                                    skyboxMat.LeftTexture = g1;  // -X
+                                                    skyboxMat.UpTexture = g2;    // +Y
+                                                    skyboxMat.DownTexture = g3;  // -Y
+                                                    skyboxMat.FrontTexture = g4; // +Z
+                                                    skyboxMat.BackTexture = g5;  // -Z
+                                                    Console.WriteLine($"[Assets] Detected PMREM PNG faces and linked six-sided SkyboxMaterial from: {pmremFolder}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    catch { }
+
+                                string baseDir = Path.GetDirectoryName(rec.Path) ?? AssetDatabase.AssetsRoot;
+                                string skyPath = Path.Combine(baseDir, skyboxMat.Name + Engine.Assets.AssetDatabase.SkyboxExt);
+                                // unique path
+                                int counter = 1;
+                                string candidate = skyPath;
+                                while (File.Exists(candidate))
+                                {
+                                    candidate = Path.Combine(baseDir, skyboxMat.Name + "_" + (counter++)) + Engine.Assets.AssetDatabase.SkyboxExt;
+                                }
+                                skyPath = candidate;
+
+                                Engine.Assets.SkyboxMaterialAsset.Save(skyPath, skyboxMat);
+
+                                // Write meta file
+                                var meta = new { guid = skyboxMat.Guid.ToString(), type = "SkyboxMaterial" };
+                                File.WriteAllText(skyPath + ".meta", System.Text.Json.JsonSerializer.Serialize(meta, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+                                AssetDatabase.Refresh();
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
 
                 if (ImGui.MenuItem("New Material"))
                 {
@@ -1550,13 +1781,21 @@ namespace Editor.Panels
 
         private static List<AssetRecord> ApplySearch(IEnumerable<AssetRecord> src, string search)
         {
-            if (string.IsNullOrWhiteSpace(search)) return src.ToList();
-            search = search.Trim();
-            return src.Where(a =>
-                (a.Name?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (a.Type?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                Path.GetFileNameWithoutExtension(a.Path).Contains(search, StringComparison.OrdinalIgnoreCase)
-            ).ToList();
+            try
+            {
+                if (string.IsNullOrWhiteSpace(search)) return src.ToList();
+                search = search.Trim();
+                return src.Where(a =>
+                    (a.Name?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (a.Type?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    Path.GetFileNameWithoutExtension(a.Path).Contains(search, StringComparison.OrdinalIgnoreCase)
+                ).ToList();
+            }
+            catch (InvalidOperationException)
+            {
+                // Collection was modified during enumeration - return empty list for this frame
+                return new List<AssetRecord>();
+            }
         }
 
         private static List<AssetRecord> SortAssets(List<AssetRecord> files, SortMode s)

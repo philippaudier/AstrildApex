@@ -1,43 +1,34 @@
 {
   "LastOpenedScene": "Editor\\Assets\\Scenes\\CustomScene.scene",
-  "LastOpenedTime": "2025-10-30T21:33:54.733564Z",
+  "LastOpenedTime": "2025-11-21T18:01:22.3506422Z",
   "ShowGrid": false,
-  "CameraNear": 0.1,
-  "CameraFar": 5000,
+  "CameraNear": 0.3,
+  "CameraFar": 10000,
   "CameraProjectionMode": 0,
   "CameraOrthoSize": 10,
   "CameraFov": 60,
-  "VSync": false,
+  "VSync": true,
   "ViewportCamera": {
-    "Yaw": -22.88432,
-    "Pitch": -0.3118047,
-    "Distance": 582.1137,
-    "TargetX": -21.021986,
-    "TargetY": 191.29166,
-    "TargetZ": 425.3086
-  },
-  "SSAO": {
-    "Enabled": true,
-    "Radius": 2,
-    "Bias": 0.025,
-    "Intensity": 3,
-    "SampleCount": 128,
-    "BlurSize": 0,
-    "Strength": 1
+    "Yaw": -5.8352504,
+    "Pitch": -0.15178882,
+    "Distance": 3.840879,
+    "TargetX": -407.18787,
+    "TargetY": 223.47025,
+    "TargetZ": -138.78725
   },
   "Shadows": {
     "Enabled": true,
     "ShadowMapSize": 8192,
     "ShadowStrength": 1,
-    "ShadowBias": 0.382,
-    "ShadowDistance": 963,
+    "ShadowBias": 0.243,
+    "ShadowDistance": 432,
     "DebugShowShadowMap": false,
     "ShadowQuality": 1,
     "ShadowNormalBias": 0.05,
     "PCFSamples": 0,
     "LightSize": 0.15,
-    "Bias": 0.382,
-    "BiasConst": 0.382,
+    "Bias": 0.243,
+    "BiasConst": 0.243,
     "SlopeScale": 0.05,
     "PolygonOffsetFactor": 0,
     "PolygonOffsetUnits": 10,
@@ -55,14 +46,28 @@
     "FeedbackMax": 0.95,
     "UseYCoCg": true,
     "JitterPattern": 0,
-    "JitterScale": 0.26
+    "JitterScale": 1
   },
-  "AntiAliasingMode": 2,
-  "ThemeName": "Sunset Glow",
+  "AntiAliasingMode": 0,
+  "Outline": {
+    "Enabled": true,
+    "Thickness": 1,
+    "ColorR": 1,
+    "ColorG": 0.5,
+    "ColorB": 0,
+    "ColorA": 1,
+    "EnablePulse": true,
+    "PulseSpeed": 1,
+    "PulseMinAlpha": 0.3,
+    "PulseMaxAlpha": 1
+  },
+  "ThemeName": "Dark Unity",
   "ExternalTools": {
     "ScriptEditor": "C:\\Users\\Philippe\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
     "ScriptEditorArgs": "\u0022$(File)\u0022 -g \u0022$(File):$(Line)\u0022",
-    "AutoDetectEditor": true
+    "AutoDetectEditor": true,
+    "CmgenPath": "C:\\Users\\Philippe\\Documents\\Programming\\AstrildApex\\Tools\\cmgen\\cmgen.exe",
+    "AutoGeneratePMREMOnImport": true
   },
   "Font": {
     "FontName": "segoeui",
@@ -72,7 +77,7 @@
   "UI": {
     "GameHudPosX": 2204,
     "GameHudPosY": 77,
-    "ViewportHudPosX": 335,
+    "ViewportHudPosX": 217,
     "ViewportHudPosY": 68
   }
 }

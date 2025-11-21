@@ -1,6 +1,7 @@
 #version 420 core
 
 #include "../Includes/Common.glsl"
+#include "../Includes/IBL.glsl"
 #include "../Includes/Lighting.glsl"
 #include "../Includes/Fog.glsl"
 #include "../Includes/Shadows.glsl"
@@ -11,8 +12,10 @@ in vec3 v_WorldPos;
 in vec3 v_Normal;
 in vec2 v_TexCoord;
 
-out vec4 FragColor;
+layout(location=0) out vec4 FragColor;
+layout(location=1) out uint outId;
 
+uniform uint u_ObjectId;
 uniform sampler2D u_LayerAlbedo[MAX_LAYERS];
 uniform sampler2D u_LayerNormal[MAX_LAYERS];
 uniform vec4 u_LayerTilingOffset[MAX_LAYERS]; // tx,ty,ox,oy
@@ -340,11 +343,11 @@ void main()
     vec3 ambient;
     if (u_TransparencyMode == 0) {
         // Opaque materials: apply SSAO
-        ambient = calculateAmbientLightingWithSSAO(material, gl_FragCoord.xy, u_ScreenSize,
+        ambient = calculateAmbientLightingWithSSAO(material, v_WorldPos, gl_FragCoord.xy, u_ScreenSize,
                                                    u_SSAOTexture, u_SSAOEnabled, u_SSAOStrength);
     } else {
         // Transparent materials: no SSAO
-        ambient = calculateAmbientLighting(material);
+        ambient = calculateAmbientLighting(material, v_WorldPos);
     }
 
     vec3 shaded = ambient + Lo;
@@ -367,4 +370,7 @@ void main()
     {
         FragColor = vec4(shaded, finalAlpha);
     }
+    
+    // Write entity ID for object picking and selection outline
+    outId = u_ObjectId;
 }

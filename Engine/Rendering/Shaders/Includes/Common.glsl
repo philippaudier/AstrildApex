@@ -86,8 +86,54 @@ MaterialProperties setupMaterialProperties(sampler2D albedoTex, sampler2D normal
                                           float metallic, float smoothness, vec3 worldNormal) {
     MaterialProperties material;
 
+    // Sample albedo texture
     material.baseColor = texture(albedoTex, uv).rgb * albedoColor.rgb;
+    
+    // Use uniform values for metallic/roughness (texture sampling will be added in ForwardBase.frag)
     material.roughness = smoothnessToRoughness(saturate(smoothness));
+    material.metallic = saturate(metallic);
+    material.F0 = mix(vec3(0.04), material.baseColor, material.metallic);
+    material.normal = sampleNormalMap(normalTex, uv, normalStrength, worldNormal);
+
+    return material;
+}
+
+// Enhanced setup with PBR texture support
+MaterialProperties setupMaterialPropertiesPBR(
+    sampler2D albedoTex, sampler2D normalTex, vec2 uv,
+    vec4 albedoColor, float normalStrength,
+    float metallicParam, float smoothnessParam, vec3 worldNormal,
+    sampler2D metallicTex, sampler2D roughnessTex, sampler2D metallicRoughnessTex,
+    bool useMetallicTex, bool useRoughnessTex, bool useMetallicRoughnessTex) {
+    
+    MaterialProperties material;
+
+    // Sample albedo
+    material.baseColor = texture(albedoTex, uv).rgb * albedoColor.rgb;
+    
+    // Sample metallic and roughness from textures if available
+    float metallic = metallicParam;
+    float roughness = smoothnessToRoughness(smoothnessParam);
+    
+    if (useMetallicRoughnessTex) {
+        // GLTF 2.0 combined texture: G=roughness, B=metallic
+        vec3 metallicRoughness = texture(metallicRoughnessTex, uv).rgb;
+        roughness = metallicRoughness.g;  // Green channel = roughness
+        metallic = metallicRoughness.b;   // Blue channel = metallic
+    } else {
+        // Separate textures
+        if (useMetallicTex) {
+            metallic = texture(metallicTex, uv).r;  // Red channel = metallic
+        }
+        if (useRoughnessTex) {
+            roughness = texture(roughnessTex, uv).r;  // Red channel = roughness
+        } else {
+            // If no roughness texture, use smoothness parameter
+            roughness = smoothnessToRoughness(smoothnessParam);
+        }
+    }
+    
+    material.roughness = saturate(roughness);
     material.metallic = saturate(metallic);
     material.F0 = mix(vec3(0.04), material.baseColor, material.metallic);
     material.normal = sampleNormalMap(normalTex, uv, normalStrength, worldNormal);

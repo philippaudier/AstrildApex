@@ -12,6 +12,7 @@ namespace Engine.Rendering
     {
         private uint _msaaFBO;
         private uint _msaaColorTex;
+        private uint _msaaColorRBO;
         private uint _msaaIdRBO;      // ID renderbuffer (not resolved, just for shader output)
         private uint _msaaDepthRBO;
         private int _width;
@@ -31,7 +32,14 @@ namespace Engine.Rendering
         {
             _width = width;
             _height = height;
-            _samples = Math.Clamp(samples, 2, 16);
+            // Clamp requested samples to hardware max supported by GL
+            int maxSamples = 0;
+            try { GL.GetInteger(GetPName.MaxSamples, out maxSamples); } catch { maxSamples = 0; }
+            int requested = Math.Clamp(samples, 2, 16);
+            if (maxSamples > 0)
+                _samples = Math.Clamp(requested, 1, Math.Max(1, maxSamples));
+            else
+                _samples = requested; // Fallback if query failed
 
             CreateFramebuffer();
         }
@@ -48,8 +56,26 @@ namespace Engine.Rendering
             GL.TexImage2DMultisample(TextureTargetMultisample.Texture2DMultisample, _samples, PixelInternalFormat.Rgba16f, _width, _height, true);
             var err1 = GL.GetError();
             if (err1 != ErrorCode.NoError) Console.WriteLine($"[MSAA] ERROR after color texture creation: {err1}");
-
-            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2DMultisample, _msaaColorTex, 0);
+            if (err1 == ErrorCode.NoError)
+            {
+                GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2DMultisample, _msaaColorTex, 0);
+            }
+            else
+            {
+                // Fallback: create a multisampled renderbuffer for color if texture creation failed
+                try
+                {
+                    Console.WriteLine("[MSAA] Falling back to multisample renderbuffer for color attachment");
+                    _msaaColorRBO = (uint)GL.GenRenderbuffer();
+                    GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, _msaaColorRBO);
+                    GL.RenderbufferStorageMultisample(RenderbufferTarget.Renderbuffer, _samples, RenderbufferStorage.Rgba8, _width, _height);
+                    GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, RenderbufferTarget.Renderbuffer, _msaaColorRBO);
+                }
+                catch (Exception)
+                {
+                    // If fallback fails, leave it and continue to detect incomplete FBO later
+                }
+            }
             var err2 = GL.GetError();
             if (err2 != ErrorCode.NoError) Console.WriteLine($"[MSAA] ERROR after color attachment: {err2}");
 

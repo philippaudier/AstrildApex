@@ -22,7 +22,8 @@ namespace Engine.Scripting
         [Editable] public float jumpHeight = 2f;
         [Editable] public bool alignForwardToCamera = true;
         [Editable] public bool alignOnlyWhenMoving = true;
-        [Editable] public bool debugInput = true;
+        [Editable] public bool debugInput = false;
+        [Editable] public bool debugPhysics = false;
 
         private bool _prevSpace = false;
 
@@ -36,7 +37,14 @@ namespace Engine.Scripting
         {
             base.Update(dt);
 
-            if (controller?.Entity == null) return;
+            // TEMPORAIREMENT DÉSACTIVÉ pour debug - décommente pour réactiver
+            // if (true) return;
+
+            var ctr = controller;
+            if (ctr == null || ctr.Entity == null) return;
+
+            // Sync debug physics flag
+            ctr.DebugPhysics = debugPhysics;
 
             // Lire les inputs
             Vector3 moveInput = GetMoveInput();
@@ -44,7 +52,7 @@ namespace Engine.Scripting
 
             if (debugInput)
             {
-                LogManager.LogVerbose($"[PlayerController] Input - Move: {moveInput:F3}, Jump: {jumpPressed}, IsGrounded: {controller.IsGrounded}", "PlayerController");
+                LogManager.LogVerbose($"[PlayerController] Input - Move: {moveInput:F3}, Jump: {jumpPressed}, IsGrounded: {ctr.IsGrounded}", "PlayerController");
             }
 
 
@@ -74,18 +82,18 @@ namespace Engine.Scripting
 
             if (debugInput)
             {
-                LogManager.LogVerbose($"[PlayerController] Jump state - actionWasPressed={jumpActionPressed}, rawSpace={rawSpace}, prevSpace={_prevSpace}, controller.IsGrounded={controller.IsGrounded}", "PlayerController");
+                LogManager.LogVerbose($"[PlayerController] Jump state - actionWasPressed={jumpActionPressed}, rawSpace={rawSpace}, prevSpace={_prevSpace}, controller.IsGrounded={(controller?.IsGrounded ?? false)}", "PlayerController");
             }
 
 
             // rising-edge raw-space fallback: allow jumping when space was not pressed previous frame but is pressed now
             bool rawSpaceRising = rawSpace && !_prevSpace;
 
-            if ((jumpPressed || jumpActionPressed || rawSpaceRising) && controller.IsGrounded)
+            if ((jumpPressed || jumpActionPressed || rawSpaceRising) && ctr.IsGrounded)
             {
-                float jumpVelocity = MathF.Sqrt(2f * controller.Gravity * jumpHeight);
+                float jumpVelocity = MathF.Sqrt(2f * ctr.Gravity * jumpHeight);
                 // Apply vertical impulse via the controller API so it can set suppression before horizontal move
-                controller.AddVerticalImpulse(jumpVelocity);
+                ctr.AddVerticalImpulse(jumpVelocity);
 
                 if (debugInput)
                 {
@@ -105,7 +113,7 @@ namespace Engine.Scripting
                 {
                     LogManager.LogVerbose($"[PlayerController] Applying move: {finalMove:F3}", "PlayerController");
                 }
-                controller.Move(finalMove, dt);
+                ctr.Move(finalMove, dt);
             }
 
             // Rotation vers la direction de la caméra
@@ -184,17 +192,17 @@ namespace Engine.Scripting
 
             Vector3 move;
 
-            if (camera?.Entity != null)
+            var camEntity = camera?.Entity;
+            if (camEntity != null)
             {
                 // Mouvement relatif à la caméra
-                camera.Entity.GetWorldTRS(out _, out var camRot, out _);
+                camEntity.GetWorldTRS(out _, out var camRot, out _);
                 var camForward = Vector3.Transform(Vector3.UnitZ, camRot);
                 camForward.Y = 0f;
                 if (camForward.LengthSquared > 1e-6f)
                     camForward.Normalize();
                 else
                     camForward = Vector3.UnitZ;
-
                 var camRight = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, camForward));
                 move = camRight * input.X + camForward * input.Z;
             }
@@ -210,9 +218,11 @@ namespace Engine.Scripting
 
         private void AlignToCamera()
         {
-            if (camera?.Entity == null || controller?.Entity == null) return;
+            var camEntity = camera?.Entity;
+            var ctrlEntity = controller?.Entity;
+            if (camEntity == null || ctrlEntity == null) return;
 
-            camera.Entity.GetWorldTRS(out _, out var camRot, out _);
+            camEntity.GetWorldTRS(out _, out var camRot, out _);
             var camForward = Vector3.Transform(Vector3.UnitZ, camRot);
             camForward.Y = 0f;
 
@@ -221,7 +231,7 @@ namespace Engine.Scripting
                 camForward.Normalize();
                 var newYaw = MathF.Atan2(camForward.X, camForward.Z);
                 var newRotation = Quaternion.FromAxisAngle(Vector3.UnitY, newYaw);
-                controller.Entity.Transform.Rotation = newRotation;
+                ctrlEntity.Transform.Rotation = newRotation;
             }
         }
     }

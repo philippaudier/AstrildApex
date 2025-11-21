@@ -1,6 +1,7 @@
 using System;
 using ImGuiNET;
 using Engine.Components;
+using Editor.Logging;
 using Engine.Scene;
 using Engine.Assets;
 
@@ -127,7 +128,7 @@ namespace Editor.Inspector
                             if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Texture2D")
                             {
                                 terrain.HeightmapTextureGuid = assetGuid;
-                                Console.WriteLine($"[TerrainInspector] Heightmap texture assigned: {rec.Path}");
+                                LogManager.LogInfo($"Heightmap texture assigned: {rec.Path}", "TerrainInspector");
                             }
                         }
                     }
@@ -181,7 +182,7 @@ namespace Editor.Inspector
                             if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Material")
                             {
                                 terrain.TerrainMaterialGuid = assetGuid;
-                                Console.WriteLine($"[TerrainInspector] Material assigned: {rec.Path}");
+                                LogManager.LogInfo($"Material assigned: {rec.Path}", "TerrainInspector");
                             }
                         }
                     }
@@ -253,7 +254,7 @@ namespace Editor.Inspector
                                 if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Material")
                                 {
                                     terrain.WaterMaterialGuid = assetGuid;
-                                    Console.WriteLine($"[TerrainInspector] Water material assigned: {rec.Path}");
+                                    LogManager.LogInfo($"Water material assigned: {rec.Path}", "TerrainInspector");
                                 }
                             }
                         }
@@ -292,17 +293,17 @@ namespace Editor.Inspector
             {
                 if (canGenerate)
                 {
-                    try
-                    {
-                        Console.WriteLine("[TerrainInspector] Generating terrain...");
-                        terrain.GenerateTerrain();
-                        Console.WriteLine("[TerrainInspector] Terrain generated successfully!");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[TerrainInspector] Failed to generate terrain: {ex.Message}");
-                        Console.WriteLine(ex.StackTrace);
-                    }
+                        try
+                        {
+                            LogManager.LogInfo("Generating terrain...", "TerrainInspector");
+                            terrain.GenerateTerrain();
+                            LogManager.LogInfo("Terrain generated successfully!", "TerrainInspector");
+                        }
+                        catch (Exception ex)
+                        {
+                            LogManager.LogWarning($"Failed to generate terrain: {ex.Message}", "TerrainInspector");
+                            LogManager.LogVerbose(ex.StackTrace ?? "", "TerrainInspector");
+                        }
                 }
             }
 
@@ -319,7 +320,7 @@ namespace Editor.Inspector
             if (ImGui.Button("Clear Terrain", new System.Numerics.Vector2(-1, 0)))
             {
                 terrain.ClearTerrain();
-                Console.WriteLine("[TerrainInspector] Terrain cleared");
+                LogManager.LogInfo("Terrain cleared", "TerrainInspector");
             }
 
             ImGui.Separator();

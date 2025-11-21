@@ -1,6 +1,7 @@
 #version 420 core
 
 #include "../Includes/Common.glsl"
+#include "../Includes/IBL.glsl"
 #include "../Includes/Lighting.glsl"
 #include "../Includes/Fog.glsl"
 #include "../Includes/Shadows.glsl"
@@ -12,19 +13,48 @@ in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
 
+// === BASE TEXTURES ===
 uniform sampler2D u_AlbedoTex;
 uniform sampler2D u_NormalTex;
+
+// === PBR TEXTURES ===
+uniform sampler2D u_EmissiveTex;
+uniform sampler2D u_MetallicTex;        // Metallic map (R channel)
+uniform sampler2D u_RoughnessTex;       // Roughness map (R channel)
+uniform sampler2D u_MetallicRoughnessTex; // GLTF 2.0 combined (G=roughness, B=metallic)
+uniform sampler2D u_OcclusionTex;       // Ambient occlusion (R channel)
+uniform sampler2D u_HeightTex;          // Height/Parallax (R channel)
+
+// === DETAIL TEXTURES ===
+uniform sampler2D u_DetailMaskTex;      // Detail mask (R channel)
+uniform sampler2D u_DetailAlbedoTex;    // Detail albedo (RGB)
+uniform sampler2D u_DetailNormalTex;    // Detail normal (RGB)
+
 // Debug switches (0 = off). Can be set from C# with SetInt("u_DebugShowAlbedo", 1) or
 // SetInt("u_DebugShowNormals", 1) to visualize the respective data.
 uniform int u_DebugShowAlbedo;
 uniform int u_DebugShowNormals;
+uniform int u_DebugShowAO;  // Debug: show AO texture
 // Shadow debugging uniforms (optional)
 uniform vec4  u_AlbedoColor;
 uniform int u_TransparencyMode; // 0 = opaque, 1 = transparent
 uniform float u_NormalStrength;
+
+// === PBR PARAMETERS ===
 uniform float u_Metallic;
 uniform float u_Smoothness;
+uniform float u_OcclusionStrength;
+uniform vec3  u_EmissiveColor;
+uniform float u_HeightScale;
+
 uniform uint  u_ObjectId;
+
+// Stylization parameters
+uniform float u_Saturation;
+uniform float u_Brightness;
+uniform float u_Contrast;
+uniform float u_Hue;
+uniform float u_Emission;
 
 // SSAO uniforms
 uniform sampler2D u_SSAOTexture;
@@ -34,12 +64,57 @@ uniform vec2 u_ScreenSize;
 // Debug: show shadow projection / sampling when non-zero
 uniform int u_DebugShowShadows;
 
+// Stylization utility functions
+vec3 adjustSaturation(vec3 color, float saturation) {
+    vec3 grayscale = vec3(dot(color, vec3(0.299, 0.587, 0.114)));
+    return mix(grayscale, color, saturation);
+}
+
+vec3 adjustBrightness(vec3 color, float brightness) {
+    return color * brightness;
+}
+
+vec3 adjustContrast(vec3 color, float contrast) {
+    return (color - 0.5) * contrast + 0.5;
+}
+
+vec3 rgb2hsv(vec3 rgb) {
+    vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(rgb.bg, k.wz), vec4(rgb.gb, k.xy), step(rgb.b, rgb.g));
+    vec4 q = mix(vec4(p.xyw, rgb.r), vec4(rgb.r, p.yzx), step(p.x, rgb.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+vec3 hsv2rgb(vec3 hsv) {
+    vec4 k = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(hsv.xxx + k.xyz) * 6.0 - k.www);
+    return hsv.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), hsv.y);
+}
+
+vec3 adjustHue(vec3 color, float hue) {
+    // Convert RGB to HSV, adjust hue, convert back to RGB
+    vec3 hsv = rgb2hsv(color);
+    hsv.x = fract(hsv.x + hue * 0.5); // hue is in -1 to 1 range, convert to 0-1
+    return hsv2rgb(hsv);
+}
+
 void main(){
-    // Setup material properties from uniforms and textures
-    MaterialProperties material = setupMaterialProperties(
+    // Setup material properties with PBR texture support
+    // Check if we have valid PBR textures (non-white 1x1 placeholder)
+    // Note: This is a simplified check - in production you'd pass flags from C++
+    bool hasMetallicRoughnessTex = textureSize(u_MetallicRoughnessTex, 0) != ivec2(1, 1);
+    bool hasMetallicTex = !hasMetallicRoughnessTex && textureSize(u_MetallicTex, 0) != ivec2(1, 1);
+    bool hasRoughnessTex = !hasMetallicRoughnessTex && textureSize(u_RoughnessTex, 0) != ivec2(1, 1);
+    bool hasOcclusionTex = textureSize(u_OcclusionTex, 0) != ivec2(1, 1);
+    
+    MaterialProperties material = setupMaterialPropertiesPBR(
         u_AlbedoTex, u_NormalTex, vUV,
         u_AlbedoColor, u_NormalStrength,
-        u_Metallic, u_Smoothness, vNormal
+        u_Metallic, u_Smoothness, vNormal,
+        u_MetallicTex, u_RoughnessTex, u_MetallicRoughnessTex,
+        hasMetallicTex, hasRoughnessTex, hasMetallicRoughnessTex
     );
 
     // Debug overrides: let caller visualize albedo or normal sampling directly
@@ -53,6 +128,14 @@ void main(){
         // visualize normal in 0..1 range
         vec3 nvis = normalize(material.normal) * 0.5 + 0.5;
         outColor = vec4(nvis, 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+
+    if (u_DebugShowAO != 0 && hasOcclusionTex) {
+        // visualize AO texture as grayscale
+        float ao = texture(u_OcclusionTex, vUV).r;
+        outColor = vec4(ao, ao, ao, 1.0);
         outId = u_ObjectId;
         return;
     }
@@ -84,15 +167,21 @@ void main(){
     // Spot lights
     Lo += calculateSpotLights(vWorldPos, N, V, material);
 
-    // Ambient lighting with SSAO (only for opaque materials)
+    // Ambient lighting with SSAO and AO texture
     vec3 ambient;
     if (u_TransparencyMode == 0) {
         // Opaque materials: apply SSAO
-        ambient = calculateAmbientLightingWithSSAO(material, gl_FragCoord.xy, u_ScreenSize,
+        ambient = calculateAmbientLightingWithSSAO(material, vWorldPos, gl_FragCoord.xy, u_ScreenSize,
                                                    u_SSAOTexture, u_SSAOEnabled, u_SSAOStrength);
+
+        // Apply baked ambient occlusion texture (only if a real texture is bound, not placeholder)
+        if (hasOcclusionTex) {
+            float ao = texture(u_OcclusionTex, vUV).r;
+            ambient *= mix(1.0, ao, u_OcclusionStrength);
+        }
     } else {
         // Transparent materials: no SSAO
-        ambient = calculateAmbientLighting(material);
+        ambient = calculateAmbientLighting(material, vWorldPos);
     }
 
 
@@ -111,6 +200,16 @@ void main(){
 
     // Apply fog
     color = processFog(color, vWorldPos);
+
+    // Apply stylization effects
+    color = adjustSaturation(color, u_Saturation);
+    color = adjustBrightness(color, u_Brightness);
+    color = adjustContrast(color, u_Contrast);
+    color = adjustHue(color, u_Hue);
+
+    // Add emissive (texture-based with color tint + emission strength)
+    vec3 emissive = texture(u_EmissiveTex, vUV).rgb * u_EmissiveColor * u_Emission;
+    color += emissive;
 
     // Shadows now working correctly - no debug visualization needed!
 

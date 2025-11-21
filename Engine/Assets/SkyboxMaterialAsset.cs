@@ -25,7 +25,7 @@ namespace Engine.Assets
         // === Cubemap Skybox Properties ===
         public Guid? CubemapTexture { get; set; }
         public float[] CubemapTint { get; set; } = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float CubemapExposure { get; set; } = 1.0f;
+        public float CubemapExposure { get; set; } = 1.3f; // Increased default to match Unity's brighter HDR look
         public float CubemapRotation { get; set; } = 0.0f;
         
         // === 6-Sided Skybox Properties ===
@@ -36,12 +36,12 @@ namespace Engine.Assets
         public Guid? UpTexture { get; set; }     // +Y
         public Guid? DownTexture { get; set; }   // -Y
         public float[] SixSidedTint { get; set; } = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float SixSidedExposure { get; set; } = 1.0f;
+        public float SixSidedExposure { get; set; } = 1.3f; // Increased default to match Unity's brighter HDR look
         
         // === Panoramic/HDRI Skybox Properties ===
         public Guid? PanoramicTexture { get; set; }
         public float[] PanoramicTint { get; set; } = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
-        public float PanoramicExposure { get; set; } = 1.0f;
+        public float PanoramicExposure { get; set; } = 1.3f; // Increased default to match Unity's brighter HDR look
         public float PanoramicRotation { get; set; } = 0.0f;
         public PanoramicMapping Mapping { get; set; } = PanoramicMapping.Latitude_Longitude_Layout;
         public bool MirrorOnBack { get; set; } = false;

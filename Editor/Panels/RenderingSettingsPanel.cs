@@ -9,64 +9,11 @@ namespace Editor.Panels
 {
     /// <summary>
     /// Rendering Settings panel for configuring the rendering pipeline and post-processing effects.
-    /// Provides intuitive controls for SSAO, lighting, and other rendering features.
+    /// Provides intuitive controls for lighting and other rendering features.
     /// </summary>
     public static class RenderingSettingsPanel
     {
-        private static bool _showSSAOSettings = true;
         private static bool _showDebugOptions = false;
-
-        // SSAO Quality Presets with optimized parameters (view-space)
-        private static readonly SSAORenderer.SSAOSettings[] QualityPresets = new[]
-        {
-            // Low Quality - Performance focused
-            new SSAORenderer.SSAOSettings
-            {
-                Enabled = true,
-                Radius = 0.4f,       // View-space radius
-                Bias = 0.025f,
-                Intensity = 1.0f,
-                SampleCount = 16,
-                BlurSize = 1,
-                Strength = 0.8f
-            },
-            // Medium Quality - Balanced (Recommended)
-            new SSAORenderer.SSAOSettings
-            {
-                Enabled = true,
-                Radius = 0.5f,       // View-space radius
-                Bias = 0.025f,
-                Intensity = 1.0f,
-                SampleCount = 32,
-                BlurSize = 2,
-                Strength = 1.0f
-            },
-            // High Quality - Quality focused
-            new SSAORenderer.SSAOSettings
-            {
-                Enabled = true,
-                Radius = 0.6f,       // View-space radius
-                Bias = 0.025f,
-                Intensity = 1.0f,
-                SampleCount = 48,
-                BlurSize = 2,
-                Strength = 1.0f
-            },
-            // Ultra Quality - Max quality
-            new SSAORenderer.SSAOSettings
-            {
-                Enabled = true,
-                Radius = 0.7f,       // View-space radius
-                Bias = 0.025f,
-                Intensity = 1.0f,
-                SampleCount = 64,
-                BlurSize = 3,
-                Strength = 1.0f
-            }
-        };
-
-        private static readonly string[] QualityNames = { "Custom", "Low", "Medium", "High", "Ultra" };
-        private static int _selectedPreset = 0; // Default to Custom
 
         public static void Draw()
         {
@@ -95,12 +42,9 @@ namespace Editor.Panels
 
             ImGui.Separator();
 
-            // === SECTION 3: POST-PROCESSING EFFECTS ===
-            DrawSSAOSettings(renderer);
-
-            ImGui.Separator();
-
-            // === SECTION 4: CAMERA ===
+            // === SECTION 3: CAMERA ===
+            // Note: SSAO is now configured via GlobalEffects component, not here
+            // Old DrawSSAOSettings() call removed - SSAO is now a post-processing effect
             DrawCameraSettings(renderer);
 
             ImGui.Separator();
@@ -297,6 +241,9 @@ namespace Editor.Panels
             ImGui.Spacing();
         }
 
+        // NOTE: SSAO settings UI has been removed. SSAO is now configured via GlobalEffects component.
+        // Add a GlobalEffects component to an entity, then add an SSAO effect from the Inspector.
+        /*
         private static void DrawSSAOSettings(Editor.Rendering.ViewportRenderer renderer)
         {
             // SSAO Section Header
@@ -407,19 +354,6 @@ namespace Editor.Panels
                         // Right Column
                         ImGui.TableSetColumnIndex(1);
 
-                        // Final Strength
-                        ImGui.Text("Final Strength");
-                        ImGui.SetNextItemWidth(-1);
-                        if (ImGui.SliderFloat("##Strength", ref ssaoSettings.Strength, 0.0f, 2.0f, "%.2f"))
-                        {
-                            changed = true;
-                            _selectedPreset = 0;
-                        }
-                        if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip("Final mixing strength\n0 = no SSAO, 1 = full effect");
-
-                        ImGui.Spacing();
-
                         // Bias
                         ImGui.Text("Self-Occlusion Bias");
                         ImGui.SetNextItemWidth(-1);
@@ -462,6 +396,7 @@ namespace Editor.Panels
                 _showSSAOSettings = false;
             }
         }
+        */
 
         private static void DrawDebugOptions(Editor.Rendering.ViewportRenderer renderer)
         {
@@ -493,6 +428,8 @@ namespace Editor.Panels
                 ImGui.Separator();
                 ImGui.Text("Performance Info:");
 
+                // NOTE: SSAO performance info removed - SSAO is now a post-processing effect
+                /*
                 var ssaoSettings = renderer.SSAOSettings;
                 if (ssaoSettings.Enabled)
                 {
@@ -513,6 +450,7 @@ namespace Editor.Panels
                 {
                     ImGui.TextDisabled("SSAO Disabled - No performance cost");
                 }
+                */
 
                 // Not implemented popup
                 if (ImGui.BeginPopup("NotImplemented"))
@@ -787,7 +725,8 @@ namespace Editor.Panels
             }
         }
 
-
+        // NOTE: All SSAO utility methods removed - SSAO is now configured via GlobalEffects component
+        /*
         private static float EstimateSSAOCost(SSAORenderer.SSAOSettings settings)
         {
             // Simple heuristic for performance estimation
@@ -822,5 +761,6 @@ namespace Editor.Panels
                 _selectedPreset = 0; // Custom
             }
         }
+        */
     }
 }

@@ -8,6 +8,7 @@ using Engine.Systems;
 using Editor.Rendering;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using OpenTK.Mathematics;
+using Editor.Logging;
 
 namespace Editor.Panels
 {
@@ -43,6 +44,13 @@ namespace Editor.Panels
 
         public static void Draw()
         {
+            // CRITICAL: If we're in maximized mode but not in Play Mode, exit maximized mode
+            // This prevents the GamePanel from rendering fullscreen after exiting Play Mode
+            if (_isMaximized && !PlayMode.IsInPlayMode)
+            {
+                _isMaximized = false;
+            }
+            
             // Maximize on Play support: fullscreen window
             bool isMaximizedMode = _isMaximized;
             
@@ -103,7 +111,7 @@ namespace Editor.Panels
                 // Initialize ImGui menu system when entering play mode
                 if (_imguiMenu == null)
                 {
-                    Console.WriteLine("[GamePanel] Initializing ImGui menu system...");
+                    LogManager.LogInfo("Initializing ImGui menu system...", "GamePanel");
                     _imguiMenu = new Engine.UI.ImGuiMenu.ImGuiMenuSystem();
                 }
 
@@ -123,7 +131,7 @@ namespace Editor.Panels
                 // Cleanup ImGui menu when exiting play mode
                 if (_imguiMenu != null)
                 {
-                    Console.WriteLine("[GamePanel] Disposing ImGui menu system (exited play mode)");
+                    LogManager.LogInfo("Disposing ImGui menu system (exited play mode)", "GamePanel");
                     _imguiMenu.Dispose();
                     _imguiMenu = null;
                 }
@@ -273,18 +281,20 @@ namespace Editor.Panels
                     {
                         // Do NOT copy GridVisible from the editor main viewport - the Game panel
                         // should not show the editor grid overlay. Copy other visual settings.
-                        _gameRenderer.SSAOSettings = main.SSAOSettings;
+                        // NOTE: SSAO settings copy removed - SSAO is now configured via GlobalEffects
+                        // _gameRenderer.SSAOSettings = main.SSAOSettings;
                     }
                 }
                 catch (Exception) { }
 
-                Console.WriteLine($"[GamePanel] Créé ViewportRenderer pour GamePanel: {_gameRenderer.GetHashCode()}");
+                LogManager.LogInfo($"Créé ViewportRenderer pour GamePanel: {_gameRenderer.GetHashCode()}", "GamePanel");
             }
 
+            // NOTE: SSAO settings removed - SSAO is now configured via GlobalEffects component
             // Apply editor SSAO settings to the GamePanel renderer so Game view matches the
             // SSAO controls in the Rendering inspector (instead of using hardcoded debug values).
             // PERF: Use the public property instead of reflection (if available), or cache reflection
-            _gameRenderer.SSAOSettings = Editor.State.EditorSettings.SSAOSettings;
+            // _gameRenderer.SSAOSettings = Editor.State.EditorSettings.SSAOSettings;
             
             // Apply resolution scale from options
             _gameRenderer.RenderScale = _options.ResolutionScale;
@@ -436,12 +446,12 @@ namespace Editor.Panels
                     {
                         if (currentLockMode == Engine.Input.CursorLockMode.Locked)
                         {
-                            Console.WriteLine($"[GamePanel] Setting confine rect: ({left},{top}) to ({right},{bottom})");
+                            LogManager.LogVerbose($"Setting confine rect: ({left},{top}) to ({right},{bottom})", "GamePanel");
                             Engine.Input.InputManager.Instance?.SetConfineRect(left, top, right, bottom);
                         }
                         else if (currentLockMode == Engine.Input.CursorLockMode.Confined)
                         {
-                            Console.WriteLine($"[GamePanel] Setting confine rect (Confined mode): ({left},{top}) to ({right},{bottom})");
+                            LogManager.LogVerbose($"Setting confine rect (Confined mode): ({left},{top}) to ({right},{bottom})", "GamePanel");
                             // For Confined mode, use ClipCursor to physically confine cursor to GamePanel
                             // Cursor stays visible but can't leave the panel
                             Engine.Input.Cursor.SetConfineToScreenRect(left, top, right, bottom);
@@ -527,7 +537,7 @@ namespace Editor.Panels
                 
                 if (hudCount == 0)
                 {
-                    Console.WriteLine($"[GamePanel] WARNING: No RPGHudController found in scene!");
+                    LogManager.LogWarning("No RPGHudController found in scene!", "GamePanel");
                 }
             }
         }

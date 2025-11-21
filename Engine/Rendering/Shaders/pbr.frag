@@ -120,6 +120,9 @@ uniform int u_SSAOEnabled;
 uniform float u_SSAOStrength;
 uniform vec2 u_ScreenSize;
 
+#include "Includes/IBL.glsl"
+
+
 
 vec3 FresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0 - F0)*pow(1.0 - cosTheta, 5.0); }
 
@@ -175,7 +178,6 @@ void main(){
     vec3 N = normalize(baseNormal + normalMap * 0.1); 
     
     vec3 V = normalize(uCameraPos - vWorldPos);
-
 
     vec3 baseCol = texture(u_AlbedoTex, vUV).rgb * u_AlbedoColor.rgb;
     float smoothness = clamp(u_Smoothness, 0.0, 1.0);
@@ -299,7 +301,14 @@ void main(){
     }
 
     // Ambient is affected by SSAO, NOT by shadows
-    vec3 ambient = baseCol * uAmbientColor * uAmbientIntensity * (1.0 - metal * 0.5) * ssaoFactor;
+    vec3 ambient = vec3(0.0);
+    // If IBL is available, use it for both diffuse and specular ambient contribution
+    // calculateIBL returns diffuse+specular contribution already factoring F0 and metallic response
+    if (int(u_HasIBL) != 0) {
+        ambient = calculateIBL(N, V, rough, F0, baseCol) * uAmbientIntensity * ssaoFactor;
+    } else {
+        ambient = baseCol * uAmbientColor * uAmbientIntensity * (1.0 - metal * 0.5) * ssaoFactor;
+    }
 
     // Combine: ambient (with SSAO) + direct lighting (with shadows)
     vec3 col = ambient + Lo;

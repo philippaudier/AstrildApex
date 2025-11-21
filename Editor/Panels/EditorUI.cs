@@ -8,6 +8,8 @@ using System.Numerics;
 using Editor.Icons;
 using Editor.SceneManagement;
 using Editor.UI;
+using Editor.Tasks;
+using Editor.Logging;
 
 namespace Editor.Panels;
 
@@ -18,16 +20,18 @@ public static class EditorUI
     public static ViewportPanelModern MainViewport = new ViewportPanelModern();
     public static AstrildApex.Editor.UI.GamePanelModern GamePanelModern = new AstrildApex.Editor.UI.GamePanelModern();
     public static PreferencesWindow Preferences = new PreferencesWindow();
+    public static AudioMixerPanel AudioMixer = new AudioMixerPanel();
     //private static int _debugFrameCounter = 0;
-    
+
     // View toggles
     static bool ShowHierarchy = true;
     static bool ShowInspector = true;
     static bool ShowAssets = true;
     static bool ShowConsole = true;
-    static bool ShowGame = true;
+    public static bool ShowGame = true;
     static bool ShowEnvironment = true;
     public static bool ShowRenderingSettings = LoadUIPreference("ShowRenderingSettings", false);
+    static bool ShowAudioMixer = LoadUIPreference("ShowAudioMixer", false);
 
     // --- Scene commands - now using SceneManager ---
 
@@ -76,6 +80,7 @@ public static class EditorUI
                 var sr = ShowRenderingSettings; if (ImGui.MenuItem("Rendering Settings", null, sr)) { ShowRenderingSettings = !ShowRenderingSettings; SaveUIPreference("ShowRenderingSettings", ShowRenderingSettings); }
                 var sc = ShowConsole; if (ImGui.MenuItem("Console", null, sc)) ShowConsole = !ShowConsole;
                 var sg = ShowGame; if (ImGui.MenuItem("Game", null, sg)) ShowGame = !ShowGame;
+                var sam = ShowAudioMixer; if (ImGui.MenuItem("🎵 Audio Mixer", null, sam)) { ShowAudioMixer = !ShowAudioMixer; SaveUIPreference("ShowAudioMixer", ShowAudioMixer); }
                 ImGui.Separator();
                 var sd = ShowDemoWindow; if (ImGui.MenuItem("ImGui Demo Window", null, sd)) ShowDemoWindow = !ShowDemoWindow;
                 var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
@@ -111,11 +116,11 @@ public static class EditorUI
                     try
                     {
                         Engine.Rendering.ShaderLibrary.ReloadShader("Water");
-                        Console.WriteLine("✅ Water shader reloaded!");
+                        LogManager.LogInfo("✅ Water shader reloaded!", "EditorUI");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"❌ Failed to reload Water shader: {ex.Message}");
+                        LogManager.LogWarning($"❌ Failed to reload Water shader: {ex.Message}", "EditorUI");
                     }
                 }
                 ImGui.Separator();
@@ -185,6 +190,7 @@ public static class EditorUI
     if (ShowAssets) AssetsPanel.Draw();
     if (ShowConsole) ConsolePanel.Draw();
     if (ShowGame) GamePanel.Draw();
+    if (ShowAudioMixer) AudioMixer.Draw();
     MainViewport.Draw();
 
         if (ShowDemoWindow) ImGui.ShowDemoWindow(ref ShowDemoWindow);
@@ -374,8 +380,8 @@ public static class EditorUI
         {
             Engine.Utils.DebugLogger.Log("[EditorUI] Opening Import Model dialog...");
 
-            // Open native file dialog
-            var result = NativeFileDialogSharp.Dialog.FileOpen("fbx,obj,gltf,glb,dae,3ds,ply,stl,blend");
+            // Open native file dialog - only mainstream formats
+            var result = NativeFileDialogSharp.Dialog.FileOpen("fbx,obj,gltf,glb,dae");
 
             if (result.IsOk)
             {
@@ -383,36 +389,25 @@ public static class EditorUI
                 var assetsRoot = Editor.State.ProjectPaths.AssetsDir;
                 var fileName = System.IO.Path.GetFileName(sourceFile);
 
-                System.Console.WriteLine($"[Import] Importing model: {fileName}");
+                LogManager.LogInfo($"Importing model: {fileName}", "EditorUI");
                 Engine.Utils.DebugLogger.Log($"[EditorUI] Importing model: {sourceFile}");
 
-                // Defer the actual import work so it runs after the current ImGui frame
-                // This prevents nested ImGui frames caused by ProgressManager.ForceRender()
+                // Defer to end of frame, then launch background job
                 Editor.Utils.DeferredActions.Enqueue(() =>
                 {
                     try
                     {
-                        // Show progress popup
-                        var tracker = new Editor.UI.ProgressManager.StepTracker("Importing 3D Model", 3);
-
-                        tracker.NextStep($"Reading {fileName}...");
-                        // Import the model (heavy work)
-                        var guid = Engine.Assets.ModelImporter.ImportModel(sourceFile, assetsRoot, "Models");
-
-                        tracker.NextStep("Updating asset database...");
-                        // Refresh asset database
-                        Engine.Assets.AssetDatabase.Refresh();
-
-                        tracker.Complete($"Model imported successfully!");
-
-                        Engine.Utils.DebugLogger.Log($"[EditorUI] Model imported successfully with GUID: {guid}");
-                        System.Console.WriteLine($"✓ Model imported successfully: {fileName}");
-                        System.Console.WriteLine($"  GUID: {guid}");
-                        System.Console.WriteLine($"  Location: Assets/Models/{fileName}");
+                        ModelImportJob.Run(sourceFile, assetsRoot, "Models", fileName, guid =>
+                        {
+                            Engine.Utils.DebugLogger.Log($"[EditorUI] Model imported successfully with GUID: {guid}");
+                            LogManager.LogInfo($"✓ Model imported successfully: {fileName}", "EditorUI");
+                            LogManager.LogInfo($"GUID: {guid}", "EditorUI");
+                            LogManager.LogInfo($"Location: Assets/Models/{fileName}", "EditorUI");
+                        });
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[EditorUI] ImportModel failed: {ex.Message}");
+                        LogManager.LogError($"[EditorUI] Failed to start import job: {ex.Message}", "EditorUI");
                     }
                 });
             }
@@ -420,18 +415,18 @@ public static class EditorUI
             {
                 Engine.Utils.DebugLogger.Log("[EditorUI] Import cancelled by user");
             }
-            else
+                else
             {
                 Engine.Utils.DebugLogger.Log($"[EditorUI] Import dialog error");
-                System.Console.WriteLine($"✗ Error opening file dialog");
+                LogManager.LogWarning("✗ Error opening file dialog", "EditorUI");
             }
         }
         catch (Exception ex)
         {
             Editor.UI.ProgressManager.Hide(); // Hide progress on error
             Engine.Utils.DebugLogger.Log($"[EditorUI] Failed to import model: {ex.Message}");
-            System.Console.WriteLine($"✗ Failed to import model: {ex.Message}");
-            System.Console.WriteLine($"  {ex.StackTrace}");
+            LogManager.LogError($"✗ Failed to import model: {ex.Message}", "EditorUI");
+            LogManager.LogError($"{ex.StackTrace}", "EditorUI");
         }
     }
 }

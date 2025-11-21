@@ -1,0 +1,62 @@
+{
+  "Guid": "80fc87e5-62e1-48e0-8668-105ab233dd00",
+  "Name": "Skybox_photo_studio_loft_hall_4k",
+  "Type": 3,
+  "SkyTint": [
+    0.5,
+    0.5,
+    0.5,
+    1
+  ],
+  "GroundColor": [
+    0.369,
+    0.349,
+    0.341,
+    1
+  ],
+  "Exposure": 1.3,
+  "AtmosphereThickness": 1,
+  "SunTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SunSize": 0.04,
+  "SunSizeConvergence": 5,
+  "CubemapTexture": "467f710e-6438-44c0-8c44-002f8b1af7ea",
+  "CubemapTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "CubemapExposure": 1,
+  "CubemapRotation": 0,
+  "FrontTexture": null,
+  "BackTexture": null,
+  "LeftTexture": null,
+  "RightTexture": null,
+  "UpTexture": null,
+  "DownTexture": null,
+  "SixSidedTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SixSidedExposure": 1.3,
+  "PanoramicTexture": "cad7f789-2c4e-4b76-98b3-a8418ee2a451",
+  "PanoramicTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 0,
+  "Mapping": 0,
+  "MirrorOnBack": false,
+  "ImageType": 0,
+  "UseForFog": false
+}

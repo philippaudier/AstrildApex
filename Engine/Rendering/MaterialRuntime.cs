@@ -54,19 +54,48 @@ namespace Engine.Rendering
         }
 
         public Guid AssetGuid;
+        
+        // === BASE TEXTURES ===
         public int AlbedoTex = 0;
         public float[] AlbedoColor = new float[] { 1, 1, 1, 1 };
-        public int NormalTex = 0;          // Nouvelle propriété
-        public float NormalStrength = 1.0f; // Nouvelle propriété
-    // Per-material normal green-channel flip flag (0 = no flip, 1 = flip)
-    public int FlipNormalY = 0;
+        public int NormalTex = 0;
+        public float NormalStrength = 1.0f;
+        // Per-material normal green-channel flip flag (0 = no flip, 1 = flip)
+        public int FlipNormalY = 0;
+        
+        // === PBR TEXTURES ===
+        public int MetallicTex = 0;        // Metallic map (R channel)
+        public int RoughnessTex = 0;       // Roughness map (R channel)
+        public int MetallicRoughnessTex = 0; // GLTF 2.0 combined (G=roughness, B=metallic)
+        public int OcclusionTex = 0;       // Ambient occlusion (R channel)
+        public int EmissiveTex = 0;        // Emissive/Glow texture (RGB)
+        public int HeightTex = 0;          // Height/Parallax map (R channel)
+        
+        // === DETAIL TEXTURES ===
+        public int DetailMaskTex = 0;      // Detail mask (R channel)
+        public int DetailAlbedoTex = 0;    // Detail albedo (RGB)
+        public int DetailNormalTex = 0;    // Detail normal (RGB)
+        
+        // === PBR PARAMETERS ===
         public float Metallic = 0f;
         public float Smoothness = 0.5f;
+        public float OcclusionStrength = 1.0f;
+        public float[] EmissiveColor = new float[] { 1f, 1f, 1f }; // RGB tint for emissive
+        public float HeightScale = 0.05f;
         
         // Texture tiling and offset
         public float[] TextureTiling = new float[] { 1f, 1f };
         public float[] TextureOffset = new float[] { 0f, 0f };
-    public int TransparencyMode = 0; // 0 = Opaque, 1 = Transparent
+        
+        public int TransparencyMode = 0; // 0 = Opaque, 1 = Transparent
+        
+        // Stylization parameters
+        public float Saturation = 1.0f;   // 0.0 = grayscale, 1.0 = normal, >1.0 = oversaturated
+        public float Brightness = 1.0f;   // 0.0 = black, 1.0 = normal, >1.0 = brighter
+        public float Contrast = 1.0f;     // 0.0 = flat gray, 1.0 = normal, >1.0 = more contrast
+        public float Hue = 0.0f;          // -1.0 to 1.0, shifts hue (color wheel rotation)
+        public float Emission = 0.0f;     // 0.0 = no emission, >0.0 = emissive/glow strength
+    
     public string? ShaderName = null;
         // Terrain layers runtime data
         public const int MAX_LAYERS = 8;
@@ -148,19 +177,49 @@ namespace Engine.Rendering
             var mr = new MaterialRuntime
             {
                 AssetGuid = a?.Guid ?? Guid.Empty,
+                
+                // === BASE TEXTURES ===
                 AlbedoTex = !isWaterShader && a?.AlbedoTexture.HasValue == true ? TextureCache.GetOrLoad(a.AlbedoTexture.Value, resolvePath) : TextureCache.White1x1,
                 AlbedoColor = !isWaterShader ? (a?.AlbedoColor ?? new[] { 1f, 1f, 1f, 1f }) : new[] { 1f, 1f, 1f, 1f },
                 NormalTex = !isWaterShader && a?.NormalTexture.HasValue == true ? TextureCache.GetOrLoad(a.NormalTexture.Value, resolvePath) : TextureCache.White1x1,
-                NormalStrength = !isWaterShader ? (a?.NormalStrength ?? 1.0f) : 1.0f,
+                NormalStrength = !isWaterShader ? Math.Clamp(a?.NormalStrength ?? 1.0f, 0.0f, 10.0f) : 1.0f,
+                
+                // === PBR TEXTURES ===
+                MetallicTex = !isWaterShader && a?.MetallicTexture.HasValue == true ? TextureCache.GetOrLoad(a.MetallicTexture.Value, resolvePath) : TextureCache.White1x1,
+                RoughnessTex = !isWaterShader && a?.RoughnessTexture.HasValue == true ? TextureCache.GetOrLoad(a.RoughnessTexture.Value, resolvePath) : TextureCache.White1x1,
+                MetallicRoughnessTex = !isWaterShader && a?.MetallicRoughnessTexture.HasValue == true ? TextureCache.GetOrLoad(a.MetallicRoughnessTexture.Value, resolvePath) : TextureCache.White1x1,
+                OcclusionTex = !isWaterShader && a?.OcclusionTexture.HasValue == true ? TextureCache.GetOrLoad(a.OcclusionTexture.Value, resolvePath) : TextureCache.White1x1,
+                EmissiveTex = !isWaterShader && a?.EmissiveTexture.HasValue == true ? TextureCache.GetOrLoad(a.EmissiveTexture.Value, resolvePath) : TextureCache.White1x1,
+                HeightTex = !isWaterShader && a?.HeightTexture.HasValue == true ? TextureCache.GetOrLoad(a.HeightTexture.Value, resolvePath) : TextureCache.White1x1,
+                
+                // === DETAIL TEXTURES ===
+                DetailMaskTex = !isWaterShader && a?.DetailMaskTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailMaskTexture.Value, resolvePath) : TextureCache.White1x1,
+                DetailAlbedoTex = !isWaterShader && a?.DetailAlbedoTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailAlbedoTexture.Value, resolvePath) : TextureCache.White1x1,
+                DetailNormalTex = !isWaterShader && a?.DetailNormalTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailNormalTexture.Value, resolvePath) : TextureCache.White1x1,
+                
+                // === PBR PARAMETERS ===
                 Metallic = !isWaterShader ? (a?.Metallic ?? 0f) : 0f,
                 Smoothness = !isWaterShader ? (a != null ? 1.0f - a.Roughness : 0.5f) : 0.9f,
+                OcclusionStrength = !isWaterShader ? (a?.OcclusionStrength ?? 1.0f) : 1.0f,
+                EmissiveColor = !isWaterShader ? (a?.EmissiveColor ?? new[] { 1f, 1f, 1f }) : new[] { 1f, 1f, 1f },
+                HeightScale = !isWaterShader ? (a?.HeightScale ?? 0.05f) : 0.05f,
+                
                 TextureTiling = a?.TextureTiling ?? new[] { 1f, 1f },
-                TextureOffset = a?.TextureOffset ?? new[] { 0f, 0f }
-                ,
+                TextureOffset = a?.TextureOffset ?? new[] { 0f, 0f },
+                
+                // Stylization parameters - use asset values directly, fallback to defaults only if asset is null
+                Saturation = a?.Saturation ?? 1.0f,
+                Brightness = a?.Brightness ?? 1.0f,
+                Contrast = a?.Contrast ?? 1.0f,
+                Hue = a?.Hue ?? 0.0f,
+                Emission = a?.Emission ?? 0.0f,
+                
                 TransparencyMode = a?.Guid != Guid.Empty ? 0 : 0 // placeholder, will be set below
             };
             // Shader name from asset if present
             try { mr.ShaderName = a?.Shader; } catch { mr.ShaderName = null; }
+
+            // Diagnostic logging removed to reduce verbosity
 
             // Initialize all layer arrays to zero/defaults
             for (int i = 0; i < MAX_LAYERS; i++)
@@ -426,6 +485,7 @@ namespace Engine.Rendering
             }
             catch { }
 
+            // === BASE TEXTURES ===
             // Albedo sur slot 0
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, AlbedoTex);
@@ -436,18 +496,78 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2D, NormalTex);
             sh.SetInt("u_NormalTex", 1);
 
+            // === PBR TEXTURES ===
+            // Emissive sur slot 2
+            GL.ActiveTexture(TextureUnit.Texture2);
+            GL.BindTexture(TextureTarget.Texture2D, EmissiveTex);
+            sh.SetInt("u_EmissiveTex", 2);
+            
+            // Metallic sur slot 3
+            GL.ActiveTexture(TextureUnit.Texture3);
+            GL.BindTexture(TextureTarget.Texture2D, MetallicTex);
+            sh.SetInt("u_MetallicTex", 3);
+            
+            // Roughness sur slot 4
+            GL.ActiveTexture(TextureUnit.Texture4);
+            GL.BindTexture(TextureTarget.Texture2D, RoughnessTex);
+            sh.SetInt("u_RoughnessTex", 4);
+            
+            // Metallic-Roughness combined (GLTF) sur slot 5
+            GL.ActiveTexture(TextureUnit.Texture5);
+            GL.BindTexture(TextureTarget.Texture2D, MetallicRoughnessTex);
+            sh.SetInt("u_MetallicRoughnessTex", 5);
+            
+            // Occlusion sur slot 6
+            GL.ActiveTexture(TextureUnit.Texture6);
+            GL.BindTexture(TextureTarget.Texture2D, OcclusionTex);
+            sh.SetInt("u_OcclusionTex", 6);
+            
+            // Height sur slot 7
+            GL.ActiveTexture(TextureUnit.Texture7);
+            GL.BindTexture(TextureTarget.Texture2D, HeightTex);
+            sh.SetInt("u_HeightTex", 7);
+            
+            // === DETAIL TEXTURES (slots 16-18 to avoid terrain conflict at 8+) ===
+            // DetailMask sur slot 16
+            GL.ActiveTexture(TextureUnit.Texture16);
+            GL.BindTexture(TextureTarget.Texture2D, DetailMaskTex);
+            sh.SetInt("u_DetailMaskTex", 16);
+            
+            // DetailAlbedo sur slot 17
+            GL.ActiveTexture(TextureUnit.Texture17);
+            GL.BindTexture(TextureTarget.Texture2D, DetailAlbedoTex);
+            sh.SetInt("u_DetailAlbedoTex", 17);
+            
+            // DetailNormal sur slot 18
+            GL.ActiveTexture(TextureUnit.Texture18);
+            GL.BindTexture(TextureTarget.Texture2D, DetailNormalTex);
+            sh.SetInt("u_DetailNormalTex", 18);
+
             // Bind per-material normal Y flip flag so shaders that sample normal maps (and SSAO) can match conventions
             try { sh.SetInt("u_FlipNormalY", FlipNormalY); } catch { }
 
+            // === BASE PARAMETERS ===
             sh.SetVec4("u_AlbedoColor", new OpenTK.Mathematics.Vector4(AlbedoColor[0], AlbedoColor[1], AlbedoColor[2], AlbedoColor[3]));
             sh.SetFloat("u_NormalStrength", NormalStrength);
+            
+            // === PBR PARAMETERS ===
             sh.SetFloat("u_Metallic", Metallic);
             sh.SetFloat("u_Smoothness", Smoothness);
+            sh.SetFloat("u_OcclusionStrength", OcclusionStrength);
+            sh.SetVec3("u_EmissiveColor", new OpenTK.Mathematics.Vector3(EmissiveColor[0], EmissiveColor[1], EmissiveColor[2]));
+            sh.SetFloat("u_HeightScale", HeightScale);
             
             // Texture tiling and offset
             sh.SetVec2("u_TextureTiling", new OpenTK.Mathematics.Vector2(TextureTiling[0], TextureTiling[1]));
             sh.SetVec2("u_TextureOffset", new OpenTK.Mathematics.Vector2(TextureOffset[0], TextureOffset[1]));
             sh.SetInt("u_TransparencyMode", TransparencyMode);
+            
+            // Stylization parameters
+            sh.SetFloat("u_Saturation", Saturation);
+            sh.SetFloat("u_Brightness", Brightness);
+            sh.SetFloat("u_Contrast", Contrast);
+            sh.SetFloat("u_Hue", Hue);
+            sh.SetFloat("u_Emission", Emission);
 
             // Bind terrain layer textures and uniforms if shader expects them
             try
@@ -592,9 +712,195 @@ namespace Engine.Rendering
                         sh.SetFloat("u_ReflectionStrength", ReflectionStrength);
                         sh.SetFloat("u_ReflectionBlur", ReflectionBlur);
                     }
+                    
+                    // Stylization parameters (also available for Water shader)
+                    sh.SetFloat("u_Saturation", Saturation);
+                    sh.SetFloat("u_Brightness", Brightness);
+                    sh.SetFloat("u_Contrast", Contrast);
+                    sh.SetFloat("u_Hue", Hue);
+                    sh.SetFloat("u_Emission", Emission);
                 }
                 catch { }
             }
+            
+            // Set time uniform for all shaders that need animation (Water, BlackHole, etc.)
+            // This must be done OUTSIDE the Water-specific block so other shaders can use it
+            try
+            {
+                sh.SetFloat("u_Time", time);
+            }
+            catch { }
+
+            // === IBL / Environment maps (global) ===
+            try
+            {
+                int hasIbl = 0;
+                uint irr = SkyboxRenderer.IrradianceMap;
+                uint pref = SkyboxRenderer.PrefilteredEnvMap;
+                uint brdf = SkyboxRenderer.BRDFLUTTexture;
+
+                // CRITICAL: Always bind ALL sampler uniforms to avoid InvalidOperation
+                // Even if IBL is disabled, OpenGL requires all samplers to be bound
+
+                // Irradiance cubemap -> unit 10
+                GL.ActiveTexture(TextureUnit.Texture10);
+                if (irr != 0)
+                {
+                    hasIbl = 1;
+                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)irr);
+                    // Ensure irradiance map uses linear filtering and mipmaps if available
+                    try
+                    {
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                        try { GL.Enable(EnableCap.TextureCubeMapSeamless); } catch { }
+                    }
+                    catch { }
+                }
+                else
+                {
+                    GL.BindTexture(TextureTarget.TextureCubeMap, 0); // Bind null/default
+                }
+                sh.SetInt("u_IrradianceMap", 10);
+
+                // Prefiltered env map -> unit 11
+                GL.ActiveTexture(TextureUnit.Texture11);
+                if (pref != 0)
+                {
+                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)pref);
+                    // Ensure the sampler parameters are appropriate for trilinear sampling
+                    // Some platforms or texture sources might have wrong filtering (nearest)
+                    // which causes blocky/quantized reflections. Force linear mipmap filtering
+                    // and clamp-to-edge wrapping here as a safety measure.
+                    try
+                    {
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                        // Ensure GL knows the max mip level (some loaders don't set this)
+                        try {
+                            int maxLvl = (int)Math.Max(0.0f, Math.Floor(SkyboxRenderer.PrefilterMaxLod));
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMaxLevel, maxLvl);
+                        } catch { }
+                        // Enable seamless cubemap sampling to avoid seam artifacts
+                        try { GL.Enable(EnableCap.TextureCubeMapSeamless); } catch { }
+                    }
+                    catch { }
+                }
+                else
+                {
+                    GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                }
+                sh.SetInt("u_PrefilteredEnvMap", 11);
+
+                // BRDF LUT -> unit 12
+                GL.ActiveTexture(TextureUnit.Texture12);
+                if (brdf != 0)
+                {
+                    GL.BindTexture(TextureTarget.Texture2D, (int)brdf);
+                }
+                else
+                {
+                    GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+                }
+                sh.SetInt("u_BRDFLUT", 12);
+
+                sh.SetInt("u_HasIBL", hasIbl);
+                try {
+                    if (Engine.Utils.DebugLogger.EnableVerbose == true) Console.WriteLine($"[MaterialRuntime] IBL bound: hasIbl={hasIbl}, irr={irr}, pref={pref}, maxLod={SkyboxRenderer.PrefilterMaxLod}");
+
+                    // Extra diagnostic when material is highly metallic and very rough (problem case)
+                    // This prints whether the prefiltered env map actually has mip levels available.
+                    if (Metallic > 0.9f && Smoothness < 0.2f)
+                    {
+                        try {
+                            int prefHandle = (int)pref;
+                                    int baseW = 0;
+                                    int mip1W = 0;
+                                    int minFilter = 0;
+                                    int wrapS = 0, wrapT = 0, wrapR = 0;
+                                    bool seamless = false;
+                                    if (prefHandle != 0)
+                                    {
+                                        GL.BindTexture(TextureTarget.TextureCubeMap, prefHandle);
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out baseW);
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out mip1W);
+                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureMinFilter, out minFilter);
+                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapS, out wrapS);
+                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapT, out wrapT);
+                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapR, out wrapR);
+                                        seamless = GL.IsEnabled(EnableCap.TextureCubeMapSeamless);
+                                        GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                                    }
+                                    Console.WriteLine($"[MaterialRuntime][DIAG] Metallic high & rough: PrefMapHandle={prefHandle}, PrefilterMaxLod={SkyboxRenderer.PrefilterMaxLod}, baseWidth={baseW}, mip1Width={mip1W}, minFilter=0x{minFilter:X}, wrapS=0x{wrapS:X}, wrapT=0x{wrapT:X}, wrapR=0x{wrapR:X}, seamless={(seamless?1:0)}");
+                        } catch { }
+                    }
+                } catch { }
+                // If PrefilterMaxLod looks invalid (race or not yet set), compute it from the bound cubemap
+                try
+                {
+                    if (SkyboxRenderer.PrefilterMaxLod <= 0.0f && pref != 0)
+                    {
+                        int computed = -1;
+                        // Try to read the texture's TextureMaxLevel first
+                        GL.BindTexture(TextureTarget.TextureCubeMap, (int)pref);
+                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureMaxLevel, out int texMaxLevel);
+                        if (texMaxLevel > 0)
+                        {
+                            computed = texMaxLevel;
+                        }
+                        else
+                        {
+                            // Fallback: probe mip levels and find the last non-zero width
+                            int lastNonZero = -1;
+                            for (int level = 0; level < 16; level++)
+                            {
+                                GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, level, GetTextureParameter.TextureWidth, out int w);
+                                if (w > 0) lastNonZero = level; else break;
+                            }
+                            if (lastNonZero >= 0) computed = lastNonZero;
+                        }
+                        GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+
+                        if (computed >= 0)
+                        {
+                            SkyboxRenderer.PrefilterMaxLod = computed;
+                            try { Console.WriteLine($"[MaterialRuntime] Computed PrefilterMaxLod={computed} from texture handle={(int)pref}"); } catch { }
+                        }
+                    }
+                }
+                catch { }
+
+                // Set prefilter max LOD based on actual cubemap mipmap levels
+                sh.SetFloat("u_PrefilterMaxLod", SkyboxRenderer.PrefilterMaxLod);
+            }
+            catch { }
+            
+            // === Ambient / Skybox uniforms (from current lighting state) ===
+            try
+            {
+                var ls = SkyboxRenderer.CurrentLightingState;
+                if (ls != null)
+                {
+                    sh.SetVec3("uAmbientColor", ls.AmbientColor);
+                    sh.SetFloat("uAmbientIntensity", ls.AmbientIntensity);
+                    sh.SetVec3("uSkyboxTint", ls.SkyboxTint);
+                    sh.SetFloat("uSkyboxExposure", ls.SkyboxExposure);
+                }
+                else
+                {
+                    sh.SetVec3("uAmbientColor", new OpenTK.Mathematics.Vector3(0.05f, 0.05f, 0.05f));
+                    sh.SetFloat("uAmbientIntensity", 1.0f);
+                    sh.SetVec3("uSkyboxTint", new OpenTK.Mathematics.Vector3(1f, 1f, 1f));
+                    sh.SetFloat("uSkyboxExposure", 1.0f);
+                }
+            }
+            catch { }
         }
     }
 }

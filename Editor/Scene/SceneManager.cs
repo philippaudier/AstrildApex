@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Editor.Logging;
 using Editor.Serialization;
 using Editor.State;
 using Editor.Panels;
@@ -39,22 +40,22 @@ namespace Editor.SceneManagement
         
         public static void LoadLastSceneOnStartup()
         {
-            Console.WriteLine("[SceneManager] LoadLastSceneOnStartup() called");
+            LogManager.LogInfo("LoadLastSceneOnStartup() called", "SceneManager");
             if (EditorSettings.HasValidLastScene())
             {
                 var lastScenePath = EditorSettings.LastOpenedScene;
-                Console.WriteLine($"[SceneManager] Last scene path: {lastScenePath}");
+                LogManager.LogInfo($"Last scene path: {lastScenePath}", "SceneManager");
                 if (!Path.IsPathRooted(lastScenePath))
                 {
                     lastScenePath = Path.Combine(ProjectPaths.ProjectRoot, lastScenePath);
                 }
 
-                Console.WriteLine($"[SceneManager] Loading scene from: {lastScenePath}");
+                LogManager.LogInfo($"Loading scene from: {lastScenePath}", "SceneManager");
                 LoadSceneFromPath(lastScenePath, showProgress: false); // Don't show progress during startup
             }
             else
             {
-                Console.WriteLine("[SceneManager] No valid last scene to load");
+                LogManager.LogInfo("No valid last scene to load", "SceneManager");
             }
         }
         
@@ -179,7 +180,7 @@ namespace Editor.SceneManagement
                 tracker = new ProgressManager.StepTracker("Saving Scene", 2);
                 tracker.NextStep("Serializing scene...");
 
-                Console.WriteLine($"[SceneManager] Saving scene to: {fullPath}");
+                LogManager.LogInfo($"Saving scene to: {fullPath}", "SceneManager");
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? "");
                 var result = SceneSerializer.Save(sc, fullPath);
 
@@ -202,18 +203,18 @@ namespace Editor.SceneManagement
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[SceneManager] Failed to persist camera state: {ex.Message}");
+                            LogManager.LogWarning($"Failed to persist camera state: {ex.Message}", "SceneManager");
                         }
                     }
 
                     Program.UpdateWindowTitle();
-                    Console.WriteLine($"[SceneManager] ✓ Scene saved successfully");
+                    LogManager.LogInfo("✓ Scene saved successfully", "SceneManager");
                     tracker.Complete("Scene saved");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SceneManager] ✗ Failed to save scene: {ex.Message}");
+                LogManager.LogError($"✗ Failed to save scene: {ex.Message}", "SceneManager");
                 try { tracker?.Complete("Failed"); } catch { }
             }
         }
@@ -226,7 +227,7 @@ namespace Editor.SceneManagement
             ProgressManager.StepTracker? tracker = null;
             try
             {
-                Console.WriteLine($"[SceneManager] Loading scene from: {fullPath}");
+                LogManager.LogInfo($"Loading scene from: {fullPath}", "SceneManager");
 
                 // Show progress UI if requested
                 if (showProgress)
@@ -249,7 +250,7 @@ namespace Editor.SceneManagement
                     try
                     {
                         if (tracker != null) tracker.NextStep("Waiting for background tasks...");
-                        Console.WriteLine("[SceneManager] Waiting for background texture loading...");
+                        LogManager.LogInfo("Waiting for background texture loading...", "SceneManager");
 
                         Editor.Utils.StartupProfiler.BeginSection("  Wait for background threads");
                         System.Threading.Thread.Sleep(100); // Give background threads time to finish decoding
@@ -258,18 +259,36 @@ namespace Editor.SceneManagement
                         if (tracker != null) tracker.NextStep("Uploading textures to GPU...");
                         Editor.Utils.StartupProfiler.BeginSection("  FlushPendingUploads()");
                         var sw = System.Diagnostics.Stopwatch.StartNew();
-                        int uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
+
+                        // Upload all pending textures in batches until complete
+                        int totalUploaded = 0;
+                        int batchCount = 0;
+                        int uploaded;
+                        const int maxBatches = 50; // Safety limit to prevent infinite loop
+
+                        do
+                        {
+                            // Wait a bit for background decoding to catch up
+                            if (batchCount > 0)
+                                System.Threading.Thread.Sleep(50);
+
+                            uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
+                            totalUploaded += uploaded;
+                            batchCount++;
+                        }
+                        while (uploaded > 0 && batchCount < maxBatches);
+
                         sw.Stop();
                         Editor.Utils.StartupProfiler.EndSection();
 
-                        if (uploaded > 0)
+                        if (totalUploaded > 0)
                         {
-                            Console.WriteLine($"[SceneManager] ⚡ Uploaded {uploaded} texture(s) to GPU in {sw.ElapsedMilliseconds}ms");
+                            LogManager.LogInfo($"⚡ Uploaded {totalUploaded} texture(s) to GPU in {sw.ElapsedMilliseconds}ms ({batchCount} batches)", "SceneManager");
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[SceneManager] FlushPendingUploads failed: {ex.Message}");
+                        LogManager.LogWarning($"FlushPendingUploads failed: {ex.Message}", "SceneManager");
                     }
 
                     // Clear material cache to force reload with fresh texture handles
@@ -301,13 +320,13 @@ namespace Editor.SceneManagement
                     {
                     }
 
-                    Console.WriteLine("[SceneManager] ✓ Scene loaded successfully");
+                    LogManager.LogInfo("✓ Scene loaded successfully", "SceneManager");
                     tracker?.Complete("Scene loaded");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SceneManager] ✗ Failed to load scene: {ex.Message}");
+                LogManager.LogError($"✗ Failed to load scene: {ex.Message}", "SceneManager");
                 try { tracker?.Complete("Failed"); } catch { }
             }
         }

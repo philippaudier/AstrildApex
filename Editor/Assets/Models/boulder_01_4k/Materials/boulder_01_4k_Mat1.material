@@ -1,0 +1,49 @@
+{
+  "Guid": "cb1cabad-6749-4f86-9762-8d0d2e5e9fcc",
+  "Name": "boulder_01_4k_Mat1",
+  "Shader": "ForwardBase",
+  "TerrainLayers": null,
+  "AlbedoTexture": "61e53ff9-fb52-499e-a18e-1f784fad1a24",
+  "AlbedoColor": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "NormalTexture": null,
+  "NormalStrength": 1,
+  "MetallicTexture": null,
+  "RoughnessTexture": null,
+  "MetallicRoughnessTexture": null,
+  "OcclusionTexture": null,
+  "OcclusionStrength": 1,
+  "EmissiveTexture": null,
+  "EmissiveColor": [
+    1,
+    1,
+    1
+  ],
+  "HeightTexture": null,
+  "HeightScale": 0.05,
+  "DetailMaskTexture": null,
+  "DetailAlbedoTexture": null,
+  "DetailNormalTexture": null,
+  "Metallic": 0,
+  "Roughness": 0.5,
+  "TextureTiling": [
+    1,
+    1
+  ],
+  "TextureOffset": [
+    0,
+    0
+  ],
+  "TransparencyMode": 0,
+  "Opacity": 1,
+  "Saturation": 1,
+  "Brightness": 1,
+  "Contrast": 1,
+  "Hue": 0,
+  "Emission": 0,
+  "WaterProperties": null
+}

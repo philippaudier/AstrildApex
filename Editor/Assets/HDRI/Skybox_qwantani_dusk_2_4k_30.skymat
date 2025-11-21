@@ -1,0 +1,62 @@
+{
+  "Guid": "ebb87d42-3dd4-4113-ac9f-abd783484942",
+  "Name": "Skybox_qwantani_dusk_2_4k_30",
+  "Type": 3,
+  "SkyTint": [
+    0.5,
+    0.5,
+    0.5,
+    1
+  ],
+  "GroundColor": [
+    0.369,
+    0.349,
+    0.341,
+    1
+  ],
+  "Exposure": 1.3,
+  "AtmosphereThickness": 1,
+  "SunTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SunSize": 0.04,
+  "SunSizeConvergence": 5,
+  "CubemapTexture": "9091100b-881d-4644-8d6b-d00790492c17",
+  "CubemapTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "CubemapExposure": 1,
+  "CubemapRotation": 0,
+  "FrontTexture": null,
+  "BackTexture": null,
+  "LeftTexture": null,
+  "RightTexture": null,
+  "UpTexture": null,
+  "DownTexture": null,
+  "SixSidedTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SixSidedExposure": 1.3,
+  "PanoramicTexture": "748882bb-06ab-41ad-834b-98c9ae0bef44",
+  "PanoramicTint": [
+    1,
+    0,
+    0,
+    1
+  ],
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 0,
+  "Mapping": 0,
+  "MirrorOnBack": false,
+  "ImageType": 0,
+  "UseForFog": false
+}

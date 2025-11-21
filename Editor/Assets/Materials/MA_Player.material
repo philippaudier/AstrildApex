@@ -5,15 +5,31 @@
   "TerrainLayers": null,
   "AlbedoTexture": null,
   "AlbedoColor": [
-    0,
     1,
-    0.5454545,
+    1,
+    1,
     1
   ],
   "NormalTexture": null,
   "NormalStrength": 1,
-  "Metallic": 0,
-  "Roughness": 0.106000006,
+  "MetallicTexture": null,
+  "RoughnessTexture": null,
+  "MetallicRoughnessTexture": null,
+  "OcclusionTexture": null,
+  "OcclusionStrength": 1,
+  "EmissiveTexture": null,
+  "EmissiveColor": [
+    1,
+    1,
+    1
+  ],
+  "HeightTexture": null,
+  "HeightScale": 0.05,
+  "DetailMaskTexture": null,
+  "DetailAlbedoTexture": null,
+  "DetailNormalTexture": null,
+  "Metallic": 1,
+  "Roughness": 0,
   "TextureTiling": [
     1,
     1
@@ -23,5 +39,11 @@
     0
   ],
   "TransparencyMode": 0,
+  "Opacity": 1,
+  "Saturation": 1,
+  "Brightness": 1,
+  "Contrast": 1,
+  "Hue": 0,
+  "Emission": 0,
   "WaterProperties": null
 }

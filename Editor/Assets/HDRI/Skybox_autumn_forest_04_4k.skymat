@@ -1,0 +1,62 @@
+{
+  "Guid": "204b69d6-eae4-4df4-bc38-e1243c4a2fac",
+  "Name": "Skybox_autumn_forest_04_4k",
+  "Type": 3,
+  "SkyTint": [
+    0.5,
+    0.5,
+    0.5,
+    1
+  ],
+  "GroundColor": [
+    0.369,
+    0.349,
+    0.341,
+    1
+  ],
+  "Exposure": 1.3,
+  "AtmosphereThickness": 1,
+  "SunTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SunSize": 0.04,
+  "SunSizeConvergence": 5,
+  "CubemapTexture": "5d8c3c1d-4f6b-4658-b443-ff51fe08bdc5",
+  "CubemapTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "CubemapExposure": 1,
+  "CubemapRotation": 0,
+  "FrontTexture": null,
+  "BackTexture": null,
+  "LeftTexture": null,
+  "RightTexture": null,
+  "UpTexture": null,
+  "DownTexture": null,
+  "SixSidedTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "SixSidedExposure": 1.3,
+  "PanoramicTexture": "f79c7ad6-269b-42ce-b258-b62a38d09072",
+  "PanoramicTint": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 0,
+  "Mapping": 0,
+  "MirrorOnBack": false,
+  "ImageType": 0,
+  "UseForFog": false
+}

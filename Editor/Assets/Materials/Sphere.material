@@ -3,17 +3,17 @@
   "Name": "Sphere",
   "Shader": "ForwardBase",
   "TerrainLayers": null,
-  "AlbedoTexture": null,
+  "AlbedoTexture": "aab1de75-2777-418b-b6d2-df777dcfe149",
   "AlbedoColor": [
     1,
-    0.3116883,
-    0,
-    1
+    1,
+    1,
+    0.6536796
   ],
-  "NormalTexture": null,
-  "NormalStrength": 1,
+  "NormalTexture": "a23f6dc0-e181-4d56-bf06-223960d4175a",
+  "NormalStrength": 2,
   "Metallic": 0,
-  "Roughness": 0.38300002,
+  "Roughness": 0.283,
   "TextureTiling": [
     1,
     1
@@ -22,6 +22,12 @@
     0,
     0
   ],
-  "TransparencyMode": 0,
+  "TransparencyMode": 1,
+  "Opacity": 1,
+  "Saturation": 1,
+  "Brightness": 1,
+  "Contrast": 1,
+  "Hue": 0,
+  "Emission": 0,
   "WaterProperties": null
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Editor.UI;
+using Editor.Logging;
 
 namespace Editor.UI;
 
@@ -116,12 +117,12 @@ public static class ProgressManagerExample
             System.Threading.Thread.Sleep(300);
             ProgressManager.Hide();
 
-            Console.WriteLine($"✓ Model imported successfully from {sourcePath}");
+            LogManager.LogInfo($"✓ Model imported successfully from {sourcePath}", "ProgressManagerExample");
         }
         catch (Exception ex)
         {
             ProgressManager.Hide();
-            Console.WriteLine($"✗ Failed to import model: {ex.Message}");
+            LogManager.LogError($"✗ Failed to import model: {ex.Message}", "ProgressManagerExample");
         }
     }
 

@@ -15,6 +15,14 @@ namespace Engine.Components
     [Engine.Serialization.Serializable("terrainGenerator")]
     public Terrain? TerrainRef = null; // Optional direct reference (remaps on scene clone)
 
+        // Cached mesh resolution used by the collider so we can adapt sampling and any internal data
+        [Engine.Serialization.Serializable("meshResolution")]
+        public int MeshResolution = 0;
+
+        // Cached world-space spacing between terrain samples (terrain width / (resolution-1)).
+        // Updated whenever the terrain is regenerated or resolution changes.
+        private float _sampleSpacing = 1f;
+
         public override void OnAttached()
         {
             base.OnAttached();
@@ -25,6 +33,29 @@ namespace Engine.Components
         {
             // Nothing dynamic; but update bounds if transform changes
             UpdateWorldBounds();
+
+            // If the terrain resolution changed (e.g. user regenerated terrain with a different MeshResolution),
+            // sync our cached resolution and sampling spacing so raycasts / normals use the correct scale.
+            Terrain? tg = TerrainRef ?? (Entity != null ? Entity.GetComponent<Terrain>() : null);
+            if (tg != null)
+            {
+                if (tg.MeshResolution != MeshResolution)
+                    SyncResolutionWithTerrain(tg);
+            }
+        }
+
+        /// <summary>
+        /// Synchronize collider internal parameters with the provided Terrain instance.
+        /// This updates the cached mesh resolution and the sample spacing used for normal computation.
+        /// Call this after the terrain has been regenerated.
+        /// </summary>
+        public void SyncResolutionWithTerrain(Terrain tg)
+        {
+            if (tg == null) return;
+            int res = Math.Max(2, tg.MeshResolution);
+            MeshResolution = res;
+            _sampleSpacing = MathF.Abs(tg.TerrainWidth) / MathF.Max(1, res - 1);
+            Console.WriteLine($"[HeightfieldCollider] Synced to terrain resolution {MeshResolution}, sampleSpacing={_sampleSpacing}");
         }
 
         public override OBB GetWorldOBB()
@@ -109,12 +140,18 @@ namespace Engine.Components
                     // Compute normal by sampling small offsets around hit
                     // Compute a safe sampling epsilon based on terrain resolution and size.
                     // Use the terrain spacing between vertices as baseline: terrainWidth / (meshResolution-1)
-                    float sampleSpacing = 1f;
-                    try
+                    // Use cached spacing when available to avoid computing every raycast.
+                    float sampleSpacing = _sampleSpacing;
+                    if (sampleSpacing <= 0f)
                     {
-                        sampleSpacing = MathF.Abs(tg.TerrainWidth) / MathF.Max(1, tg.MeshResolution - 1);
+                        try
+                        {
+                            sampleSpacing = MathF.Abs(tg.TerrainWidth) / MathF.Max(1, tg.MeshResolution - 1);
+                        }
+                        catch { sampleSpacing = 1f; }
+                        _sampleSpacing = sampleSpacing;
+                        MeshResolution = Math.Max(2, tg.MeshResolution);
                     }
-                    catch { sampleSpacing = 1f; }
                     float eps = MathF.Max(0.1f, sampleSpacing);
                     float hx = tg.SampleHeight(pf.X + eps, pf.Z) - tg.SampleHeight(pf.X - eps, pf.Z);
                     float hz = tg.SampleHeight(pf.X, pf.Z + eps) - tg.SampleHeight(pf.X, pf.Z - eps);

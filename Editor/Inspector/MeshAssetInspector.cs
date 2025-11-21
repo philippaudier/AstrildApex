@@ -1,6 +1,10 @@
 using System;
 using ImGuiNET;
 using Engine.Assets;
+using Editor.Tasks;
+using Editor.Utils;
+using Editor.Logging;
+using System.IO;
 
 namespace Editor.Inspector
 {
@@ -162,28 +166,31 @@ namespace Editor.Inspector
             {
                 try
                 {
-                    // Reimport the mesh from the source file
-                    var sourceFile = assetRec.Path;
-                    if (System.IO.File.Exists(sourceFile))
-                    {
-                        var assetsRoot = Editor.State.ProjectPaths.AssetsDir;
-                        Engine.Assets.ModelImporter.ImportModel(sourceFile, assetsRoot, "Models");
-                        Engine.Assets.AssetDatabase.Refresh();
+                    var assetsRoot = Editor.State.ProjectPaths.AssetsDir;
+                    string? modelRelativePath = meshAsset.SourcePath;
+                    string sourceFile = !string.IsNullOrWhiteSpace(modelRelativePath)
+                        ? System.IO.Path.Combine(assetsRoot, modelRelativePath)
+                        : assetRec.Path;
 
-                        // Invalidate cache
-                        _cachedGuid = Guid.Empty;
-                        _cachedMesh = null;
-
-                        Console.WriteLine($"[MeshAssetInspector] Reimported: {assetRec.Name}");
-                    }
-                    else
+                    if (!System.IO.File.Exists(sourceFile))
                     {
-                        Console.WriteLine($"[MeshAssetInspector] Source file not found: {sourceFile}");
+                        LogManager.LogWarning($"Source file not found: {sourceFile}", "MeshAssetInspector");
+                        return;
                     }
+
+                    DeferredActions.Enqueue(() =>
+                    {
+                            ModelImportJob.Run(sourceFile, assetsRoot, "Models", assetRec.Name, guid =>
+                        {
+                            _cachedGuid = Guid.Empty;
+                            _cachedMesh = null;
+                            LogManager.LogInfo($"Reimported: {assetRec.Name} (GUID: {guid})", "MeshAssetInspector");
+                        });
+                    });
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[MeshAssetInspector] Reimport failed: {ex.Message}");
+                    LogManager.LogError($"Reimport failed: {ex.Message}", "MeshAssetInspector");
                 }
             }
             if (ImGui.IsItemHovered())

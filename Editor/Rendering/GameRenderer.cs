@@ -580,7 +580,41 @@ void main()
                 GL.UniformMatrix4(modelLoc, false, ref model);
 
                 // Load and bind material
-                var materialGuid = meshRenderer.MaterialGuid ?? AssetDatabase.EnsureDefaultWhiteMaterial();
+                Guid materialGuid;
+                // Prefer explicit material on MeshRendererComponent
+                if (meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty)
+                {
+                    materialGuid = meshRenderer.MaterialGuid.Value;
+                }
+                else if (meshRenderer.CustomMeshGuid.HasValue && meshRenderer.CustomMeshGuid.Value != Guid.Empty)
+                {
+                    // If no material set on the renderer, try the imported mesh's per-submesh material
+                    try
+                    {
+                        Engine.Assets.MeshAsset? meshAsset = null;
+                        if (AssetDatabase.TryGet(meshRenderer.CustomMeshGuid.Value, out var rec))
+                        {
+                            try { meshAsset = Engine.Assets.MeshAsset.Load(rec.Path); } catch { meshAsset = null; }
+                        }
+
+                        if (meshAsset != null && meshAsset.MaterialGuids != null && meshAsset.MaterialGuids.Count > meshRenderer.SubmeshIndex && meshAsset.MaterialGuids[meshRenderer.SubmeshIndex].HasValue)
+                        {
+                            materialGuid = meshAsset.MaterialGuids[meshRenderer.SubmeshIndex].Value;
+                        }
+                        else
+                        {
+                            materialGuid = AssetDatabase.EnsureDefaultWhiteMaterial();
+                        }
+                    }
+                    catch
+                    {
+                        materialGuid = AssetDatabase.EnsureDefaultWhiteMaterial();
+                    }
+                }
+                else
+                {
+                    materialGuid = AssetDatabase.EnsureDefaultWhiteMaterial();
+                }
 
                 // Check cache first
                 if (!_materialCache.TryGetValue(materialGuid, out var matRuntime))

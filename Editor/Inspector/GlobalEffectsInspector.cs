@@ -46,6 +46,24 @@ namespace Editor.Inspector
                     ImGui.CloseCurrentPopup();
                 }
 
+                if (ImGui.MenuItem("FXAA (Triple-A)") && !globalEffects.HasEffect<FXAAEffect>())
+                {
+                    globalEffects.AddEffect<FXAAEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (ImGui.MenuItem("SSAO") && !globalEffects.HasEffect<SSAOEffect>())
+                {
+                    globalEffects.AddEffect<SSAOEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (ImGui.MenuItem("GTAO") && !globalEffects.HasEffect<GTAOEffect>())
+                {
+                    globalEffects.AddEffect<GTAOEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
                 ImGui.EndPopup();
             }
 
@@ -75,6 +93,12 @@ namespace Editor.Inspector
                     globalEffects.RemoveEffect<ToneMappingEffect>();
                 else if (effect is ChromaticAberrationEffect)
                     globalEffects.RemoveEffect<ChromaticAberrationEffect>();
+                else if (effect is SSAOEffect)
+                    globalEffects.RemoveEffect<SSAOEffect>();
+                else if (effect is GTAOEffect)
+                    globalEffects.RemoveEffect<GTAOEffect>();
+                    else if (effect is FXAAEffect)
+                        globalEffects.RemoveEffect<FXAAEffect>();
             }
 
             if (nodeOpen)
@@ -100,9 +124,32 @@ namespace Editor.Inspector
                 {
                     DrawChromaticAberrationInspector(chromatic, index);
                 }
+                else if (effect is SSAOEffect ssao)
+                {
+                    DrawSSAOInspector(ssao, index);
+                }
+                else if (effect is GTAOEffect gtao)
+                {
+                    DrawGTAOInspector(gtao, index);
+                }
+                else if (effect is FXAAEffect fxaa)
+                {
+                    DrawFXAAInspector(fxaa, index);
+                }
 
                 ImGui.TreePop();
             }
+        }
+
+        private static void DrawFXAAInspector(FXAAEffect fxaa, int index)
+        {
+            fxaa.Quality = ImGuiHelper.SliderFloat($"Quality##{index}", fxaa.Quality, 0.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("FXAA quality: 0 = faster / softer, 1 = higher quality");
+            }
+
+            // (debug checkbox removed)
         }
 
         private static void DrawToneMappingInspector(ToneMappingEffect toneMap, int index)
@@ -191,6 +238,233 @@ namespace Editor.Inspector
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("Use spectral sampling for more realistic chromatic aberration\n(more expensive but higher quality)");
+            }
+        }
+
+        private static void DrawSSAOInspector(SSAOEffect ssao, int index)
+        {
+            // Rayon d'échantillonnage
+            ssao.Radius = ImGuiHelper.SliderFloat($"Radius##{index}", ssao.Radius, 0.1f, 3.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Sampling radius in view space\nSmaller (0.1-0.5) = fine details, Larger (1-3) = broad occlusion");
+            }
+
+            // Bias pour éviter l'acné
+            ssao.Bias = ImGuiHelper.SliderFloat($"Bias##{index}", ssao.Bias, 0.001f, 0.1f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Depth bias to prevent acne artifacts\nHigher = less artifacts but less detail");
+            }
+
+            // Puissance pour le contraste
+            ssao.Power = ImGuiHelper.SliderFloat($"Power##{index}", ssao.Power, 0.5f, 3.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Occlusion power for contrast adjustment\nHigher = darker/more contrasted occlusion");
+            }
+
+            // Nombre d'échantillons
+            int sampleCount = ssao.SampleCount;
+            if (ImGui.SliderInt($"Sample Count##{index}", ref sampleCount, 4, 64))
+                ssao.SampleCount = sampleCount;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of samples per pixel\nMore samples = better quality but slower\nRecommended: 16-32");
+            }
+
+            // Taille du flou
+            int blurSize = ssao.BlurSize;
+            if (ImGui.SliderInt($"Blur Size##{index}", ref blurSize, 0, 5))
+                ssao.BlurSize = blurSize;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Blur kernel size to smooth the SSAO\n0 = no blur, 3-5 = smooth result");
+            }
+
+            // Distance maximale avec fade out progressif
+            ssao.MaxDistance = ImGuiHelper.SliderFloat($"Max Distance##{index}", ssao.MaxDistance, 10.0f, 200.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Maximum distance for SSAO effect\nFades out progressively from 70% to 100% of this distance\nOptimizes performance by skipping distant objects");
+            }
+        }
+
+        private static void DrawGTAOInspector(GTAOEffect gtao, int index)
+        {
+            // Rayon d'échantillonnage
+            gtao.Radius = ImGuiHelper.SliderFloat($"Radius##{index}", gtao.Radius, 0.1f, 2.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Sampling radius in view space units\nSmaller (0.1-0.5) = fine details, Larger (0.5-2.0) = broad occlusion");
+            }
+
+            // Épaisseur des surfaces
+            gtao.Thickness = ImGuiHelper.SliderFloat($"Thickness##{index}", gtao.Thickness, 0.1f, 3.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Surface thickness for occlusion calculation\nHigher = thicker surfaces, more occlusion");
+            }
+
+            // Falloff range
+            gtao.FalloffRange = ImGuiHelper.SliderFloat($"Falloff Range##{index}", gtao.FalloffRange, 0.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Distance falloff range for occlusion\nControls how occlusion fades with distance");
+            }
+
+            // Nombre d'échantillons par slice
+            int sampleCount = gtao.SampleCount;
+            if (ImGui.SliderInt($"Samples per Slice##{index}", ref sampleCount, 2, 6))
+                gtao.SampleCount = sampleCount;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of samples per slice direction\nMore samples = better quality but slower\nRecommended: 3-4");
+            }
+
+            // Nombre de slices
+            int sliceCount = gtao.SliceCount;
+            if (ImGui.SliderInt($"Slice Count##{index}", ref sliceCount, 1, 4))
+                gtao.SliceCount = sliceCount;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of slice directions\nMore slices = better quality but slower\nRecommended: 2-3");
+            }
+
+            // Rayon du blur
+            int blurRadius = gtao.BlurRadius;
+            if (ImGui.SliderInt($"Blur Radius##{index}", ref blurRadius, 1, 5))
+                gtao.BlurRadius = blurRadius;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Spatial blur radius for denoising\n1-2 = sharp, 3-5 = smooth");
+            }
+
+            // Distance maximale
+            gtao.MaxDistance = ImGuiHelper.SliderFloat($"Max Distance##{index}", gtao.MaxDistance, 10.0f, 200.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Maximum distance for GTAO effect\nFades out progressively to optimize performance");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Temporal Filtering");
+            ImGui.Spacing();
+
+            // Enable temporal filtering
+            bool enableTemporal = gtao.EnableTemporal;
+            if (ImGui.Checkbox($"Enable Temporal##{index}", ref enableTemporal))
+                gtao.EnableTemporal = enableTemporal;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Enable temporal accumulation to reduce noise\nMassively improves quality by reusing previous frames\nRecommended: ON");
+            }
+
+            // Only show temporal parameters if enabled
+            if (gtao.EnableTemporal)
+            {
+                // Blend factor
+                gtao.TemporalBlendFactor = ImGuiHelper.SliderFloat($"Blend Factor##{index}", gtao.TemporalBlendFactor, 0.7f, 0.98f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Weight of history vs current frame\nHigher = smoother but more ghosting\nLower = sharper but more noise\nRecommended: 0.9");
+                }
+
+                // Variance threshold
+                gtao.TemporalVarianceThreshold = ImGuiHelper.SliderFloat($"Variance Threshold##{index}", gtao.TemporalVarianceThreshold, 0.05f, 0.3f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Rejection threshold for high variance areas\nLower = more temporal stability\nHigher = less ghosting on moving objects\nRecommended: 0.15");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Multi-Scale (Hierarchical)");
+            ImGui.Spacing();
+
+            // Mip levels
+            int mipLevels = gtao.MipLevels;
+            if (ImGui.SliderInt($"Mip Levels##{index}", ref mipLevels, 1, 4))
+                gtao.MipLevels = mipLevels;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of mip levels to sample\n1 = single scale (default)\n2 = dual scale (detail + large)\n3-4 = multi-scale for complex scenes\nMore levels = better quality but slower");
+            }
+
+            // Preset buttons for common configurations
+            ImGui.Spacing();
+            if (ImGui.Button($"Single Scale##{index}"))
+            {
+                gtao.MipLevels = 1;
+                gtao.MipWeight0 = 1.0f;
+                gtao.MipWeight1 = 0.0f;
+                gtao.MipWeight2 = 0.0f;
+                gtao.MipWeight3 = 0.0f;
+            }
+            ImGui.SameLine();
+            if (ImGui.Button($"Dual Scale##{index}"))
+            {
+                gtao.MipLevels = 2;
+                gtao.MipWeight0 = 0.6f;
+                gtao.MipWeight1 = 0.4f;
+                gtao.MipWeight2 = 0.0f;
+                gtao.MipWeight3 = 0.0f;
+            }
+            ImGui.SameLine();
+            if (ImGui.Button($"Multi-Scale##{index}"))
+            {
+                gtao.MipLevels = 3;
+                gtao.MipWeight0 = 0.5f;
+                gtao.MipWeight1 = 0.3f;
+                gtao.MipWeight2 = 0.2f;
+                gtao.MipWeight3 = 0.0f;
+            }
+
+            // Show weights and radii for active mip levels
+            if (gtao.MipLevels > 1)
+            {
+                ImGui.Spacing();
+                ImGui.Text("Per-Level Settings:");
+                
+                for (int mip = 0; mip < gtao.MipLevels && mip < 4; mip++)
+                {
+                    ImGui.PushID(mip);
+                    ImGui.Spacing();
+                    ImGui.Text($"  Mip {mip} ({(1 << mip)}x downsampled):");
+                    
+                    // Weight
+                    float weight = mip == 0 ? gtao.MipWeight0 : mip == 1 ? gtao.MipWeight1 : mip == 2 ? gtao.MipWeight2 : gtao.MipWeight3;
+                    if (ImGui.SliderFloat($"Weight##{index}_{mip}", ref weight, 0.0f, 1.0f))
+                    {
+                        if (mip == 0) gtao.MipWeight0 = weight;
+                        else if (mip == 1) gtao.MipWeight1 = weight;
+                        else if (mip == 2) gtao.MipWeight2 = weight;
+                        else if (mip == 3) gtao.MipWeight3 = weight;
+                    }
+                    
+                    // Radius multiplier
+                    float radius = mip == 0 ? gtao.MipRadius0 : mip == 1 ? gtao.MipRadius1 : mip == 2 ? gtao.MipRadius2 : gtao.MipRadius3;
+                    if (ImGui.SliderFloat($"Radius Scale##{index}_{mip}", ref radius, 0.5f, 16.0f))
+                    {
+                        if (mip == 0) gtao.MipRadius0 = radius;
+                        else if (mip == 1) gtao.MipRadius1 = radius;
+                        else if (mip == 2) gtao.MipRadius2 = radius;
+                        else if (mip == 3) gtao.MipRadius3 = radius;
+                    }
+                    
+                    ImGui.PopID();
+                }
+                
+                // Display total weight
+                float totalWeight = 0.0f;
+                for (int mip = 0; mip < gtao.MipLevels && mip < 4; mip++)
+                {
+                    totalWeight += mip == 0 ? gtao.MipWeight0 : mip == 1 ? gtao.MipWeight1 : mip == 2 ? gtao.MipWeight2 : gtao.MipWeight3;
+                }
+                ImGui.Spacing();
+                ImGui.TextColored(new System.Numerics.Vector4(1, 1, 0, 1), $"Total Weight: {totalWeight:F2} (should be ~1.0)");
             }
         }
     }

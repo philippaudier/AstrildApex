@@ -10,7 +10,7 @@ namespace Engine.UI.ImGuiMenu
     public class SettingsPanel
     {
         // Test settings
-        private float _masterVolume = 0.8f;
+        private float _masterVolume = 1.0f;
         private float _musicVolume = 0.6f;
         private float _sfxVolume = 0.7f;
         private int _graphicsQuality = 2; // 0=Low, 1=Medium, 2=High, 3=Ultra
@@ -104,17 +104,17 @@ namespace Engine.UI.ImGuiMenu
                 ImGui.Indent();
                 
                 ImGui.Text("Volume principal");
-                ImGui.SliderFloat("##MasterVolume", ref _masterVolume, 0f, 1f, $"{_masterVolume * 100:F0}%%");
+                ImGui.SliderFloat("##Settings_MasterVolume", ref _masterVolume, 0f, 10f, $"{_masterVolume:F2}x");
                 
                 ImGui.Spacing();
                 
                 ImGui.Text("Musique");
-                ImGui.SliderFloat("##MusicVolume", ref _musicVolume, 0f, 1f, $"{_musicVolume * 100:F0}%%");
+                ImGui.SliderFloat("##Settings_MusicVolume", ref _musicVolume, 0f, 1f, $"{_musicVolume * 100:F0}%%");
                 
                 ImGui.Spacing();
                 
                 ImGui.Text("Effets sonores");
-                ImGui.SliderFloat("##SfxVolume", ref _sfxVolume, 0f, 1f, $"{_sfxVolume * 100:F0}%%");
+                ImGui.SliderFloat("##Settings_SfxVolume", ref _sfxVolume, 0f, 1f, $"{_sfxVolume * 100:F0}%%");
                 
                 ImGui.Unindent();
             }
@@ -245,7 +245,7 @@ namespace Engine.UI.ImGuiMenu
         private void ResetToDefaults()
         {
             Console.WriteLine("[SettingsPanel] Resetting to defaults...");
-            _masterVolume = 0.8f;
+            _masterVolume = 1.0f;
             _musicVolume = 0.6f;
             _sfxVolume = 0.7f;
             _graphicsQuality = 2;
