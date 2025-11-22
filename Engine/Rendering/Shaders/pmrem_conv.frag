@@ -48,8 +48,12 @@ vec3 ImportanceSampleHemisphere(vec2 Xi, vec3 N)
 void main()
 {
     vec3 N = normalize(vWorldPos);
-    vec3 irradiance = vec3(0.0);
-    
+
+    // PROPER IRRADIANCE CONVOLUTION with heavily pre-filtered sampling
+    // We MUST do a proper hemisphere convolution, not just sample the skybox directly,
+    // because irradiance requires integrating over the hemisphere with cosine weighting.
+
+    // LEGACY CODE BELOW (disabled for now - use simple max-LOD sampling above)
     if (u_SampleCount <= 0)
     {
         // Approximate irradiance by sampling a very high LOD of the environment to get blurred result
@@ -60,32 +64,24 @@ void main()
 
     uint sampleCount = uint(max(1, u_SampleCount));
 
-    // CRITICAL FIX: To eliminate white spots from sun/bright lights in HDR,
-    // we need to sample a HEAVILY blurred version of the environment map.
-    //
-    // Query the cubemap size and calculate max LOD, then sample at a very high LOD
-    // to get ultra-smooth irradiance (eliminates all high-frequency content).
-    //
-    // This is the industry-standard approach: Unreal/Unity both use heavily
-    // pre-filtered environment maps for diffuse irradiance to avoid aliasing.
-    ivec2 envSize = textureSize(u_EnvMap, 0);
-    float maxLod = log2(float(max(envSize.x, envSize.y)));
+    // CRITICAL: Sample at VERY HIGH LOD to eliminate sun/bright light spots
+    // Use 95% of max LOD for ULTRA-smooth irradiance (e.g., LOD 10 → sample at LOD 9.5)
+    // This samples at almost the smallest mip (2x2 or 1x1) for maximum blur
+    float sampleLod = u_PrefilterMaxLod * 0.95;
 
-    // Sample at MAXIMUM LOD minus 1 for ultra-diffuse irradiance
-    // This gives us the most blurred representation possible
-    float sampleLod = max(0.0, maxLod - 1.0);
-
-    // Simple cosine-weighted hemisphere sampling
+    // Cosine-weighted hemisphere convolution with heavily pre-filtered sampling
+    vec3 irradiance = vec3(0.0);
     for (uint i = 0u; i < sampleCount; ++i)
     {
         vec2 Xi = Hammersley(i, sampleCount);
         vec3 sampleDir = ImportanceSampleHemisphere(Xi, N);
-        float cosTerm = max(0.0, dot(sampleDir, N));
-        // Sample the heavily pre-filtered (ultra-blurred) environment map
+        float NdotL = max(0.0, dot(sampleDir, N));
+
+        // Sample pre-filtered environment at high LOD to eliminate sharp features
         vec3 envColor = textureLod(u_EnvMap, sampleDir, sampleLod).rgb;
-        irradiance += envColor * cosTerm;
+        irradiance += envColor * NdotL;
     }
 
-    irradiance = irradiance / float(sampleCount);
-    FragColor = irradiance * PI; // scale by PI for diffuse convolution
+    irradiance = irradiance * PI / float(sampleCount);
+    FragColor = irradiance;
 }

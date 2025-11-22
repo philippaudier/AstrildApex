@@ -133,6 +133,24 @@ namespace Engine.Rendering
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.TextureCubeMap, (int)sourceCubemap);
 
+            // CRITICAL: Ensure source cubemap can sample mipmaps for blurred irradiance
+            // Force mipmap filtering so textureLod() in shader can access blurred mip levels
+            try
+            {
+                GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            }
+            catch { }
+
+            // Calculate max LOD of source cubemap for shader
+            GL.BindTexture(TextureTarget.TextureCubeMap, (int)sourceCubemap);
+            GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out int sourceWidth);
+            float sourceMaxLod = (float)Math.Floor(Math.Log(sourceWidth, 2));
+
+            // DEBUG: Check if mipmaps exist by querying mip 1
+            GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out int mip1Width);
+            try { Console.WriteLine($"[PMREMGenerator] Source cubemap: size={sourceWidth}x{sourceWidth}, maxLod={sourceMaxLod}, mip1={mip1Width}x{mip1Width}"); } catch { }
+
             // Render to each face
             GL.BindVertexArray(_cubeVao);
             for (int face = 0; face < 6; face++)
@@ -145,6 +163,8 @@ namespace Engine.Rendering
                 _irradianceShader.Use();
                 _irradianceShader.SetMat4("uProjection", captureProjection);
                 _irradianceShader.SetMat4("uView", captureViews[face]);
+                // Pass max LOD to shader so it can sample the most blurred mip level
+                _irradianceShader.SetFloat("u_PrefilterMaxLod", sourceMaxLod);
                 // Use 1024 samples for ultra-smooth irradiance (eliminates white spots from sun/bright lights)
                 // Higher sample count = better convolution quality for diffuse lighting
                 _irradianceShader.SetInt("u_SampleCount", 1024);
