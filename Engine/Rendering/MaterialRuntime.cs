@@ -748,10 +748,11 @@ namespace Engine.Rendering
                 {
                     hasIbl = 1;
                     GL.BindTexture(TextureTarget.TextureCubeMap, (int)irr);
-                    // Ensure irradiance map uses linear filtering and mipmaps if available
+                    // CRITICAL FIX: Irradiance map is 32x32 with NO mipmaps, use Linear NOT LinearMipmapLinear
+                    // Using mipmap filter on a single-level texture causes black/incorrect sampling
                     try
                     {
-                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+                        GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
                         GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
                         GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
                         GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);

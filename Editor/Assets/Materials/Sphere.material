@@ -12,8 +12,24 @@
   ],
   "NormalTexture": "a23f6dc0-e181-4d56-bf06-223960d4175a",
   "NormalStrength": 2,
+  "MetallicTexture": null,
+  "RoughnessTexture": null,
+  "MetallicRoughnessTexture": null,
+  "OcclusionTexture": null,
+  "OcclusionStrength": 1,
+  "EmissiveTexture": null,
+  "EmissiveColor": [
+    1,
+    1,
+    1
+  ],
+  "HeightTexture": null,
+  "HeightScale": 0.05,
+  "DetailMaskTexture": null,
+  "DetailAlbedoTexture": null,
+  "DetailNormalTexture": null,
   "Metallic": 0,
-  "Roughness": 0.283,
+  "Roughness": 1,
   "TextureTiling": [
     1,
     1

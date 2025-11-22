@@ -1,6 +1,6 @@
 {
   "LastOpenedScene": "Editor\\Assets\\Scenes\\CustomScene.scene",
-  "LastOpenedTime": "2025-11-21T18:01:22.3506422Z",
+  "LastOpenedTime": "2025-11-22T17:00:40.9743838Z",
   "ShowGrid": false,
   "CameraNear": 0.3,
   "CameraFar": 10000,
@@ -9,12 +9,12 @@
   "CameraFov": 60,
   "VSync": true,
   "ViewportCamera": {
-    "Yaw": -5.8352504,
-    "Pitch": -0.15178882,
-    "Distance": 3.840879,
-    "TargetX": -407.18787,
-    "TargetY": 223.47025,
-    "TargetZ": -138.78725
+    "Yaw": 6.434725,
+    "Pitch": 0.028211111,
+    "Distance": 3.1111178,
+    "TargetX": -389.08878,
+    "TargetY": 226.55531,
+    "TargetZ": -129.83508
   },
   "Shadows": {
     "Enabled": true,
@@ -77,7 +77,7 @@
   "UI": {
     "GameHudPosX": 2204,
     "GameHudPosY": 77,
-    "ViewportHudPosX": 217,
+    "ViewportHudPosX": 218,
     "ViewportHudPosY": 68
   }
 }

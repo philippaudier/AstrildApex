@@ -177,7 +177,7 @@ vec3 calculateAmbientLighting(MaterialProperties material, vec3 worldPos) {
         vec3 F0 = mix(vec3(0.04), material.baseColor, material.metallic);
 
         // calculateIBL returns proper diffuse + specular based on material properties
-        ambient = calculateIBL(material.normal, V, material.roughness, F0, material.baseColor) * uAmbientIntensity;
+        ambient = calculateIBL(material.normal, V, material.roughness, F0, material.baseColor, material.metallic) * uAmbientIntensity;
     } else {
         // Fallback to uniform ambient color
         ambient = material.baseColor * uAmbientColor * uAmbientIntensity * (1.0 - material.metallic * 0.5);

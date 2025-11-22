@@ -95,7 +95,7 @@ namespace Engine.Rendering
             } catch { }
         }
 
-        public uint GenerateIrradiance(uint sourceCubemap, int sampleSize = 32)
+        public uint GenerateIrradiance(uint sourceCubemap, int sampleSize = 64)
         {
             if (_irradianceShader == null || sourceCubemap == 0) return 0;
             try { Console.WriteLine($"[PMREMGenerator] Generating irradiance {sampleSize}x{sampleSize} from source={sourceCubemap}"); } catch { }
@@ -145,7 +145,9 @@ namespace Engine.Rendering
                 _irradianceShader.Use();
                 _irradianceShader.SetMat4("uProjection", captureProjection);
                 _irradianceShader.SetMat4("uView", captureViews[face]);
-                _irradianceShader.SetInt("u_SampleCount", 64);
+                // Use 1024 samples for ultra-smooth irradiance (eliminates white spots from sun/bright lights)
+                // Higher sample count = better convolution quality for diffuse lighting
+                _irradianceShader.SetInt("u_SampleCount", 1024);
                 GL.DrawArrays(PrimitiveType.Triangles, 0, 36);
             }
             GL.BindVertexArray(0);

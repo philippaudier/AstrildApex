@@ -49,11 +49,11 @@
   "PanoramicTexture": "748882bb-06ab-41ad-834b-98c9ae0bef44",
   "PanoramicTint": [
     1,
-    0,
-    0,
+    1,
+    1,
     1
   ],
-  "PanoramicExposure": 1,
+  "PanoramicExposure": 0.5,
   "PanoramicRotation": 0,
   "Mapping": 0,
   "MirrorOnBack": false,

@@ -28,8 +28,8 @@
   "DetailMaskTexture": null,
   "DetailAlbedoTexture": null,
   "DetailNormalTexture": null,
-  "Metallic": 1,
-  "Roughness": 0,
+  "Metallic": 0,
+  "Roughness": 1,
   "TextureTiling": [
     1,
     1

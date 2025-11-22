@@ -1,20 +1,20 @@
 {
-  "Guid": "1e198778-d8bf-4567-b6e3-47056f1729e1",
-  "Name": "boulder_01",
+  "Guid": "72cdd6b5-7798-4981-808b-f48c61ee1686",
+  "Name": "metallic",
   "Shader": "ForwardBase",
   "TerrainLayers": null,
-  "AlbedoTexture": "61e53ff9-fb52-499e-a18e-1f784fad1a24",
+  "AlbedoTexture": null,
   "AlbedoColor": [
     1,
     1,
     1,
     1
   ],
-  "NormalTexture": "41efb8f9-f9c6-42cd-bf04-4d05e3a4d3ab",
-  "NormalStrength": 1,
+  "NormalTexture": null,
+  "NormalStrength": 3.93,
   "MetallicTexture": null,
   "RoughnessTexture": null,
-  "MetallicRoughnessTexture": "268162c5-6c22-4f4e-82a5-cc1e6ef0d893",
+  "MetallicRoughnessTexture": null,
   "OcclusionTexture": null,
   "OcclusionStrength": 1,
   "EmissiveTexture": null,
@@ -28,11 +28,11 @@
   "DetailMaskTexture": null,
   "DetailAlbedoTexture": null,
   "DetailNormalTexture": null,
-  "Metallic": 0,
-  "Roughness": 0.5,
+  "Metallic": 1,
+  "Roughness": 1,
   "TextureTiling": [
-    1,
-    1
+    15,
+    15
   ],
   "TextureOffset": [
     0,
@@ -40,10 +40,10 @@
   ],
   "TransparencyMode": 0,
   "Opacity": 1,
-  "Saturation": 1.666,
-  "Brightness": 1.092,
-  "Contrast": 1.021,
-  "Hue": -0.059,
+  "Saturation": 1,
+  "Brightness": 1,
+  "Contrast": 1,
+  "Hue": 0,
   "Emission": 0,
   "WaterProperties": null
 }

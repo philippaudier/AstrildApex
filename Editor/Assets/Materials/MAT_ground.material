@@ -12,8 +12,24 @@
   ],
   "NormalTexture": "3c31a87a-3303-467d-94aa-e50c56ff7e28",
   "NormalStrength": 0.26,
+  "MetallicTexture": null,
+  "RoughnessTexture": null,
+  "MetallicRoughnessTexture": null,
+  "OcclusionTexture": null,
+  "OcclusionStrength": 1,
+  "EmissiveTexture": null,
+  "EmissiveColor": [
+    1,
+    1,
+    1
+  ],
+  "HeightTexture": null,
+  "HeightScale": 0.05,
+  "DetailMaskTexture": null,
+  "DetailAlbedoTexture": null,
+  "DetailNormalTexture": null,
   "Metallic": 0,
-  "Roughness": 0.816,
+  "Roughness": 1,
   "TextureTiling": [
     1,
     1
@@ -23,5 +39,11 @@
     0
   ],
   "TransparencyMode": 0,
+  "Opacity": 1,
+  "Saturation": 1,
+  "Brightness": 1,
+  "Contrast": 1,
+  "Hue": 0,
+  "Emission": 0,
   "WaterProperties": null
 }

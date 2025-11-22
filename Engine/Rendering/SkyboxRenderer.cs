@@ -731,7 +731,8 @@ namespace Engine.Rendering
                                             if (mip1W == 0 && _pmremGen != null)
                                             {
                                                 // No extra mips: generate irradiance & prefiltered environment
-                                                var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 32);
+                                                // Use 64x64 for better quality (eliminates white spots on matte materials)
+                                                var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
                                                 var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize > 0 ? cubeSize : 512 );
                                                 if (irr != 0) IrradianceMap = irr;
                                                 else IrradianceMap = _cubemapTexture; 
@@ -1283,7 +1284,8 @@ namespace Engine.Rendering
                     if (_pmremGen != null)
                     {
                         try {
-                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 32);
+                            // Use 64x64 for better quality (eliminates white spots on matte materials)
+                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
                             var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, width);
                             if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
                             if (pre != 0)
@@ -1397,7 +1399,8 @@ namespace Engine.Rendering
                     {
                         try
                         {
-                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 32);
+                            // Use 64x64 for better quality (eliminates white spots on matte materials)
+                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
                             var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize);
                             if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
                             if (pre != 0)

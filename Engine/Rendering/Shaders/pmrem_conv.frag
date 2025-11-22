@@ -60,13 +60,29 @@ void main()
 
     uint sampleCount = uint(max(1, u_SampleCount));
 
+    // CRITICAL FIX: To eliminate white spots from sun/bright lights in HDR,
+    // we need to sample a HEAVILY blurred version of the environment map.
+    //
+    // Query the cubemap size and calculate max LOD, then sample at a very high LOD
+    // to get ultra-smooth irradiance (eliminates all high-frequency content).
+    //
+    // This is the industry-standard approach: Unreal/Unity both use heavily
+    // pre-filtered environment maps for diffuse irradiance to avoid aliasing.
+    ivec2 envSize = textureSize(u_EnvMap, 0);
+    float maxLod = log2(float(max(envSize.x, envSize.y)));
+
+    // Sample at MAXIMUM LOD minus 1 for ultra-diffuse irradiance
+    // This gives us the most blurred representation possible
+    float sampleLod = max(0.0, maxLod - 1.0);
+
     // Simple cosine-weighted hemisphere sampling
     for (uint i = 0u; i < sampleCount; ++i)
     {
         vec2 Xi = Hammersley(i, sampleCount);
         vec3 sampleDir = ImportanceSampleHemisphere(Xi, N);
         float cosTerm = max(0.0, dot(sampleDir, N));
-        vec3 envColor = texture(u_EnvMap, sampleDir).rgb;
+        // Sample the heavily pre-filtered (ultra-blurred) environment map
+        vec3 envColor = textureLod(u_EnvMap, sampleDir, sampleLod).rgb;
         irradiance += envColor * cosTerm;
     }
 
