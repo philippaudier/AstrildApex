@@ -599,7 +599,7 @@ void main()
 
                         if (meshAsset != null && meshAsset.MaterialGuids != null && meshAsset.MaterialGuids.Count > meshRenderer.SubmeshIndex && meshAsset.MaterialGuids[meshRenderer.SubmeshIndex].HasValue)
                         {
-                            materialGuid = meshAsset.MaterialGuids[meshRenderer.SubmeshIndex].Value;
+                            materialGuid = meshAsset.MaterialGuids[meshRenderer.SubmeshIndex]!.Value;
                         }
                         else
                         {

@@ -294,13 +294,6 @@ namespace Engine.Rendering
                         mr.LayerUnderwaterParams[i, 1] = l.UnderwaterBlendDistance;
                         mr.LayerUnderwaterParams[i, 2] = Math.Clamp(l.UnderwaterSlopeMin / 90f, 0f, 1f);
                         mr.LayerUnderwaterParams[i, 3] = Math.Clamp(l.UnderwaterSlopeMax / 90f, 0f, 1f);
-
-                        // Debug: log layer loading
-                        try
-                        {
-                            Console.WriteLine($"[MaterialRuntime] Loading Layer {i}: IsUnderwater={l.IsUnderwater}, waterLevel={l.UnderwaterHeightMax}, blend={l.UnderwaterBlendDistance}");
-                        }
-                        catch { }
                     }
                 }
             }
@@ -814,33 +807,6 @@ namespace Engine.Rendering
                 sh.SetInt("u_HasIBL", hasIbl);
                 try {
                     if (Engine.Utils.DebugLogger.EnableVerbose == true) Console.WriteLine($"[MaterialRuntime] IBL bound: hasIbl={hasIbl}, irr={irr}, pref={pref}, maxLod={SkyboxRenderer.PrefilterMaxLod}");
-
-                    // Extra diagnostic when material is highly metallic and very rough (problem case)
-                    // This prints whether the prefiltered env map actually has mip levels available.
-                    if (Metallic > 0.9f && Smoothness < 0.2f)
-                    {
-                        try {
-                            int prefHandle = (int)pref;
-                                    int baseW = 0;
-                                    int mip1W = 0;
-                                    int minFilter = 0;
-                                    int wrapS = 0, wrapT = 0, wrapR = 0;
-                                    bool seamless = false;
-                                    if (prefHandle != 0)
-                                    {
-                                        GL.BindTexture(TextureTarget.TextureCubeMap, prefHandle);
-                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out baseW);
-                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out mip1W);
-                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureMinFilter, out minFilter);
-                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapS, out wrapS);
-                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapT, out wrapT);
-                                        GL.GetTexParameter(TextureTarget.TextureCubeMap, GetTextureParameter.TextureWrapR, out wrapR);
-                                        seamless = GL.IsEnabled(EnableCap.TextureCubeMapSeamless);
-                                        GL.BindTexture(TextureTarget.TextureCubeMap, 0);
-                                    }
-                                    Console.WriteLine($"[MaterialRuntime][DIAG] Metallic high & rough: PrefMapHandle={prefHandle}, PrefilterMaxLod={SkyboxRenderer.PrefilterMaxLod}, baseWidth={baseW}, mip1Width={mip1W}, minFilter=0x{minFilter:X}, wrapS=0x{wrapS:X}, wrapT=0x{wrapT:X}, wrapR=0x{wrapR:X}, seamless={(seamless?1:0)}");
-                        } catch { }
-                    }
                 } catch { }
                 // If PrefilterMaxLod looks invalid (race or not yet set), compute it from the bound cubemap
                 try

@@ -89,16 +89,13 @@ namespace Engine.Rendering
             }
             try
             {
-                if (_irradianceShader != null || _prefilterShader != null) {
-                    try { Console.WriteLine("[PMREMGenerator] PMREM generator initialized successfully (shaders compiled)"); } catch { }
-                }
+                // Successfully initialized PMREM generator
             } catch { }
         }
 
         public uint GenerateIrradiance(uint sourceCubemap, int sampleSize = 64)
         {
             if (_irradianceShader == null || sourceCubemap == 0) return 0;
-            try { Console.WriteLine($"[PMREMGenerator] Generating irradiance {sampleSize}x{sampleSize} from source={sourceCubemap}"); } catch { }
 
             int handle = GL.GenTexture();
             GL.BindTexture(TextureTarget.TextureCubeMap, handle);
@@ -147,9 +144,6 @@ namespace Engine.Rendering
             GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out int sourceWidth);
             float sourceMaxLod = (float)Math.Floor(Math.Log(sourceWidth, 2));
 
-            // DEBUG: Check if mipmaps exist by querying mip 1
-            GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out int mip1Width);
-            try { Console.WriteLine($"[PMREMGenerator] Source cubemap: size={sourceWidth}x{sourceWidth}, maxLod={sourceMaxLod}, mip1={mip1Width}x{mip1Width}"); } catch { }
 
             // Render to each face
             GL.BindVertexArray(_cubeVao);
@@ -186,7 +180,6 @@ namespace Engine.Rendering
         public uint GeneratePrefilteredEnv(uint sourceCubemap, int baseSize = 512)
         {
             if (_prefilterShader == null || sourceCubemap == 0) return 0;
-            try { Console.WriteLine($"[PMREMGenerator] Generating prefiltered env baseSize={baseSize} from source={sourceCubemap}"); } catch { }
 
             int handle = GL.GenTexture();
             GL.BindTexture(TextureTarget.TextureCubeMap, handle);
@@ -243,9 +236,6 @@ namespace Engine.Rendering
                 if (sampleCount < 32) sampleCount = 32;
                 _prefilterShader.SetInt("u_SampleCount", sampleCount);
 
-                // Emit debug info so we can verify the sample budget chosen per-mip at runtime
-                try { Console.WriteLine($"[PMREMGenerator] mip={mip} mipW={mipW} roughness={roughness:F3} samples={sampleCount}"); } catch { }
-
                 for (int face = 0; face < 6; face++)
                 {
                     GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.TextureCubeMapPositiveX + face, handle, mip);
@@ -282,7 +272,7 @@ namespace Engine.Rendering
             catch { }
 
             try {
-                try { Console.WriteLine($"[PMREMGenerator] Generated prefiltered cubemap handle={handle}, mipCount={mipCount}, PrefilterMaxLod={Engine.Rendering.SkyboxRenderer.PrefilterMaxLod}"); } catch { }
+                // Successfully generated prefiltered environment map
             } catch { }
 
             return (uint)handle;
