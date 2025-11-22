@@ -13,38 +13,18 @@ uniform sampler2D  u_BRDFLUT;
 uniform int u_HasIBL;
 uniform float u_PrefilterMaxLod;
 
-// Approximate sample of diffuse irradiance using the low mip of the environment cubemap
+// Sample diffuse irradiance from dedicated irradiance cubemap (32x32, single mip level)
 vec3 sampleIrradiance(vec3 N)
 {
     if (u_HasIBL == 0) return vec3(0.0);
 
-    // For true diffuse irradiance without a separate irradiance map:
-    // Use a very high LOD to get an almost uniform color
-    // Real irradiance maps are typically 32x32 or smaller (very blurred)
-
-    // Use a VERY high LOD to avoid seeing cubemap face seams
-    // The last few mips should be blurred enough to hide seams
-    // Use the maximum available prefilter LOD as the most-blurred representation.
-    float maxLod = max(0.0, u_PrefilterMaxLod);
-
-    // Map to target mip level. We'll manually blend between two mip levels (floor/ceil)
-    // because textureLod with a single level may produce quantization if the texture
-    // doesn't support trilinear interpolation for explicit LOD in some drivers.
-    float mip = clamp(maxLod, 0.0, maxLod);
-    float mipFloor = floor(mip);
-    float mipFrac = mip - mipFloor;
-    float mipHigh = min(mipFloor + 1.0, maxLod);
-
-    vec3 irrLo = textureLod(u_IrradianceMap, N, mipFloor).rgb;
-    vec3 irrHi = textureLod(u_IrradianceMap, N, mipHigh).rgb;
-    vec3 irr = mix(irrLo, irrHi, mipFrac);
+    // CRITICAL FIX: Irradiance map is pre-convolved 32x32 cubemap with NO mipmaps
+    // Sample at LOD 0 directly using texture() or textureLod(..., 0.0)
+    // The irradiance map is already blurred/convolved for diffuse lighting
+    vec3 irr = texture(u_IrradianceMap, N).rgb;
 
     // Apply environment tint/exposure from Global UBO so editor sky tint/exposure affect IBL
     irr *= uSkyboxTint * uSkyboxExposure;
-
-    // CRITICAL FIX: Also apply ambient color to match terrain lighting behavior
-    // This ensures ForwardBase materials receive the same ambient tint as terrain
-    irr *= uAmbientColor;
 
     return irr;
 }
@@ -75,9 +55,6 @@ vec3 samplePrefilteredEnv(vec3 R, float roughness)
     // Apply sky tint/exposure to prefiltered environment as well (affects specular IBL)
     pre *= uSkyboxTint * uSkyboxExposure;
 
-    // CRITICAL FIX: Also apply ambient color to specular reflections
-    pre *= uAmbientColor;
-
     return pre;
 }
 
@@ -101,14 +78,16 @@ vec2 integrateBRDF(float NdotV, float roughness)
 // Main IBL helper that returns added ambient contribution (diffuse + specular)
 // Note: This returns the IBL contribution WITHOUT baseColor multiplication
 // The baseColor should be applied by the caller for diffuse part
-vec3 calculateIBL(vec3 N, vec3 V, float roughness, vec3 F0, vec3 baseColor)
+vec3 calculateIBL(vec3 N, vec3 V, float roughness, vec3 F0, vec3 baseColor, float metallic)
 {
     if (u_HasIBL == 0) return vec3(0.0);
 
     // Diffuse part (Irradiance)
     vec3 irradiance = sampleIrradiance(N);
 
-    vec3 kd = (vec3(1.0) - F0);
+    // Energy-conserving diffuse: metals have NO diffuse component
+    // kd represents the amount of light that goes into the surface (not reflected)
+    vec3 kd = (vec3(1.0) - F0) * (1.0 - metallic);
     vec3 diffuse = irradiance * baseColor * kd;
 
     // Specular part
