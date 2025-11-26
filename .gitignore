@@ -99,17 +99,11 @@ editor_run.txt
 secrets.json
 credentials.json
 
-# Textures - ne pas tracker les fichiers de textures volumineux
+# Assets - ne pas tracker les fichiers d'assets volumineux
 Editor/Assets/Textures/
-Editor/Assets/HDRI/*.hdr
+Editor/Assets/HDRI/
 Editor/Assets/Generated/
-
-# Audio files - ne pas tracker les fichiers audio volumineux
-Editor/Assets/Audio/*.mp3
-Editor/Assets/Audio/*.wav
-Editor/Assets/Audio/*.ogg
-
-# Scenes de test et backups
-Editor/Assets/Scenes/*.backup
-Editor/Assets/Scenes/test*.scene
-Editor/Assets/Scenes/*test*.scene
+Editor/Assets/Audio/
+Editor/Assets/Materials/
+Editor/Assets/Scenes/
+Editor/Assets/Scripts/
