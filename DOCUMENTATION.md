@@ -15,21 +15,26 @@
 4. [Système de Rendu](#4-système-de-rendu)
 5. [Système de Physique](#5-système-de-physique)
 6. [Système de Terrain](#6-système-de-terrain)
-7. [Système de Scripting](#7-système-de-scripting)
-8. [Système d'Entrées](#8-système-dentrées)
-9. [Système UI - AstrildUI](#9-système-ui---astrildui)
-10. [Système de Post-Processing](#10-système-de-post-processing)
-11. [Système de Sérialisation](#11-système-de-sérialisation)
-12. [L'Éditeur](#12-léditeur)
-13. [Play Mode](#13-play-mode)
-14. [Système de Lumières](#14-système-de-lumières)
-15. [Système de Caméra](#15-système-de-caméra)
-16. [Asset Management](#16-asset-management)
-17. [Mathématiques](#17-mathématiques)
-18. [Dépendances](#18-dépendances)
-19. [Workflow de Développement](#19-workflow-de-développement)
-20. [Conventions de Code](#20-conventions-de-code)
-21. [Appendix - Guides consolidés](#appendix--guides-consolidés)
+7. [Système Audio](#7-système-audio)
+8. [Système de Scripting](#8-système-de-scripting)
+9. [Système d'Entrées](#9-système-dentrées)
+10. [Système UI - AstrildUI](#10-système-ui---astrildui)
+11. [Système de Post-Processing](#11-système-de-post-processing)
+12. [Système de Sérialisation](#12-système-de-sérialisation)
+13. [L'Éditeur](#13-léditeur)
+14. [Play Mode](#14-play-mode)
+15. [Système de Lumières](#15-système-de-lumières)
+16. [Système de Caméra](#16-système-de-caméra)
+17. [Asset Management](#17-asset-management)
+18. [Mathématiques](#18-mathématiques)
+19. [Dépendances](#19-dépendances)
+20. [Workflow de Développement](#20-workflow-de-développement)
+21. [Conventions de Code](#21-conventions-de-code)
+22. [Performance et Optimisation](#22-performance-et-optimisation)
+23. [Outils Externes](#23-outils-externes)
+24. [Points d'Extension](#24-points-dextension)
+25. [Limitations Actuelles](#25-limitations-actuelles)
+26. [Fonctionnalités à Venir](#26-fonctionnalités-à-venir)
 
 ---
 
@@ -45,6 +50,7 @@
 - **Play Mode** : Test direct dans l'éditeur avec clonage de scène
 - **Hot-Reload** : Rechargement à chaud des shaders et scripts
 - **Système de terrain** : Génération depuis heightmap avec layers multiples
+- **Système audio** : Audio spatial 3D avec OpenAL Soft
 - **Physique** : Raycasting, collision detection, triggers
 - **UI moderne** : AstrildUI (système déclaratif basé sur ImGui.NET)
 - **Post-processing** : Bloom, tone mapping, SSAO, aberration chromatique
@@ -54,6 +60,7 @@
 ```
 AstrildApex/
 ├── Engine/              # Runtime du moteur (bibliothèque)
+│   ├── Audio/           # Système audio (OpenAL)
 │   ├── Components/      # Composants (Transform, MeshRenderer, Light, etc.)
 │   ├── ECS/            # Système Entity-Component-System
 │   ├── Input/          # Gestion des entrées
@@ -71,11 +78,11 @@ AstrildApex/
 │   ├── Logging/        # Système de logs
 │   ├── Panels/         # Panels de l'éditeur
 │   ├── Rendering/      # ViewportRenderer, GridRenderer
-│   └── State/          # Undo/Redo, sélection, settings
-├── Sandbox/            # Projet de test
+│   ├── State/          # Undo/Redo, sélection, settings
+│   └── UIManager/      # Profiling et gestion UI
+├── Tools/              # Outils externes (cmgen, etc.)
 ├── Assets/             # Assets du projet (textures, models, scenes)
-├── Scenes/             # Scènes sauvegardées (.scene)
-└── Materials/          # Matériaux (.material)
+└── DOCUMENTATION.md    # Ce fichier
 ```
 
 ---
@@ -216,6 +223,8 @@ public sealed class Scene
 | **CameraComponent** | Caméra (perspective, orthographic) | `Components/CameraComponent.cs` |
 | **Collider** | Collision (box, sphere, capsule) | `Components/Collider.cs` |
 | **Terrain** | Terrain avec heightmap | `Components/Terrain.cs` |
+| **AudioSource** | Source audio 3D | `Audio/Components/AudioSource.cs` |
+| **AudioListenerComponent** | Listener audio (oreille) | `Audio/Components/AudioListenerComponent.cs` |
 | **EnvironmentSettings** | Paramètres d'environnement | `Components/EnvironmentSettings.cs` |
 
 ---
@@ -477,7 +486,116 @@ public class TerrainLayer
 
 ---
 
-## 7. Système de Scripting
+## 7. Système Audio
+
+### Architecture
+
+```
+Engine/Audio/
+├── Core/
+│   ├── AudioEngine.cs          # Singleton - Moteur audio principal
+│   ├── AudioSettings.cs        # Configuration globale
+│   └── AudioListener.cs        # Listener OpenAL (oreille du joueur)
+├── Components/
+│   ├── AudioSource.cs          # Component - Source sonore sur entité
+│   ├── AudioSourceFilters.cs   # Filtres audio (low-pass, high-pass)
+│   └── AudioListenerComponent.cs  # Component - Listener sur caméra
+├── Assets/
+│   ├── AudioClip.cs           # Asset - Clip audio chargé
+│   ├── StreamingAudioClip.cs  # Asset - Clip audio streaming
+│   └── AudioImporter.cs       # Importation et cache des clips
+└── Mixing/
+    ├── AudioMixer.cs          # Mixer pour groupes audio
+    └── AudioMixerGroup.cs     # Groupe de mixage (ex: Music, SFX)
+```
+
+### Caractéristiques
+
+- **Audio spatial 3D** : Atténuation de distance, effet Doppler
+- **Support streaming** : Pour fichiers audio volumineux (musique)
+- **Formats supportés** : WAV, OGG Vorbis, MP3
+- **Filtres audio** : Low-pass, high-pass, band-pass, notch
+- **Système de mixage** : Groupes audio avec contrôle de volume
+- **Catégories audio** : Master, Music, SFX, Voice, Ambient
+
+### Utilisation de base
+
+```csharp
+// Initialisation (au démarrage)
+AudioEngine.Instance.Initialize();
+
+// Ajouter un listener à la caméra
+var listener = camera.AddComponent<AudioListenerComponent>();
+
+// Jouer un son 3D
+var clip = AudioImporter.LoadClip("Assets/Audio/explosion.wav");
+var audioSource = entity.AddComponent<AudioSource>();
+audioSource.Clip = clip;
+audioSource.Volume = 1.0f;
+audioSource.SpatialBlend = 1.0f; // 1.0 = 3D, 0.0 = 2D
+audioSource.MinDistance = 1.0f;
+audioSource.MaxDistance = 50.0f;
+audioSource.Play();
+
+// Musique en boucle (2D)
+var musicClip = AudioImporter.LoadClip("Assets/Audio/music.ogg", streaming: true);
+var musicSource = musicEntity.AddComponent<AudioSource>();
+musicSource.Clip = musicClip;
+musicSource.Loop = true;
+musicSource.SpatialBlend = 0.0f;
+musicSource.Category = AudioCategory.Music;
+musicSource.Play();
+```
+
+### Propriétés AudioSource
+
+| Propriété | Description | Valeurs |
+|-----------|-------------|---------|
+| `Volume` | Volume de la source | 0.0 - 1.0 |
+| `Pitch` | Hauteur du son (pitch shift) | 0.5 - 2.0 |
+| `Loop` | Boucle le clip | true/false |
+| `PlayOnAwake` | Joue automatiquement au démarrage | true/false |
+| `SpatialBlend` | Mélange 2D/3D | 0.0 (2D) - 1.0 (3D) |
+| `MinDistance` | Distance minimale (volume max) | > 0.0 |
+| `MaxDistance` | Distance maximale (volume min) | > MinDistance |
+| `RolloffFactor` | Facteur d'atténuation | 0.0 - 10.0 |
+| `DopplerLevel` | Intensité de l'effet Doppler | 0.0 - 5.0 |
+| `Category` | Catégorie de mixage | Master, Music, SFX, Voice, Ambient |
+| `Priority` | Priorité (pour la gestion des limites) | 0 (élevée) - 256 (basse) |
+
+### Filtres Audio
+
+```csharp
+// Appliquer un low-pass filter (sons étouffés)
+audioSource.SetFilter(AudioFilterType.LowPass, frequency: 1000f, resonance: 1.0f);
+
+// Appliquer un high-pass filter (enlever les basses)
+audioSource.SetFilter(AudioFilterType.HighPass, frequency: 500f, resonance: 0.7f);
+
+// Retirer le filtre
+audioSource.ClearFilter();
+```
+
+### Contrôle global
+
+```csharp
+// Volume principal
+AudioEngine.Instance.MasterVolume = 0.8f;
+
+// Volumes par catégorie
+AudioEngine.Instance.Settings.MusicVolume = 0.6f;
+AudioEngine.Instance.Settings.SFXVolume = 1.0f;
+AudioEngine.Instance.Settings.VoiceVolume = 0.9f;
+
+// Pause/Resume/Stop global
+AudioEngine.Instance.PauseAll();
+AudioEngine.Instance.ResumeAll();
+AudioEngine.Instance.StopAll();
+```
+
+---
+
+## 8. Système de Scripting
 
 ### Fichiers principaux
 
@@ -548,7 +666,7 @@ public class PlayerController : MonoBehaviour
 
 ---
 
-## 8. Système d'Entrées
+## 9. Système d'Entrées
 
 ### Fichiers principaux
 
@@ -634,7 +752,7 @@ InputManager.Instance.SetImGuiCapture(
 
 ---
 
-## 9. Système UI - AstrildUI
+## 10. Système UI - AstrildUI
 
 ### Fichiers principaux
 
@@ -738,22 +856,9 @@ UIComponents.ProgressRing(0.65f, 50, new Vector4(0.91f, 0.27f, 0.38f, 1));
 UIComponents.Toast("Item received!", ToastType.Success, duration: 3f);
 ```
 
-### Migration WebView2 → AstrildUI
-
-**Raisons de la migration** :
-- ❌ WebView2 : 30 FPS, 100-200ms latence, 50-70% timeouts, complexité élevée
-- ✅ AstrildUI : 60+ FPS, ~0.5ms latence, 100% fiabilité, simplicité
-
-**Avantages AstrildUI** :
-- **400x plus rapide** en rendu
-- **200x moins de latence**
-- **100% fiable** (vs 30-50% avec WebView2)
-- **Plus simple** : C# uniquement, pas de JavaScript/HTML
-- **Aucune dépendance externe** (seulement ImGui.NET)
-
 ---
 
-## 10. Système de Post-Processing
+## 11. Système de Post-Processing
 
 ### Fichiers principaux
 
@@ -806,7 +911,7 @@ public abstract class PostProcessEffect
 
 ---
 
-## 11. Système de Sérialisation
+## 12. Système de Sérialisation
 
 ### Fichiers principaux
 
@@ -867,7 +972,7 @@ public float MyField;
 
 ---
 
-## 12. L'Éditeur
+## 13. L'Éditeur
 
 ### Architecture
 
@@ -936,6 +1041,7 @@ Architecture modulaire pour édition de composants.
 - `MaterialInspector`
 - `TerrainInspector`
 - `CameraInspector`
+- `AudioSourceInspector`
 - `BoxColliderInspector`
 - `SphereColliderInspector`
 - `CapsuleColliderInspector`
@@ -947,7 +1053,7 @@ Architecture modulaire pour édition de composants.
 
 ---
 
-## 13. Play Mode
+## 14. Play Mode
 
 ### Fichiers principaux
 
@@ -982,7 +1088,7 @@ Architecture modulaire pour édition de composants.
 
 ---
 
-## 14. Système de Lumières
+## 15. Système de Lumières
 
 ### Types
 
@@ -1021,7 +1127,7 @@ public class LightComponent : Component
 
 ---
 
-## 15. Système de Caméra
+## 16. Système de Caméra
 
 ### CameraComponent
 
@@ -1066,7 +1172,7 @@ public class CameraComponent : Component
 
 ---
 
-## 16. Asset Management
+## 17. Asset Management
 
 ### AssetDatabase
 
@@ -1078,6 +1184,7 @@ public class CameraComponent : Component
   - Modèles : GLTF, GLB, FBX
   - Matériaux : .material
   - Skybox : .skymat
+  - Audio : WAV, OGG, MP3
   - Fonts : TTF, OTF, .fontasset
 
 **API** :
@@ -1100,7 +1207,7 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## 17. Mathématiques
+## 18. Mathématiques
 
 ### Fichiers
 
@@ -1130,7 +1237,7 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## 18. Dépendances
+## 19. Dépendances
 
 ### Packages NuGet
 
@@ -1138,6 +1245,7 @@ AssetDatabase.LoadMaterial(guid);
 |---------|---------|-------|
 | **OpenTK** | 4.9.4 | Graphics, Windowing, Mathematics |
 | **ImGui.NET** | 1.91.6.1 | UI de l'éditeur |
+| **OpenAL-Soft** | 1.23.1 | Audio 3D |
 | **Serilog** | 4.3.0 | Logging structuré |
 | **Serilog.Sinks.Console** | 6.0.0 | Sink pour console panel |
 | **StbImageSharp** | 2.30.15 | Chargement d'images |
@@ -1145,6 +1253,8 @@ AssetDatabase.LoadMaterial(guid);
 | **SixLabors.ImageSharp.Drawing** | 2.1.7 | Dessin d'images |
 | **SixLabors.Fonts** | 2.1.3 | Rendu de fonts |
 | **SharpGLTF.Core** | 1.0.5 | Import de modèles GLTF |
+| **NVorbis** | 0.10.4 | Décodage OGG Vorbis |
+| **NLayer** | 1.16.0 | Décodage MP3 |
 | **Microsoft.CodeAnalysis.CSharp** | 4.11.0 | Compilation de scripts |
 | **System.Drawing.Common** | 8.0.8 | Interop avec System.Drawing |
 
@@ -1157,7 +1267,7 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## 19. Workflow de Développement
+## 20. Workflow de Développement
 
 ### Développement de Jeu
 
@@ -1193,7 +1303,7 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## 20. Conventions de Code
+## 21. Conventions de Code
 
 ### Naming
 
@@ -1216,7 +1326,104 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## Points d'Extension
+## 22. Performance et Optimisation
+
+### Profiling Infrastructure
+
+Le moteur intègre un système de profiling complet pour identifier les bottlenecks UI.
+
+**Fichiers** :
+- `Editor/UIManager/Profiling/PanelProfiler.cs`
+- `Editor/UIManager/Profiling/PerformanceOverlay.cs`
+
+**Utilisation** :
+1. Menu : `View → ⚡ Performance Overlay`
+2. Affiche en temps réel :
+   - Total UI time (ms)
+   - UI FPS estimé
+   - Hotspot panel (le plus coûteux)
+3. Cliquer "Show Details" pour voir le breakdown par panel
+
+**Code couleur** :
+- 🟢 Vert (<2ms) : Excellent
+- 🟡 Jaune (2-5ms) : Acceptable
+- 🟠 Orange (5-10ms) : À surveiller
+- 🔴 Rouge (>10ms) : Problématique
+
+### Optimisations Appliquées
+
+**Assets Panel** :
+- Filesystem checks throttlés (toutes les 30 frames vs chaque frame)
+- Import queue check uniquement si non-vide
+- Watcher initialisé une seule fois
+
+**Inspector Panel** :
+- Cache de réflexion (`Type → MemberInfo[]`)
+- Évite `GetMembers()` chaque frame (90% plus rapide)
+
+**Scene Stats Overlay** :
+- Debug text supprimé (créait draw calls inutiles)
+
+### Résultats
+
+| Scénario | Avant | Après | Gain |
+|----------|-------|-------|------|
+| All panels closed | 1000 FPS | 1000+ FPS | - |
+| Assets panel open | 175 FPS | ~400 FPS | **2.3x** |
+| Object selected | 600 FPS | ~900 FPS | **1.5x** |
+| All panels open | 170 FPS | ~300 FPS | **1.8x** |
+
+### Recommandations
+
+**Pour les développeurs de jeux** :
+- Précharger les clips audio au démarrage
+- Utiliser WAV pour SFX courts (< 5s)
+- Utiliser OGG Vorbis pour musique longue
+- Limiter les sources audio simultanées (MaxAudioSources = 64)
+- Utiliser LOD pour meshes complexes
+- Frustum culling actif par défaut
+
+**Pour les développeurs du moteur** :
+- Utiliser le profiler pour identifier les bottlenecks
+- Throttler les checks filesystem/file watcher
+- Cacher les résultats de réflexion
+- Dirty flags pour éviter recalculs inutiles
+
+---
+
+## 23. Outils Externes
+
+### cmgen (Filament PMREM Generator)
+
+**Installation** :
+```powershell
+# Depuis la racine du projet
+.\Tools\install-cmgen.ps1
+```
+
+**Fonctionnalités** :
+- Télécharge cmgen depuis les releases officielles Google Filament
+- Configure automatiquement `EditorSettings.json`
+- Active l'auto-génération PMREM lors de l'import de HDR
+
+**Ce que fait cmgen** :
+- Génère les mipmaps pré-filtrées (PMREM) pour IBL
+- Convertit HDR en cubemap avec diffuse irradiance
+- Crée les textures pour specular/diffuse lighting
+
+**Configuration manuelle** :
+```json
+{
+  "ExternalTools": {
+    "CmgenPath": "C:\\path\\to\\cmgen.exe",
+    "AutoGeneratePMREMOnImport": true
+  }
+}
+```
+
+---
+
+## 24. Points d'Extension
 
 ### Nouveaux Composants
 
@@ -1248,7 +1455,7 @@ AssetDatabase.LoadMaterial(guid);
 
 ---
 
-## Limitations Actuelles
+## 25. Limitations Actuelles
 
 ### Rendering
 
@@ -1270,17 +1477,13 @@ AssetDatabase.LoadMaterial(guid);
 - Pas de blend trees
 - Pas de state machines
 
-### Audio
-
-- Pas de système audio intégré
-
 ### Networking
 
 - Pas de support multijoueur
 
 ---
 
-## 21. Fonctionnalités à Venir
+## 26. Fonctionnalités à Venir
 
 Cette section présente les fonctionnalités prévues pour les prochaines versions du moteur, organisées par ordre de priorité.
 
@@ -1289,7 +1492,6 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 #### 1. Système d'Animation Squelettique
 **Priorité** : ★★★★★
 **Complexité** : Élevée
-**Description** : Système complet d'animation pour personnages et objets riggés.
 
 **Fonctionnalités** :
 - Import d'animations depuis GLTF/FBX
@@ -1303,28 +1505,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Objets animés (portes, coffres)
 - Cutscenes et cinématiques
 
-#### 2. Système Audio
-**Priorité** : ★★★★★
-**Complexité** : Moyenne
-**Description** : Système audio spatial pour effets sonores et musique.
-
-**Fonctionnalités** :
-- AudioSource component (3D et 2D)
-- AudioListener component (attaché à la caméra)
-- Support formats : WAV, MP3, OGG
-- Spatial audio avec atténuation
-- Audio mixer avec canaux (SFX, Music, Voice)
-- Effets audio : reverb, echo, filters
-
-**Bénéfices** :
-- Ambiance sonore immersive
-- Feedback sonore des actions
-- Musique dynamique
-
-#### 3. Prefab System
+#### 2. Prefab System
 **Priorité** : ★★★★☆
 **Complexité** : Moyenne
-**Description** : Système de préfabriqués réutilisables pour entités.
 
 **Fonctionnalités** :
 - Création de prefabs depuis entités
@@ -1340,10 +1523,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 
 ### Priorité Haute (Version 0.3.0)
 
-#### 4. Système de Particules
+#### 3. Système de Particules
 **Priorité** : ★★★★☆
 **Complexité** : Élevée
-**Description** : Système de particules pour effets visuels (feu, fumée, magie, etc.).
 
 **Fonctionnalités** :
 - ParticleSystem component
@@ -1358,10 +1540,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Feedback visuel des actions
 - Ambiance environnementale (pluie, neige)
 
-#### 5. Navmesh et Pathfinding
+#### 4. Navmesh et Pathfinding
 **Priorité** : ★★★★☆
 **Complexité** : Élevée
-**Description** : Système de navigation pour IA.
 
 **Fonctionnalités** :
 - Génération de navmesh depuis géométrie
@@ -1376,10 +1557,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Ennemis qui poursuivent le joueur
 - NPCs se déplaçant naturellement
 
-#### 6. Deferred Rendering Pipeline
+#### 5. Deferred Rendering Pipeline
 **Priorité** : ★★★☆☆
 **Complexité** : Élevée
-**Description** : Pipeline de rendu différé pour supporter plus de lumières.
 
 **Fonctionnalités** :
 - G-Buffer (albedo, normal, metallic/roughness, depth)
@@ -1395,10 +1575,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 
 ### Priorité Moyenne (Version 0.4.0)
 
-#### 7. Visual Scripting
+#### 6. Visual Scripting
 **Priorité** : ★★★☆☆
 **Complexité** : Très Élevée
-**Description** : Système de scripting visuel par nodes pour designers.
 
 **Fonctionnalités** :
 - Graph editor avec nodes
@@ -1412,10 +1591,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Prototypage rapide de gameplay
 - Logique de jeu accessible
 
-#### 8. Physically-Based Rigidbody Dynamics
+#### 7. Physically-Based Rigidbody Dynamics
 **Priorité** : ★★★☆☆
 **Complexité** : Élevée
-**Description** : Simulation physique complète avec dynamique des corps rigides.
 
 **Fonctionnalités** :
 - Rigidbody component (masse, vélocité, force)
@@ -1429,10 +1607,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Puzzles physiques
 - Destruction et ragdolls
 
-#### 9. LOD (Level of Detail) System
+#### 8. LOD (Level of Detail) System
 **Priorité** : ★★★☆☆
 **Complexité** : Moyenne
-**Description** : Système de niveaux de détail pour optimisation.
 
 **Fonctionnalités** :
 - LOD groups avec plusieurs niveaux de mesh
@@ -1445,10 +1622,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Mondes ouverts optimisés
 - Plus d'objets visibles simultanément
 
-#### 10. Scene Streaming et Occlusion Culling
+#### 9. Scene Streaming et Occlusion Culling
 **Priorité** : ★★★☆☆
 **Complexité** : Élevée
-**Description** : Chargement progressif et culling avancé pour grands mondes.
 
 **Fonctionnalités** :
 - Scene streaming (load/unload par zones)
@@ -1464,10 +1640,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 
 ### Priorité Basse (Version 0.5.0+)
 
-#### 11. Réseau Multijoueur
+#### 10. Réseau Multijoueur
 **Priorité** : ★★☆☆☆
 **Complexité** : Très Élevée
-**Description** : Support multijoueur networked.
 
 **Fonctionnalités** :
 - Client-server architecture
@@ -1481,10 +1656,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Co-op local et online
 - Matchmaking et lobbies
 
-#### 12. Mobile Platform Support
+#### 11. Mobile Platform Support
 **Priorité** : ★★☆☆☆
 **Complexité** : Très Élevée
-**Description** : Support des plateformes mobiles (Android, iOS).
 
 **Fonctionnalités** :
 - OpenGL ES rendering
@@ -1498,10 +1672,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Élargissement de l'audience
 - Jeux cross-platform
 
-#### 13. VR/XR Support
+#### 12. VR/XR Support
 **Priorité** : ★☆☆☆☆
 **Complexité** : Très Élevée
-**Description** : Support de la réalité virtuelle et augmentée.
 
 **Fonctionnalités** :
 - Stereo rendering
@@ -1515,10 +1688,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Support Quest, PSVR, etc.
 - Jeux en réalité augmentée
 
-#### 14. Advanced Weather System
+#### 13. Advanced Weather System
 **Priorité** : ★☆☆☆☆
 **Complexité** : Élevée
-**Description** : Système météorologique dynamique.
 
 **Fonctionnalités** :
 - Rain, snow, fog dynamiques
@@ -1532,10 +1704,9 @@ Cette section présente les fonctionnalités prévues pour les prochaines versio
 - Ambiance immersive
 - Gameplay basé sur météo
 
-#### 15. Vegetation System
+#### 14. Vegetation System
 **Priorité** : ★☆☆☆☆
 **Complexité** : Élevée
-**Description** : Système de végétation optimisé pour grands environnements.
 
 **Fonctionnalités** :
 - Grass painting et instancing
@@ -1587,7 +1758,7 @@ Ces améliorations seront implémentées progressivement au fil des versions :
 
 ---
 
-## 22. Comment Contribuer
+## Comment Contribuer
 
 ### Proposer une Fonctionnalité
 
@@ -1615,326 +1786,6 @@ Pour implémenter une fonctionnalité de la roadmap :
 ---
 
 **AstrildApex** - Moteur de jeu 3D en C# avec éditeur intégré
-Version 0.1.0 - Octobre 2025
+Version 0.1.0 - 2025
 
 ---
-
-## Consolidated Guides (merged content)
-
-The following sections were merged from individual guide files across the repository. Each subsection preserves the original document title and relative path for provenance.
-
-
-### UI_SYSTEM_COMPLETE.md — /UI_SYSTEM_COMPLETE.md
-
-````markdown
-# 🎉 Mission Complete: RPG HUD & UIBuilder API Extensions
-
-## ✅ Objectifs Accomplis
-
-### 1. **Curseur Mode Locked - FIXÉ** 🎯
-- ✅ Curseur **invisible** en gameplay (mode Locked FPS)
-- ✅ Curseur **visible et libre** dans le menu (ESC)
-- ✅ Curseur **visible** après sortie du Play Mode
-- ✅ Fix du compteur ShowCursor Win32 (boucle de reset)
-- ✅ Ordre correct : `CursorState.Normal` → puis `visible=true`
-
-... (content truncated in documentation for brevity; full content retained in repo before deletion)
-````
-
-
-### THEME_READABILITY_TEST_GUIDE.md — /THEME_READABILITY_TEST_GUIDE.md
-
-````markdown
-# Guide de Test - Améliorations de Lisibilité 🎯
-
-## Comment Tester les Améliorations
-
-... (omitted)
-````
-
-
-### THEME_SYSTEM_GUIDE.md — /THEME_SYSTEM_GUIDE.md
-
-````markdown
-# 🎨 Theme System Guide - AstrildApex Editor
-
-## Vue d'ensemble
-
-... (omitted)
-````
-
-### THEME_READABILITY_IMPROVEMENTS.md — /THEME_READABILITY_IMPROVEMENTS.md
-
-````markdown
-(empty file)
-````
-
-### THEME_COLLECTION.md — /THEME_COLLECTION.md
-
-````markdown
-# 🎨 AstrildApex Theme Collection
-
-... (omitted)
-````
-
-### TERRAIN_SHADER_FIX.md — /TERRAIN_SHADER_FIX.md
-
-````markdown
-# 🔧 Fix: Terrain Shader Loading Issue
-
-... (omitted)
-````
-
-### TERRAIN_WORKFLOW_GUIDE.md — /TERRAIN_WORKFLOW_GUIDE.md
-
-````markdown
-# Terrain System - Complete Workflow Guide
-
-... (omitted)
-````
-
-### TERRAIN_PLAYMODE_FIX_FINAL.md — /TERRAIN_PLAYMODE_FIX_FINAL.md
-
-````markdown
-(original file merged)
-````
-
-### TERRAIN_MATERIAL_SYSTEM.md — /TERRAIN_MATERIAL_SYSTEM.md
-
-````markdown
-(original file merged)
-````
-
-### SSAO_IMPLEMENTATION_NOTES.md — /SSAO_IMPLEMENTATION_NOTES.md
-
-````markdown
-# SSAO Implementation Notes
-
-## 🎯 Question : Pourquoi le bruit SSAO suit-il l'écran ?
-
-... (omitted)
-````
-
-### SHADOWMAP_TEST_GUIDE.md — /SHADOWMAP_TEST_GUIDE.md
-
-````markdown
-# Guide de Test - Corrections Shadow Mapping
-
-... (omitted)
-````
-
-### SHADOWMAP_FIX_SUMMARY.md — /SHADOWMAP_FIX_SUMMARY.md
-
-````markdown
-# Correction du système Shadow Mapping - Résumé
-
-... (omitted)
-````
-
-### REFACTORING_GUIDE.md — /REFACTORING_GUIDE.md
-
-````markdown
-# Panel & Overlay Refactoring Guide
-
-... (omitted)
-````
-
-### MONOBEHAVIOUR_LIFECYCLE.md — /MONOBEHAVIOUR_LIFECYCLE.md
-
-````markdown
-# MonoBehaviour Lifecycle Methods
-
-... (omitted)
-````
-
-### MODERN_UI_TODO.md — /MODERN_UI_TODO.md
-
-````markdown
-# ✨ Refactorisation UI Moderne - ViewportPanel & GamePanel
-
-... (omitted)
-````
-
-### MODERN_UI_REFACTORING.md — /MODERN_UI_REFACTORING.md
-
-````markdown
-# 🎨 Modern UI Refactoring - ViewportPanel & GamePanel
-
-... (omitted)
-````
-
-### MENU_ANALYSIS.md — /MENU_ANALYSIS.md
-
-````markdown
-# Analyse des menus contextuels - Hierarchy & Assets Panel
-
-... (omitted)
-````
-
-### MAXIMIZE_ON_PLAY_IMPLEMENTATION.md — /MAXIMIZE_ON_PLAY_IMPLEMENTATION.md
-
-````markdown
-# 🎮 Maximize on Play - Implementation Plan
-
-... (omitted)
-````
-
-### MAXIMIZE_ON_PLAY_COMPLETE.md — /MAXIMIZE_ON_PLAY_COMPLETE.md
-
-````markdown
-# ✅ Maximize on Play - Implémentation Complète
-
-... (omitted)
-````
-
-### MATERIAL_HOTRELOAD_SYSTEM.md — /MATERIAL_HOTRELOAD_SYSTEM.md
-
-````markdown
-# Material Hot-Reload System
-
-... (omitted)
-````
-
-### INSPECTOR_WIDGETS_GUIDE.md — /INSPECTOR_WIDGETS_GUIDE.md
-
-````markdown
-# 🎨 Inspector UX System - Guide Complet
-
-... (omitted)
-````
-
-### INSPECTOR_UX_AUDIT.md — /INSPECTOR_UX_AUDIT.md
-
-````markdown
-(original file merged)
-````
-
-### INSPECTOR_PHASE2_UI_COMPLETE.md — /INSPECTOR_PHASE2_UI_COMPLETE.md
-
-````markdown
-(original file merged)
-````
-
-### INSPECTOR_PHASE1_COMPLETE.md — /INSPECTOR_PHASE1_COMPLETE.md
-
-````markdown
-(original file merged)
-````
-
-### INSPECTOR_AUDIT_REPORT.md — /INSPECTOR_AUDIT_REPORT.md
-
-````markdown
-(original file merged)
-````
-
-### INPUT_SYSTEM_COMPLETE.md — /INPUT_SYSTEM_COMPLETE.md
-
-````markdown
-# Input System - Complete Implementation Summary
-
-... (omitted)
-````
-
-### INPUT_SETTINGS_GUIDE.md — /INPUT_SETTINGS_GUIDE.md
-
-````markdown
-# Guide d'utilisation - Input Settings Panel
-
-... (omitted)
-````
-
-### FONT_PREFERENCES_UX_DESIGN.md — /FONT_PREFERENCES_UX_DESIGN.md
-
-````markdown
-# Interface Font Preferences - UX Design Implementation
-
-... (omitted)
-````
-
-### FLOATING_3D_INFO_GUIDE.md — /FLOATING_3D_INFO_GUIDE.md
-
-````markdown
-(original file merged)
-````
-
-### FIX_TERRAIN_LAYERS_UPDATE.md — /FIX_TERRAIN_LAYERS_UPDATE.md
-
-````markdown
-(original file merged)
-````
-
-### EXTERNAL_TOOLS_IMPLEMENTATION.md — /EXTERNAL_TOOLS_IMPLEMENTATION.md
-
-````markdown
-# 🛠️ External Tools - Unity-Style Script Editor Integration
-
-... (omitted)
-````
-
-### EXTERNAL_TOOLS_COMPLETE_GUIDE.md — /EXTERNAL_TOOLS_COMPLETE_GUIDE.md
-
-````markdown
-# External Tools - Complete Integration Guide
-
-... (omitted)
-````
-
-### IMGUI_ID_CONFLICT_FIX.md — /IMGUI_ID_CONFLICT_FIX.md
-
-````markdown
-# ImGui ID Conflict Fix - Complete
-
-... (omitted)
-````
-
-### TERRAIN_PLAYMODE_FIX.md — /TERRAIN_PLAYMODE_FIX.md
-
-````markdown
-# 🔧 Fix: Terrain Disparaît en Sortant du Play Mode
-
-... (omitted)
-````
-
-### GAME_PANEL_OPTIONS.md — /GAME_PANEL_OPTIONS.md
-
-````markdown
-# 🎮 Game Panel Options - Unity-Style Settings
-
-... (omitted)
-````
-
-### ASTRILD_UI_PRODUCTION_GUIDE.md — /ASTRILD_UI_PRODUCTION_GUIDE.md
-
-````markdown
-(original file merged)
-````
-
-### ASTRILD_UI_GUIDE.md — /ASTRILD_UI_GUIDE.md
-
-````markdown
-(original file merged)
-````
-
-### Engine/Rendering/Shadows/SHADOWS_README.md — /Engine/Rendering/Shadows/SHADOWS_README.md
-
-````markdown
-(original file merged)
-````
-
-### Engine/Rendering/Shadows/INTEGRATION_GUIDE.md — /Engine/Rendering/Shadows/INTEGRATION_GUIDE.md
-
-````markdown
-(original file merged)
-````
-
-### Engine/Rendering/Shaders/SSAO/SSAO_README.md — /Engine/Rendering/Shaders/SSAO/SSAO_README.md
-
-````markdown
-(original file merged)
-````
-
----
-
-Notes:
-- Originals have been merged into this central document. The repository will remove the original files as requested. A `docs-backup` branch exists (remote) as a safety snapshot if you want to recover any originals.
-
