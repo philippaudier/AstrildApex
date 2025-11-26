@@ -36,13 +36,16 @@ namespace Engine.Audio.Components
 
         /// <summary>
         /// Per-source filters (Unity-like AudioLowPassFilter/AudioHighPassFilter)
+        /// Stored in `Filters` (serializable below).
         /// </summary>
-        public List<AudioSourceFilter> Filters { get; private set; } = new();
 
         // --- Propriétés sérialisables ---
 
         [Engine.Serialization.Serializable("clip")]
         public Guid? ClipGuid { get; set; }
+        
+        [Engine.Serialization.Serializable("filters")]
+        public List<AudioSourceFilter>? Filters { get; set; } = new();
 
         [Engine.Serialization.Serializable("volume")]
         [Editable("Volume")]
@@ -303,10 +306,21 @@ namespace Engine.Audio.Components
         {
             base.OnEnable();
 
-            if (PlayOnAwake && _clip != null)
+            // Do not auto-play on enable when running in the Editor - PlayOnAwake
+            // should only apply when actually running the game/player. The Editor
+            // may load scenes while the user is browsing and should not trigger
+            // immediate playback which can cause underruns or spurious restarts.
+            try
             {
-                Play();
+                // Allow PlayOnAwake if not running in Editor, or if the Editor is currently
+                // in Play Mode. This preserves the expected behavior: PlayOnAwake should
+                // run when the game is actually playing, but not when simply opening a scene.
+                if (PlayOnAwake && _clip != null && (!Engine.Core.RuntimeEnvironment.IsEditor || Engine.Core.RuntimeEnvironment.IsPlayMode))
+                {
+                    Play();
+                }
             }
+            catch { }
         }
 
         public override void OnDisable()
@@ -382,6 +396,23 @@ namespace Engine.Audio.Components
                 _isPlaying = false;
                 AudioEngine.Instance.UnregisterActiveSource(this);
             }
+
+            // If the streaming clip requested a playback restart (thread-safe flag),
+            // perform the actual AL.SourcePlay on the main thread to avoid calling
+            // OpenAL from background threads.
+            try
+            {
+                if (_streamingClip != null && _streamingClip.PlaybackRestartRequested && AL.IsSource(_sourceId))
+                {
+                    AL.SourcePlay(_sourceId);
+                    _streamingClip.ClearPlaybackRestartRequest();
+                    Log.Information($"[AudioSource] Performed AL.SourcePlay on main thread for streaming clip: {_streamingClip.Name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[AudioSource] Failed to perform playback restart on main thread");
+            }
         }
 
         /// <summary>
@@ -389,6 +420,13 @@ namespace Engine.Audio.Components
         /// </summary>
         public void Play(bool resetPosition = true)
         {
+            // Prevent multiple simultaneous Play() calls
+            if (_isPlaying && !resetPosition)
+            {
+                Log.Debug($"[AudioSource] Already playing, ignoring redundant Play() call for: {Entity?.Name}");
+                return;
+            }
+
             // Ensure we have a valid OpenAL source. Try late-initialization if possible.
             if (_sourceId == -1)
             {
@@ -415,6 +453,7 @@ namespace Engine.Audio.Components
 
             // Capture local reference to satisfy nullable analysis and avoid repeated null checks
             var clip = _clip!;
+            Log.Information($"[AudioSource] Play: entity={Entity?.Name}, clip={(clip?.Name ?? "null")}, streaming={(clip?.IsStreaming ?? false)}, resetPosition={resetPosition}");
 
             // Warn if spatialization requested but clip is not mono (OpenAL will not spatialize stereo sources)
             if (SpatialBlend > 0f && _clip != null && _clip.IsLoaded)
@@ -464,20 +503,27 @@ namespace Engine.Audio.Components
             }
 
             // Handle streaming vs non-streaming clips differently
-                if (clip!.IsStreaming && _streamingClip != null)
+            if (clip!.IsStreaming && _streamingClip != null)
             {
+                // Stop any existing streaming before starting new one
+                if (_streamingClip.IsStreamingActive)
+                {
+                    Log.Warning($"[AudioSource] Stopping existing stream before starting new one for: {clip!.Name}");
+                    _streamingClip.StopStreaming();
+                }
+
                 // For streaming clips, set loop on decoder and start the streaming thread
                 _streamingClip.Loop = Loop;
-                    int queued = _streamingClip.StartStreaming(_sourceId, resetPosition, startThread: false);
-                    if (queued > 0)
-                    {
-                        AL.SourcePlay(_sourceId);
-                        // Start the streaming thread after initiating playback to avoid a
-                        // race where the thread sees the source not yet playing and logs
-                        // an underrun immediately.
-                        _streamingClip.StartStreamingThread();
-                        Log.Information($"[AudioSource] Started streaming playback: {clip!.Name}");
-                    }
+                int queued = _streamingClip.StartStreaming(_sourceId, resetPosition, startThread: false);
+                if (queued > 0)
+                {
+                    AL.SourcePlay(_sourceId);
+                    // Start the streaming thread after initiating playback to avoid a
+                    // race where the thread sees the source not yet playing and logs
+                    // an underrun immediately.
+                    _streamingClip.StartStreamingThread();
+                    Log.Information($"[AudioSource] Started streaming playback: {clip!.Name}");
+                }
                 else
                 {
                     Log.Warning($"[AudioSource] Streaming failed to start: {clip!.Name}");
@@ -574,6 +620,19 @@ namespace Engine.Audio.Components
         public void Stop()
         {
             if (_sourceId == -1) return;
+            if (!AL.IsSource(_sourceId))
+            {
+                _sourceId = -1;
+                return;
+            }
+            try
+            {
+                Log.Information($"[AudioSource] Stop: entity={Entity?.Name}, sourceId={_sourceId}\nCaller:\n{Environment.StackTrace}");
+            }
+            catch
+            {
+                Log.Information($"[AudioSource] Stop: entity={Entity?.Name}, sourceId={_sourceId}");
+            }
             
             // Vérifier que la source est toujours valide avant d'interagir avec
             if (!AL.IsSource(_sourceId))
@@ -585,9 +644,19 @@ namespace Engine.Audio.Components
             }
 
             AL.SourceStop(_sourceId);
+            var err = AL.GetError();
+            if (err != ALError.NoError)
+            {
+                Log.Warning($"[AudioSource] AL.Error after SourceStop: {err}");
+            }
 
             // Reset playback position to beginning
             AL.Source(_sourceId, ALSourcef.SecOffset, 0f);
+            err = AL.GetError();
+            if (err != ALError.NoError)
+            {
+                Log.Warning($"[AudioSource] AL.Error after Set SecOffset: {err}");
+            }
 
             // Stop streaming if it's a streaming clip
             if (_streamingClip != null)
@@ -596,16 +665,30 @@ namespace Engine.Audio.Components
 
                 // Ensure OpenAL source is rewound and has no queued buffers to avoid
                 // weird resumed-state when restarting streaming playback.
-                try
-                {
-                    if (AL.IsSource(_sourceId))
+                    try
                     {
-                        AL.SourceRewind(_sourceId);
-                        AL.Source(_sourceId, ALSourcei.Buffer, 0);
-                        AL.Source(_sourceId, ALSourcef.SecOffset, 0f);
+                        if (AL.IsSource(_sourceId))
+                        {
+                            AL.SourceRewind(_sourceId);
+                            var err2 = AL.GetError();
+                            if (err2 != ALError.NoError)
+                                Log.Warning($"[AudioSource] AL.Error after SourceRewind: {err2}");
+
+                            AL.Source(_sourceId, ALSourcei.Buffer, 0);
+                            err2 = AL.GetError();
+                            if (err2 != ALError.NoError)
+                                Log.Warning($"[AudioSource] AL.Error after unassign Buffer: {err2}");
+
+                            AL.Source(_sourceId, ALSourcef.SecOffset, 0f);
+                            err2 = AL.GetError();
+                            if (err2 != ALError.NoError)
+                                Log.Warning($"[AudioSource] AL.Error after resetting offset: {err2}");
+                        }
                     }
-                }
-                catch { }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "[AudioSource] Exception during Stop cleanup");
+                    }
             }
 
             _isPlaying = false;
@@ -808,7 +891,7 @@ namespace Engine.Audio.Components
                 // Find the first enabled filter and apply it
                 // Note: OpenAL only supports one direct filter per source
                 // If multiple filters are needed, they should be combined or prioritized
-                var activeFilter = Filters.FirstOrDefault(f => f.Enabled);
+                var activeFilter = Filters?.FirstOrDefault(f => f.Enabled);
                 if (activeFilter != null && activeFilter.FilterHandle.IsValid)
                 {
                     Engine.Audio.Effects.AudioEfxBackend.Instance.AttachDirectFilterToSource(_sourceId, activeFilter.FilterHandle);
@@ -834,6 +917,7 @@ namespace Engine.Audio.Components
         /// </summary>
         private void ClearFilters()
         {
+            if (Filters == null) return;
             foreach (var filter in Filters.ToArray())
             {
                 AudioSourceFilterExtensions.DestroyFilterHandle(filter);

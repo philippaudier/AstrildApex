@@ -20,13 +20,20 @@ namespace Engine.Rendering
         private ShaderProgram? _shader;
         private uint _cubemapTexture;
         private PMREMGenerator? _pmremGen;
+        // Cache generated PMREM results per source cubemap GUID (for TextureCache-loaded KTX files)
+        // CRITICAL: Use GUID instead of handle because TextureCache may reuse handles after eviction
+        private static readonly System.Collections.Generic.Dictionary<Guid, (uint prefiltered, uint irradiance, float maxLod)> _pmremCacheByGuid = new();
+        // Cache generated PMREM results per handle (for runtime-generated cubemaps like equirectangular/six-sided)
+        private static readonly System.Collections.Generic.Dictionary<uint, (uint prefiltered, uint irradiance, float maxLod)> _pmremCacheByHandle = new();
         private Guid _cubemapTextureGuid = Guid.Empty; // Track GUID to check if texture is still pending
+        private Guid _lastPanoramicTextureGuid = Guid.Empty; // Track the last panoramic texture GUID to detect changes
 
         // Public static handles for global IBL resources (can be bound by MaterialRuntime)
         public static uint IrradianceMap = 0;
         public static uint PrefilteredEnvMap = 0;
         public static uint BRDFLUTTexture = 0;
         public static float PrefilterMaxLod = 6.0f; // Maximum mipmap level for prefiltered environment
+        private uint _lastIBLCubemapHandle = 0; // Track the cubemap handle for which IBL was last assigned for THIS instance
         private string? _currentEquirectangularPath = null;
         private readonly List<System.Runtime.InteropServices.GCHandle> _textureHandles = new();
         // Logging state to avoid spamming the console each frame
@@ -86,6 +93,13 @@ namespace Engine.Rendering
         public SkyboxRenderer()
         {
             Initialize();
+            try
+            {
+                // Subscribe to texture upload completion so we can re-assign IBL as soon as
+                // a KTX cubemap finishes uploading/creating its GL handle.
+                Engine.Rendering.TextureCache.TextureUploaded += OnTextureUploaded;
+            }
+            catch { }
         }
 
         private void Initialize()
@@ -156,6 +170,140 @@ namespace Engine.Rendering
             }
             // PMREM generator (optional - used when KTX lacks prefiltered mipmaps)
             try { _pmremGen = new PMREMGenerator(); } catch { _pmremGen = null; }
+        }
+
+        /// <summary>
+        /// Reset IBL cache and force regeneration on next skybox render.
+        /// Call this when switching scenes or when IBL needs to be refreshed.
+        /// </summary>
+        public void ResetIBLCache()
+        {
+            // Reset the tracked GUID so the next skybox render will regenerate IBL
+            _cubemapTextureGuid = Guid.Empty;
+            _lastPanoramicTextureGuid = Guid.Empty;
+            _lastIBLCubemapHandle = 0; // Reset the last IBL cubemap tracking
+            _currentEquirectangularPath = null; // Force reload of HDR
+
+            // Clear PMREM caches to force regeneration
+            _pmremCacheByGuid.Clear();
+            _pmremCacheByHandle.Clear();
+
+            // Reset static IBL resources to fallback values
+            IrradianceMap = 0;
+            PrefilteredEnvMap = 0;
+            PrefilterMaxLod = 6.0f;
+
+            // Reset logging state
+            _lastLoggedCubemapHandle = 0;
+            _lastLoggedKtxPath = null;
+            _ktxPendingLogged = false;
+
+            try { Engine.Utils.DebugLogger.Log("[SkyboxRenderer] IBL cache reset - will regenerate on next skybox render"); } catch { }
+        }
+
+        /// <summary>
+        /// Ensure IBL resources are assigned from the current cubemap immediately.
+        /// This forces assignment of static IBL handles (IrradianceMap/PrefilteredEnvMap)
+        /// so that material binding can use IBL on the very next draw calls.
+        /// Safe to call from the GL thread when the cubemap handle is valid.
+        /// </summary>
+        public void EnsureIBL()
+        {
+            try
+            {
+                UpdateIBLFromCurrentCubemap();
+            }
+            catch (Exception)
+            {
+                // swallow - this is best-effort
+            }
+        }
+
+        /// <summary>
+        /// Load a skybox material and assign its cubemap without rendering.
+        /// This is useful when you need to update IBL resources immediately after scene load
+        /// without waiting for the first render frame.
+        /// </summary>
+        public void LoadFromMaterial(Engine.Assets.SkyboxMaterialAsset skyboxMaterial)
+        {
+            if (skyboxMaterial == null) return;
+
+            try
+            {
+                switch (skyboxMaterial.Type)
+                {
+                    case Engine.Assets.SkyboxType.Cubemap:
+                        // Load cubemap texture if specified
+                        if (skyboxMaterial.CubemapTexture.HasValue && skyboxMaterial.CubemapTexture.Value != Guid.Empty)
+                        {
+                            // Try to get texture path from asset database
+                            if (Engine.Assets.AssetDatabase.TryGet(skyboxMaterial.CubemapTexture.Value, out var textureRecord))
+                            {
+                                if (textureRecord.Path.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Load HDR as cubemap
+                                    LoadHDREquirectangular(textureRecord.Path, skyboxMaterial.CubemapRotation, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
+                                }
+                                else if (textureRecord.Path.EndsWith(".ktx", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Load KTX cubemap via TextureCache
+                                    int handle = TextureCache.GetOrLoad(skyboxMaterial.CubemapTexture.Value, guid => {
+                                        if (Engine.Assets.AssetDatabase.TryGet(guid, out var r)) return r.Path;
+                                        return null;
+                                    });
+
+                                    if (handle != TextureCache.White1x1)
+                                    {
+                                        // Clean up old texture if we created it
+                                        if (_cubemapTexture != 0 && !string.IsNullOrEmpty(_currentEquirectangularPath))
+                                        {
+                                            GL.DeleteTexture(_cubemapTexture);
+                                        }
+
+                                        _cubemapTexture = (uint)handle;
+                                        _cubemapTextureGuid = skyboxMaterial.CubemapTexture.Value;
+                                        _currentEquirectangularPath = null; // Mark as TextureCache-managed
+
+                                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] LoadFromMaterial: Loaded KTX cubemap handle={handle} path={textureRecord.Path}"); } catch { }
+
+                                        // NOTE: IBL generation happens in RenderCubemap() on first render
+                                        // Don't try to generate IBL here - OpenGL context may not be ready yet
+                                    }
+                                }
+                            }
+                        }
+                        break;
+
+                    case Engine.Assets.SkyboxType.Procedural:
+                        // For procedural skyboxes, create a minimal cubemap if needed
+                        if (_cubemapTexture == 0)
+                        {
+                            _cubemapTexture = (uint)GL.GenTexture();
+                            GL.BindTexture(TextureTarget.TextureCubeMap, (int)_cubemapTexture);
+
+                            // Create minimal 1x1 faces
+                            byte[] pixel = { 128, 128, 128 };
+                            for (int i = 0; i < 6; i++)
+                            {
+                                var target = TextureTarget.TextureCubeMapPositiveX + i;
+                                GL.TexImage2D(target, 0, PixelInternalFormat.Rgb, 1, 1, 0,
+                                    PixelFormat.Rgb, PixelType.UnsignedByte, pixel);
+                            }
+
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                            GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                            GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] LoadFromMaterial failed: {ex.Message}"); } catch { }
+            }
         }
 
         /// <summary>
@@ -478,7 +626,73 @@ namespace Engine.Rendering
                 }
             }
         }
-        
+
+        /// <summary>
+        /// Update IBL resources after skybox rendering. Simple and robust approach.
+        /// </summary>
+        private void UpdateIBLFromCurrentCubemap()
+        {
+            // SIMPLE APPROACH: If we have a valid cubemap texture, use it for IBL
+            // This works regardless of how the cubemap was loaded (KTX, HDR, procedural, etc.)
+
+            if (_cubemapTexture == 0 || _cubemapTexture == (uint)TextureCache.White1x1)
+            {
+                // No valid cubemap yet
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] No valid cubemap for IBL (_cubemapTexture={_cubemapTexture})"); } catch { }
+                return;
+            }
+
+            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] UpdateIBL: handle={_cubemapTexture}, GUID={_cubemapTextureGuid}"); } catch { }
+
+            // Check if we already have cached IBL for this texture
+            bool hasCachedIBL = _cubemapTextureGuid != Guid.Empty && _pmremCacheByGuid.ContainsKey(_cubemapTextureGuid);
+
+            if (hasCachedIBL)
+            {
+                // Use cached IBL
+                var cached = _pmremCacheByGuid[_cubemapTextureGuid];
+                if (cached.irradiance != 0) IrradianceMap = cached.irradiance; else IrradianceMap = _cubemapTexture;
+                if (cached.prefiltered != 0) { PrefilteredEnvMap = cached.prefiltered; PrefilterMaxLod = cached.maxLod; }
+
+                // Track that we've assigned IBL for this cubemap
+                _lastIBLCubemapHandle = _cubemapTexture;
+
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] IBL from cache: Irr={IrradianceMap}, Pref={PrefilteredEnvMap}"); } catch { }
+                return;
+            }
+
+            // CRITICAL FIX: Check if IBL is already assigned for THIS specific cubemap
+            // Don't overwrite if we've already processed this cubemap - preserves properly generated PMREM maps
+            bool iblAlreadyAssignedForThisCubemap = (IrradianceMap != 0 && PrefilteredEnvMap != 0 && _lastIBLCubemapHandle == _cubemapTexture);
+
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] UpdateIBL check: Irr={IrradianceMap}, Pref={PrefilteredEnvMap}, _lastHandle={_lastIBLCubemapHandle}, _cubemap={_cubemapTexture}, alreadyAssigned={iblAlreadyAssignedForThisCubemap}"); } catch { }
+
+            if (iblAlreadyAssignedForThisCubemap)
+            {
+                // IBL is already assigned for this cubemap - don't overwrite. This preserves properly generated irradiance/prefiltered maps.
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] ✓ IBL already assigned for cubemap {_cubemapTexture}: Irr={IrradianceMap}, Pref={PrefilteredEnvMap}, SKIPPING update"); } catch { }
+                return;
+            }
+
+            // No cache and no assignment yet - assign cubemap directly for IBL (simple fallback)
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] ✗✗✗ WARNING: Assigning RAW CUBEMAP as irradiance (this will show skybox texture on matte surfaces!)"); } catch { }
+            IrradianceMap = _cubemapTexture;
+            PrefilteredEnvMap = _cubemapTexture;
+            // Ensure we always have a valid BRDF LUT fallback
+            BRDFLUTTexture = (uint)Engine.Rendering.TextureCache.White1x1;
+
+            // Set reasonable defaults for prefilter LOD if not set
+            if (PrefilterMaxLod <= 0.0f)
+            {
+                PrefilterMaxLod = 6.0f;
+            }
+
+            // Track that we've assigned IBL for this cubemap
+            _lastIBLCubemapHandle = _cubemapTexture;
+
+            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] IBL assigned (fallback to raw cubemap): Irr={IrradianceMap}, Pref={PrefilteredEnvMap}, MaxLOD={PrefilterMaxLod}"); } catch { }
+        }
+
         /// <summary>
         /// Render skybox using a SkyboxMaterial (no extra tint/exposure)
         /// </summary>
@@ -656,6 +870,9 @@ namespace Engine.Rendering
             // Restore normal depth state
             GL.DepthMask(true);
             GL.DepthFunc(DepthFunction.Less);
+
+            // CRITICAL: Update IBL after rendering skybox
+            UpdateIBLFromCurrentCubemap();
             }
             catch (Exception)
             {
@@ -676,6 +893,7 @@ namespace Engine.Rendering
         
         private void RenderCubemap(Matrix4 view, Matrix4 projection, Engine.Assets.SkyboxMaterialAsset skyboxMaterial, Vector3 tintMul, float exposureMul, uint entityId = 0)
         {
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] RenderCubemap called, GUID={skyboxMaterial.CubemapTexture}"); } catch { }
             var tint = new Vector3(skyboxMaterial.CubemapTint[0], skyboxMaterial.CubemapTint[1], skyboxMaterial.CubemapTint[2]);
 
             try
@@ -704,10 +922,21 @@ namespace Engine.Rendering
                                     return null;
                                 });
 
+                                // CRITICAL FIX: Detect if texture transitioned from pending (White1x1) to loaded
+                                // This happens after scene load when textures finish uploading asynchronously
+                                bool wasPending = (_cubemapTexture == (uint)TextureCache.White1x1 || _cubemapTexture == 0);
+                                bool nowLoaded = (handle != TextureCache.White1x1);
+                                bool justLoaded = wasPending && nowLoaded;
+
                                 if (handle != TextureCache.White1x1)
                                 {
-                                    // Only reassign if the handle is different (avoid deleting/reassigning every frame)
-                                    if (_cubemapTexture != (uint)handle)
+                                    // CRITICAL FIX: Check GUID instead of handle to detect skybox changes
+                                    // TextureCache may return different handles for different GUIDs OR reuse handles after cache eviction
+                                    // We must regenerate IBL whenever the GUID changes, regardless of handle value
+                                    // ALSO force update if texture just finished loading (justLoaded)
+                                    bool skyboxChanged = (_cubemapTextureGuid != skyboxMaterial.CubemapTexture.Value) || justLoaded;
+
+                                    if (skyboxChanged)
                                     {
                                         // IMPORTANT: Clean up old texture ONLY if we created it (equirectangular conversions)
                                         // TextureCache-managed textures should NOT be deleted
@@ -720,70 +949,125 @@ namespace Engine.Rendering
                                         _cubemapTextureGuid = skyboxMaterial.CubemapTexture.Value; // Store GUID to check pending status
                                         _currentEquirectangularPath = null; // Mark as TextureCache-managed (don't delete on cleanup)
 
-                                        // Expose IBL resources. Prefer to use prefiltered/irradiance maps
-                                        // If the assigned KTX lacks mipmaps/prefilter, generate PMREM on GPU
-                                        bool usedPMREM = false;
-                                        try
-                                        {
-                                            GL.BindTexture(TextureTarget.TextureCubeMap, (int)_cubemapTexture);
-                                            GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out int cubeSize);
-                                            GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out int mip1W);
-                                            if (mip1W == 0 && _pmremGen != null)
-                                            {
-                                                // No extra mips: generate irradiance & prefiltered environment
-                                                // Use 64x64 for better quality (eliminates white spots on matte materials)
-                                                var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
-                                                var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize > 0 ? cubeSize : 512 );
-                                                if (irr != 0) IrradianceMap = irr;
-                                                else IrradianceMap = _cubemapTexture; 
-                                                if (pre != 0) PrefilteredEnvMap = pre;
-                                                else PrefilteredEnvMap = _cubemapTexture;
-                                                usedPMREM = true;
-                                                // Set prefilter max LOD
-                                                if (pre != 0)
-                                                {
-                                                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)pre);
-                                                    // determine mip count
-                                                    int mipCount = 0;
-                                                    while (true)
-                                                    {
-                                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
-                                                        if (wval <= 0) break;
-                                                        mipCount++;
-                                                    }
-                                                    PrefilterMaxLod = Math.Max(0.0f, mipCount - 1);
-                                                }
-                                            }
-                                        }
-                                        catch { }
-                                        finally { GL.BindTexture(TextureTarget.TextureCubeMap, 0); }
-
-                                        if (!usedPMREM)
-                                        {
-                                            IrradianceMap = _cubemapTexture;
-                                            PrefilteredEnvMap = _cubemapTexture;
-                                        }
-                                        BRDFLUTTexture = (uint)Engine.Rendering.TextureCache.White1x1;
-
-                                                // Calculate max LOD based on KTX mipmap levels (assume reasonable default)
-                                                // Only set a default if PrefilterMaxLod hasn't been set by PMREM generation above.
-                                                try {
-                                                    if (PrefilterMaxLod <= 0.0f) {
-                                                        var prev = PrefilterMaxLod;
-                                                        PrefilterMaxLod = 6.0f; // KTX files from cmgen typically have 6-7 mip levels
-                                                        try { Console.WriteLine($"[SkyboxRenderer] PrefilterMaxLod was {prev}, defaulting to {PrefilterMaxLod}"); } catch { }
-                                                    } else {
-                                                        try { Console.WriteLine($"[SkyboxRenderer] PrefilterMaxLod preserved at {PrefilterMaxLod}"); } catch { }
-                                                    }
-                                                } catch { }
+                                        // CRITICAL: Reset IBL tracking so it gets regenerated for the new skybox
+                                        _lastIBLCubemapHandle = 0;
 
                                         // Log the assignment
                                         _lastLoggedCubemapHandle = _cubemapTexture;
                                         _lastLoggedKtxPath = textureRecord.Path;
                                         _ktxPendingLogged = false;
-                                        try { Console.WriteLine($"[SkyboxRenderer] Assigned KTX cubemap handle={handle} path={textureRecord.Path}"); } catch { }
+                                        string reason = justLoaded ? "just loaded" : "GUID changed";
+                                        try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Skybox changed ({reason}): handle={handle} path={textureRecord.Path}"); } catch { }
                                     }
-                                    // ELSE: Same handle, already assigned, IBL already set - do nothing
+
+                                    // CRITICAL FIX: Always update IBL resources, not just when skybox changes!
+                                    // After ResetIBLCache(), IrradianceMap/PrefilteredEnvMap are reset to 0 even if GUID hasn't changed
+                                    // We must reassign IBL every frame to ensure it's always available for rendering
+                                    bool usedPMREM = false;
+                                    Guid srcKey = skyboxMaterial.CubemapTexture.Value; // Use GUID as cache key for KTX files
+                                    try
+                                    {
+                                        GL.BindTexture(TextureTarget.TextureCubeMap, (int)_cubemapTexture);
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out int cubeSize);
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 1, GetTextureParameter.TextureWidth, out int mip1W);
+
+                                        // DEBUG: Log cubemap info
+                                        try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Cubemap info: handle={_cubemapTexture}, size={cubeSize}, mip1W={mip1W}, cacheHas={_pmremCacheByGuid.ContainsKey(srcKey)}"); } catch { }
+
+                                        // If we already generated PMREM for this source GUID, reuse cached handles
+                                        if (_pmremCacheByGuid.TryGetValue(srcKey, out var cached))
+                                        {
+                                            if (cached.irradiance != 0) IrradianceMap = cached.irradiance; else IrradianceMap = _cubemapTexture;
+                                            if (cached.prefiltered != 0) { PrefilteredEnvMap = cached.prefiltered; PrefilterMaxLod = cached.maxLod; }
+                                            usedPMREM = (cached.prefiltered != 0 || cached.irradiance != 0);
+                                        }
+                                        else if (mip1W == 0 && _pmremGen != null)
+                                        {
+                                            // No extra mips: generate irradiance & prefiltered environment (slow)
+                                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
+                                            var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize > 0 ? cubeSize : 512 );
+                                            if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
+                                            if (pre != 0) PrefilteredEnvMap = pre; else PrefilteredEnvMap = _cubemapTexture;
+                                            usedPMREM = true;
+
+                                            // Set prefilter max LOD and cache the generated handles
+                                            float maxLod = PrefilterMaxLod;
+                                            if (pre != 0)
+                                            {
+                                                GL.BindTexture(TextureTarget.TextureCubeMap, (int)pre);
+                                                int mipCount = 0;
+                                                while (true)
+                                                {
+                                                    GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
+                                                    if (wval <= 0) break;
+                                                    mipCount++;
+                                                }
+                                                maxLod = Math.Max(0.0f, mipCount - 1);
+                                                PrefilterMaxLod = maxLod;
+                                            }
+                                            try { _pmremCacheByGuid[srcKey] = (pre, irr, maxLod); } catch { }
+                                        }
+                                        else if (mip1W > 0)
+                                        {
+                                            // KTX has mipmaps. Use the cubemap as the prefiltered env map,
+                                            // but still generate a proper low-frequency irradiance map
+                                            // (diffuse) if we have a PMREM generator. Binding the raw
+                                            // cubemap as irradiance causes visible skybox features to
+                                            // appear in diffuse lighting on very matte surfaces.
+                                            PrefilteredEnvMap = _cubemapTexture;
+
+                                            if (_pmremGen != null)
+                                            {
+                                                try
+                                                {
+                                                    var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 32);
+                                                    if (irr != 0)
+                                                    {
+                                                        IrradianceMap = irr;
+                                                    }
+                                                    else
+                                                    {
+                                                        // Fallback to using the cubemap directly
+                                                        IrradianceMap = _cubemapTexture;
+                                                    }
+                                                }
+                                                catch
+                                                {
+                                                    IrradianceMap = _cubemapTexture;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                // No PMREM generator available: fall back to cubemap (suboptimal)
+                                                IrradianceMap = _cubemapTexture;
+                                            }
+                                        }
+                                    }
+                                    catch { }
+                                    finally { GL.BindTexture(TextureTarget.TextureCubeMap, 0); }
+
+                                    if (!usedPMREM)
+                                    {
+                                        IrradianceMap = _cubemapTexture;
+                                        PrefilteredEnvMap = _cubemapTexture;
+                                    }
+                                    BRDFLUTTexture = (uint)Engine.Rendering.TextureCache.White1x1;
+
+                                    // Calculate max LOD based on KTX mipmap levels (assume reasonable default)
+                                    // Only set a default if PrefilterMaxLod hasn't been set by PMREM generation above.
+                                    try {
+                                        if (PrefilterMaxLod <= 0.0f) {
+                                            var prev = PrefilterMaxLod;
+                                            PrefilterMaxLod = 6.0f; // KTX files from cmgen typically have 6-7 mip levels
+                                            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] PrefilterMaxLod was {prev}, defaulting to {PrefilterMaxLod}"); } catch { }
+                                        }
+                                    } catch { }
+
+                                    // Track that we've assigned IBL for this cubemap
+                                    _lastIBLCubemapHandle = _cubemapTexture;
+
+                                    // CRITICAL DEBUG: Log IBL assignment to track if it's actually being set
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] ✓✓✓ RenderCubemap IBL ASSIGNED: Irr={IrradianceMap}, Pref={PrefilteredEnvMap}, MaxLOD={PrefilterMaxLod}, handle={_cubemapTexture}"); } catch { }
                                 }
                                 else
                                 {
@@ -803,7 +1087,7 @@ namespace Engine.Rendering
                                     {
                                         _ktxPendingLogged = true;
                                         _lastLoggedKtxPath = textureRecord.Path;
-                                        try { Console.WriteLine($"[SkyboxRenderer] KTX cubemap pending or invalid: {textureRecord.Path}"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] KTX cubemap pending or invalid: {textureRecord.Path}"); } catch { }
                                     }
                                 }
                             }
@@ -837,6 +1121,9 @@ namespace Engine.Rendering
                 float modExposure = skyboxMaterial.CubemapExposure * Math.Max(0.0f, exposureMul);
 
                 Render(view, projection, modTint, modExposure, entityId);
+
+                // CRITICAL: Update IBL after rendering skybox
+                UpdateIBLFromCurrentCubemap();
             }
             catch (Exception)
             {
@@ -872,14 +1159,14 @@ namespace Engine.Rendering
                 var hdrs = System.IO.Directory.GetFiles(dir, "*.hdr", System.IO.SearchOption.TopDirectoryOnly);
                 if (hdrs.Length > 0)
                 {
-                    try { Console.WriteLine($"[SkyboxRenderer] Found .hdr fallback for KTX: {hdrs[0]}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Found .hdr fallback for KTX: {hdrs[0]}"); } catch { }
                     LoadHDREquirectangular(hdrs[0], 0.0f, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
                     return true;
                 }
                 var exrs = System.IO.Directory.GetFiles(dir, "*.exr", System.IO.SearchOption.TopDirectoryOnly);
                 if (exrs.Length > 0)
                 {
-                    try { Console.WriteLine($"[SkyboxRenderer] Found .exr fallback for KTX: {exrs[0]}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Found .exr fallback for KTX: {exrs[0]}"); } catch { }
                     LoadHDREquirectangular(exrs[0], 0.0f, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
                     return true;
                 }
@@ -889,12 +1176,12 @@ namespace Engine.Rendering
                 if (!string.IsNullOrEmpty(parent) && System.IO.Directory.Exists(parent))
                 {
                     var parentHdrs = System.IO.Directory.GetFiles(parent, "*.hdr", System.IO.SearchOption.TopDirectoryOnly);
-                    if (parentHdrs.Length > 0)
-                    {
-                        try { Console.WriteLine($"[SkyboxRenderer] Found parent .hdr fallback for KTX: {parentHdrs[0]}"); } catch { }
-                        LoadHDREquirectangular(parentHdrs[0], 0.0f, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
-                        return true;
-                    }
+                        if (parentHdrs.Length > 0)
+                        {
+                            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Found parent .hdr fallback for KTX: {parentHdrs[0]}"); } catch { }
+                            LoadHDREquirectangular(parentHdrs[0], 0.0f, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
+                            return true;
+                        }
                 }
 
                 // No HDR/EXR found; try PNG faces (*.png) if present
@@ -918,7 +1205,7 @@ namespace Engine.Rendering
 
                     if (candidateList.Count == 6)
                     {
-                        try { Console.WriteLine($"[SkyboxRenderer] Found 6 PNG faces fallback for KTX in {dir}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Found 6 PNG faces fallback for KTX in {dir}"); } catch { }
                         // Use the 6 PNGs to create a cubemap by loading them via TextureCache and building a cubemap
                         // We can call a helper to load six-sided from files to a cubemap
                         var tGuidList = new List<Guid>();
@@ -971,13 +1258,13 @@ namespace Engine.Rendering
                                 _currentEquirectangularPath = null; // mark as TextureCache-managed equivalence
                                 IrradianceMap = _cubemapTexture; PrefilteredEnvMap = _cubemapTexture; BRDFLUTTexture = (uint)TextureCache.White1x1;
                                 PrefilterMaxLod = 6.0f;
-                                try { Console.WriteLine($"[SkyboxRenderer] Loaded fallback six-sided cubemap from PNG faces in {dir}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Loaded fallback six-sided cubemap from PNG faces in {dir}"); } catch { }
                                 return true;
                             }
                         }
                         catch (Exception ex)
                         {
-                            try { Console.WriteLine($"[SkyboxRenderer] Failed to build cubemap from PNG faces: {ex.Message}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Failed to build cubemap from PNG faces: {ex.Message}"); } catch { }
                         }
                     }
                 }
@@ -991,7 +1278,7 @@ namespace Engine.Rendering
                         if (!string.Equals(rec.Type, "TextureHDR", StringComparison.OrdinalIgnoreCase)) continue;
                         if (rec.Path.Contains(baseFolder, StringComparison.OrdinalIgnoreCase))
                         {
-                            try { Console.WriteLine($"[SkyboxRenderer] Found HDR in AssetDatabase by name match: {rec.Path}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Found HDR in AssetDatabase by name match: {rec.Path}"); } catch { }
                             LoadHDREquirectangular(rec.Path, 0.0f, PanoramicMapping.Latitude_Longitude_Layout, false, PanoramicImageType.Degrees360, 1.0f);
                             _ktxFallbackTried.Add(ktxPath);
                             return true;
@@ -1001,7 +1288,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                try { Console.WriteLine($"[SkyboxRenderer] TryLoadFallbackFromKtxFolder exception: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] TryLoadFallbackFromKtxFolder exception: {ex.Message}"); } catch { }
             }
             return false;
         }
@@ -1041,6 +1328,9 @@ namespace Engine.Rendering
                 var modTint = tint * tintMul;
                 float modExposure = skyboxMaterial.SixSidedExposure * Math.Max(0.0f, exposureMul);
                 Render(view, projection, modTint, modExposure, entityId);
+
+                // CRITICAL: Update IBL after rendering skybox
+                UpdateIBLFromCurrentCubemap();
             }
             catch (Exception)
             {
@@ -1050,6 +1340,7 @@ namespace Engine.Rendering
                 {
                     CreateProceduralSkybox(Vector3.One * 0.6f, Vector3.One * 0.2f);
                     Render(view, projection, tint * tintMul, 1.0f * exposureMul, entityId);
+                    UpdateIBLFromCurrentCubemap();
                 }
                 catch
                 {
@@ -1066,6 +1357,16 @@ namespace Engine.Rendering
                 // Check if we have a panoramic texture specified
                 if (skyboxMaterial.PanoramicTexture.HasValue && skyboxMaterial.PanoramicTexture.Value != Guid.Empty)
                 {
+                    // CRITICAL: Detect panoramic texture change and reset IBL
+                    bool panoramicChanged = (_lastPanoramicTextureGuid != skyboxMaterial.PanoramicTexture.Value);
+                    if (panoramicChanged)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Panoramic texture changed! Old GUID={_lastPanoramicTextureGuid}, New GUID={skyboxMaterial.PanoramicTexture.Value}"); } catch { }
+                        _lastPanoramicTextureGuid = skyboxMaterial.PanoramicTexture.Value;
+                        _lastIBLCubemapHandle = 0; // Force IBL regeneration
+                        _currentEquirectangularPath = null; // Force reload of HDR
+                    }
+
                     // Try to get texture path from asset database
                     if (Engine.Assets.AssetDatabase.TryGet(skyboxMaterial.PanoramicTexture.Value, out var textureRecord))
                     {
@@ -1095,9 +1396,13 @@ namespace Engine.Rendering
                     CreateProceduralSkybox(Vector3.One * 0.8f, Vector3.One * 0.4f);
                 }
 
+
                 var modTint = tint * tintMul;
                 float modExposure = skyboxMaterial.PanoramicExposure * Math.Max(0.0f, exposureMul);
                 Render(view, projection, modTint, modExposure, entityId);
+
+                // CRITICAL: Update IBL after rendering skybox (will skip if already assigned above)
+                UpdateIBLFromCurrentCubemap();
             }
             catch (Exception)
             {
@@ -1107,6 +1412,7 @@ namespace Engine.Rendering
                 {
                     CreateProceduralSkybox(Vector3.One * 0.8f, Vector3.One * 0.4f);
                     Render(view, projection, tint * tintMul, 1.0f * exposureMul, entityId);
+                    UpdateIBLFromCurrentCubemap();
                 }
                 catch
                 {
@@ -1162,7 +1468,7 @@ namespace Engine.Rendering
         {
             if (textureGuids.Length != 6)
             {
-                Console.WriteLine("[SkyboxRenderer] LoadSixSidedCubemap: Expected 6 textures, got " + textureGuids.Length);
+                try { Engine.Utils.DebugLogger.Log("[SkyboxRenderer] LoadSixSidedCubemap: Expected 6 textures, got " + textureGuids.Length); } catch { }
                 return;
             }
 
@@ -1284,22 +1590,33 @@ namespace Engine.Rendering
                     if (_pmremGen != null)
                     {
                         try {
-                            // Use 64x64 for better quality (eliminates white spots on matte materials)
-                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
-                            var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, width);
-                            if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
-                            if (pre != 0)
+                            uint srcKey = (uint)cubemap;
+                            if (_pmremCacheByHandle.TryGetValue(srcKey, out var cached))
                             {
-                                PrefilteredEnvMap = pre;
-                                // determine mip count
-                                int mipCount = 0;
-                                while (true)
+                                if (cached.irradiance != 0) IrradianceMap = cached.irradiance; else IrradianceMap = _cubemapTexture;
+                                if (cached.prefiltered != 0) { PrefilteredEnvMap = cached.prefiltered; PrefilterMaxLod = cached.maxLod; }
+                            }
+                            else
+                            {
+                                // Use 64x64 for better quality (eliminates white spots on matte materials)
+                                var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
+                                var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, width);
+                                if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
+                                if (pre != 0)
                                 {
-                                    GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
-                                    if (wval <= 0) break;
-                                    mipCount++;
+                                    PrefilteredEnvMap = pre;
+                                    // determine mip count
+                                    int mipCount = 0;
+                                    while (true)
+                                    {
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
+                                        if (wval <= 0) break;
+                                        mipCount++;
+                                    }
+                                    var maxLod = Math.Max(0.0f, mipCount - 1);
+                                    PrefilterMaxLod = maxLod;
+                                    try { _pmremCacheByHandle[srcKey] = (pre, irr, maxLod); } catch { }
                                 }
-                                PrefilterMaxLod = Math.Max(0.0f, mipCount - 1);
                             }
                         } catch { }
                     }
@@ -1307,11 +1624,11 @@ namespace Engine.Rendering
                     GL.BindTexture(TextureTarget.TextureCubeMap, 0);
                 } catch { }
 
-                try { Console.WriteLine($"[SkyboxRenderer] Created six-sided cubemap: {width}x{height} PrefilterMaxLod={PrefilterMaxLod}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Created six-sided cubemap: {width}x{height} PrefilterMaxLod={PrefilterMaxLod}"); } catch { }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SkyboxRenderer] Failed to load six-sided cubemap: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] Failed to load six-sided cubemap: {ex.Message}"); } catch { }
 
                 // Fallback to procedural
                 if (_cubemapTexture == 0)
@@ -1337,8 +1654,11 @@ namespace Engine.Rendering
             {
                 // If we already loaded this exact HDR into the current cubemap with same parameters, skip regeneration.
                 var key = hdrTexturePath + "|rot:" + rotationDeg.ToString("F2") + "|map:" + mapping.ToString() + "|mirror:" + (mirrorOnBack ? "1" : "0") + "|type:" + imageType.ToString() + "|exp:" + exposure.ToString("F2");
-                if (!string.IsNullOrEmpty(_currentEquirectangularPath) && string.Equals(_currentEquirectangularPath, key, StringComparison.OrdinalIgnoreCase) && _cubemapTexture != 0)
+                    if (!string.IsNullOrEmpty(_currentEquirectangularPath) && string.Equals(_currentEquirectangularPath, key, StringComparison.OrdinalIgnoreCase) && _cubemapTexture != 0)
                 {
+                    // Already loaded - but ensure _lastIBLCubemapHandle is set to prevent UpdateIBLFromCurrentCubemap() from overwriting
+                    _lastIBLCubemapHandle = _cubemapTexture;
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] HDR already loaded, cubemap={_cubemapTexture}, set _lastHandle={_lastIBLCubemapHandle}"); } catch { }
                     return; // already loaded
                 }
                 // Clean up existing texture ONLY if we created it ourselves (HDR conversion creates owned textures)
@@ -1379,6 +1699,12 @@ namespace Engine.Rendering
                     // remember which source produced the cubemap so we don't rebuild each frame
                     _currentEquirectangularPath = key;
 
+                    // Mark this cubemap as generated from an equirectangular HDR (no GUID)
+                    // Clear any previous KTX GUID so GUID-based caching won't interfere
+                    _cubemapTextureGuid = Guid.Empty;
+                    _lastLoggedCubemapHandle = _cubemapTexture;
+                    _lastLoggedKtxPath = hdrTexturePath;
+
                     // Generate mipmaps so we can approximate prefiltered environment by sampling LODs
                     GL.GenerateMipmap(GenerateMipmapTarget.TextureCubeMap);
                     GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
@@ -1399,26 +1725,48 @@ namespace Engine.Rendering
                     {
                         try
                         {
-                            // Use 64x64 for better quality (eliminates white spots on matte materials)
-                            var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
-                            var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize);
-                            if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
-                            if (pre != 0)
+                            uint srcKey = _cubemapTexture;
+                            if (_pmremCacheByHandle.TryGetValue(srcKey, out var cached))
                             {
-                                PrefilteredEnvMap = pre;
-                                // Determine mip count for pre
-                                int mipCount = 0;
-                                while (true)
-                                {
-                                    GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
-                                    if (wval <= 0) break;
-                                    mipCount++;
-                                }
-                                PrefilterMaxLod = Math.Max(0.0f, mipCount - 1);
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] Using cached IBL: irr={cached.irradiance}, pref={cached.prefiltered}, maxLod={cached.maxLod}"); } catch { }
+                                if (cached.irradiance != 0) IrradianceMap = cached.irradiance; else IrradianceMap = _cubemapTexture;
+                                if (cached.prefiltered != 0) { PrefilteredEnvMap = cached.prefiltered; PrefilterMaxLod = cached.maxLod; }
+                                // Mark that IBL has been assigned for this cubemap to prevent overwrites
+                                _lastIBLCubemapHandle = _cubemapTexture;
                             }
                             else
                             {
-                                PrefilteredEnvMap = _cubemapTexture;
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] Generating NEW IBL for cubemap {_cubemapTexture}, cubeSize={cubeSize}"); } catch { }
+                                // Use 64x64 for better quality (eliminates white spots on matte materials)
+                                var irr = _pmremGen.GenerateIrradiance(_cubemapTexture, 64);
+                                var pre = _pmremGen.GeneratePrefilteredEnv(_cubemapTexture, cubeSize);
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] Generated: irr={irr}, pre={pre}"); } catch { }
+                                if (irr != 0) IrradianceMap = irr; else IrradianceMap = _cubemapTexture;
+                                if (pre != 0)
+                                {
+                                    PrefilteredEnvMap = pre;
+                                    // Determine mip count for pre - MUST bind the texture first!
+                                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)pre);
+                                    int mipCount = 0;
+                                    while (true)
+                                    {
+                                        GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, mipCount, GetTextureParameter.TextureWidth, out int wval);
+                                        if (wval <= 0) break;
+                                        mipCount++;
+                                    }
+                                    var maxLod = Math.Max(0.0f, mipCount - 1);
+                                    PrefilterMaxLod = maxLod;
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] Prefilter mipCount={mipCount}, maxLod={maxLod}"); } catch { }
+                                    try { _pmremCacheByHandle[srcKey] = (pre, irr, maxLod); } catch { }
+                                }
+                                else
+                                {
+                                    PrefilteredEnvMap = _cubemapTexture;
+                                }
+
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[LoadHDR] Final IBL: IrradianceMap={IrradianceMap}, PrefilteredEnvMap={PrefilteredEnvMap}"); } catch { }
+                                // Mark that IBL has been assigned for this cubemap to prevent overwrites
+                                _lastIBLCubemapHandle = _cubemapTexture;
                             }
                         }
                         catch { IrradianceMap = _cubemapTexture; PrefilteredEnvMap = _cubemapTexture; }
@@ -1826,6 +2174,12 @@ namespace Engine.Rendering
 
         public void Dispose()
         {
+            try
+            {
+                Engine.Rendering.TextureCache.TextureUploaded -= OnTextureUploaded;
+            }
+            catch { }
+
             if (_vao != 0)
             {
                 GL.DeleteVertexArray(_vao);
@@ -1854,6 +2208,26 @@ namespace Engine.Rendering
 
             _shader?.Dispose();
             _shader = null;
+        }
+
+        // Callback invoked when TextureCache finishes creating a GL texture for a GUID
+        private void OnTextureUploaded(Guid guid, int glHandle)
+        {
+            try
+            {
+                // If this uploaded texture is the current skybox GUID we track, ensure IBL
+                if (guid == _cubemapTextureGuid)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[SkyboxRenderer] OnTextureUploaded: GUID={guid} handle={glHandle}"); } catch { }
+
+                    // Best-effort: update IBL immediately on the GL thread
+                    try { EnsureIBL(); } catch { }
+
+                    // Force material cache clear so next binds will pick up the new IBL handles
+                    try { MaterialRuntime.ClearGlobalCache(); } catch { }
+                }
+            }
+            catch { }
         }
 
         /// <summary>

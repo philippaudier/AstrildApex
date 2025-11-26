@@ -64,6 +64,18 @@ namespace Editor.Inspector
                     ImGui.CloseCurrentPopup();
                 }
 
+                if (ImGui.MenuItem("Depth of Field") && !globalEffects.HasEffect<DepthOfFieldEffect>())
+                {
+                    globalEffects.AddEffect<DepthOfFieldEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (ImGui.MenuItem("Motion Blur") && !globalEffects.HasEffect<MotionBlurEffect>())
+                {
+                    globalEffects.AddEffect<MotionBlurEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
                 ImGui.EndPopup();
             }
 
@@ -97,8 +109,12 @@ namespace Editor.Inspector
                     globalEffects.RemoveEffect<SSAOEffect>();
                 else if (effect is GTAOEffect)
                     globalEffects.RemoveEffect<GTAOEffect>();
-                    else if (effect is FXAAEffect)
-                        globalEffects.RemoveEffect<FXAAEffect>();
+                else if (effect is FXAAEffect)
+                    globalEffects.RemoveEffect<FXAAEffect>();
+                else if (effect is DepthOfFieldEffect)
+                    globalEffects.RemoveEffect<DepthOfFieldEffect>();
+                else if (effect is MotionBlurEffect)
+                    globalEffects.RemoveEffect<MotionBlurEffect>();
             }
 
             if (nodeOpen)
@@ -135,6 +151,14 @@ namespace Editor.Inspector
                 else if (effect is FXAAEffect fxaa)
                 {
                     DrawFXAAInspector(fxaa, index);
+                }
+                else if (effect is DepthOfFieldEffect dof)
+                {
+                    DrawDOFInspector(dof, index);
+                }
+                else if (effect is MotionBlurEffect motionBlur)
+                {
+                    DrawMotionBlurInspector(motionBlur, index);
                 }
 
                 ImGui.TreePop();
@@ -465,6 +489,249 @@ namespace Editor.Inspector
                 }
                 ImGui.Spacing();
                 ImGui.TextColored(new System.Numerics.Vector4(1, 1, 0, 1), $"Total Weight: {totalWeight:F2} (should be ~1.0)");
+            }
+        }
+
+        private static void DrawDOFInspector(DepthOfFieldEffect dof, int index)
+        {
+            ImGui.Text("Focus Parameters");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Focus distance
+            dof.FocusDistance = ImGuiHelper.SliderFloat($"Focus Distance##{index}", dof.FocusDistance, 0.1f, 100.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Distance to the focus plane\nObjects at this distance are perfectly sharp");
+            }
+
+            // Focus range
+            dof.FocusRange = ImGuiHelper.SliderFloat($"Focus Range##{index}", dof.FocusRange, 0.0f, 10.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Range around focus distance that stays sharp\n0 = only exact distance sharp, higher = larger sharp area");
+            }
+
+            // Focal length
+            dof.FocalLength = ImGuiHelper.SliderFloat($"Focal Length (mm)##{index}", dof.FocalLength, 10.0f, 200.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Camera focal length in millimeters\n24mm = wide angle, 50mm = standard, 85mm = portrait, 200mm = telephoto");
+            }
+
+            // Aperture (f-stop)
+            dof.Aperture = ImGuiHelper.SliderFloat($"Aperture (f-stop)##{index}", dof.Aperture, 1.4f, 22.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Camera aperture (f-stop)\nLower = more blur (f/1.4, f/2.8)\nHigher = less blur (f/11, f/22)");
+            }
+
+            // Max CoC
+            dof.MaxCoC = ImGuiHelper.SliderFloat($"Max Blur Radius##{index}", dof.MaxCoC, 1.0f, 50.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Maximum circle of confusion radius in pixels\nControls maximum blur amount");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Quality Settings");
+            ImGui.Spacing();
+
+            // Sample count
+            int sampleCount = dof.SampleCount;
+            if (ImGui.SliderInt($"Sample Count##{index}", ref sampleCount, 16, 128))
+                dof.SampleCount = sampleCount;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of bokeh samples\n32 = fast, 64 = balanced, 128 = ultra quality");
+            }
+
+            // Bokeh radius
+            dof.BokehRadius = ImGuiHelper.SliderFloat($"Bokeh Size##{index}", dof.BokehRadius, 1.0f, 10.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Bokeh size multiplier\nControls the size of out-of-focus highlights");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Adaptive DOF (Auto-Focus)");
+            ImGui.Spacing();
+
+            // Enable adaptive DOF checkbox
+            bool enableAdaptive = dof.EnableAdaptiveDOF;
+            if (ImGui.Checkbox($"Enable Adaptive DOF##{index}", ref enableAdaptive))
+                dof.EnableAdaptiveDOF = enableAdaptive;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Enable automatic focus adjustment\nFocus will adapt to the scene depth\n\nWARNING: Uses GL.ReadPixels which can reduce FPS significantly!");
+            }
+
+            // Performance warning if enabled
+            if (dof.EnableAdaptiveDOF)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.5f, 0.0f, 1.0f)); // Orange
+                ImGui.TextWrapped("\u26a0 PERFORMANCE WARNING: Adaptive DOF uses GPU readback which can reduce FPS by 50-70%!");
+                ImGui.PopStyleColor();
+            }
+
+            // Show adaptive parameters only when enabled
+            if (dof.EnableAdaptiveDOF)
+            {
+                ImGui.Spacing();
+                ImGui.Indent();
+
+                // Adaptation speed
+                dof.AdaptiveSpeed = ImGuiHelper.SliderFloat($"Adaptation Speed##{index}", dof.AdaptiveSpeed, 0.5f, 10.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("How fast the focus adapts to changes\n1.0 = slow and smooth\n5.0 = fast and responsive");
+                }
+
+                // Center bias
+                dof.AdaptiveCenterBias = ImGuiHelper.SliderFloat($"Center Bias##{index}", dof.AdaptiveCenterBias, 0.0f, 1.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("How much to focus on screen center\n0.0 = average full screen depth\n1.0 = only center of screen");
+                }
+
+                // Min distance
+                dof.AdaptiveMinDistance = ImGuiHelper.SliderFloat($"Min Distance##{index}", dof.AdaptiveMinDistance, 0.1f, 50.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Minimum focus distance\nPrevents focusing too close");
+                }
+
+                // Max distance
+                dof.AdaptiveMaxDistance = ImGuiHelper.SliderFloat($"Max Distance##{index}", dof.AdaptiveMaxDistance, 10.0f, 500.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Maximum focus distance\nPrevents focusing too far");
+                }
+
+                ImGui.Unindent();
+            }
+
+            // Add preset buttons for common camera setups
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Presets");
+            ImGui.Spacing();
+
+            if (ImGui.Button($"Portrait (85mm f/1.8)##{index}", new Vector2(-1, 0)))
+            {
+                dof.FocalLength = 85.0f;
+                dof.Aperture = 1.8f;
+                dof.FocusRange = 1.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Portrait photography setup\nShallow depth of field, soft background");
+            }
+
+            if (ImGui.Button($"Cinematic (50mm f/2.8)##{index}", new Vector2(-1, 0)))
+            {
+                dof.FocalLength = 50.0f;
+                dof.Aperture = 2.8f;
+                dof.FocusRange = 2.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Cinematic look\nBalanced depth of field");
+            }
+
+            if (ImGui.Button($"Landscape (24mm f/11)##{index}", new Vector2(-1, 0)))
+            {
+                dof.FocalLength = 24.0f;
+                dof.Aperture = 11.0f;
+                dof.FocusRange = 10.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Landscape photography\nDeep depth of field, everything sharp");
+            }
+
+            if (ImGui.Button($"Macro (100mm f/2.8)##{index}", new Vector2(-1, 0)))
+            {
+                dof.FocalLength = 100.0f;
+                dof.Aperture = 2.8f;
+                dof.FocusRange = 0.5f;
+                dof.FocusDistance = 2.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Macro photography\nVery shallow depth of field, close focus");
+            }
+        }
+
+        private static void DrawMotionBlurInspector(MotionBlurEffect motionBlur, int index)
+        {
+            ImGui.Text("Motion Blur Settings");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Sample count
+            int sampleCount = motionBlur.SampleCount;
+            if (ImGui.SliderInt($"Sample Count##{index}", ref sampleCount, 4, 32))
+                motionBlur.SampleCount = sampleCount;
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Number of samples along motion vector\n4 = fast/subtle, 16 = balanced, 32 = ultra quality/strong blur");
+            }
+
+            // Max blur radius
+            motionBlur.MaxBlurRadius = ImGuiHelper.SliderFloat($"Max Blur Radius##{index}", motionBlur.MaxBlurRadius, 10.0f, 100.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Maximum blur radius in pixels\nLower = subtle motion blur\nHigher = dramatic motion blur");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Info");
+            ImGui.Spacing();
+
+            ImGui.TextWrapped("Motion Blur simulates camera and object motion.");
+            ImGui.Spacing();
+            ImGui.TextWrapped("Works best with camera movement. For moving objects, a velocity buffer is needed.");
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Presets");
+            ImGui.Spacing();
+
+            if (ImGui.Button($"Subtle (8 samples)##{index}", new Vector2(-1, 0)))
+            {
+                motionBlur.SampleCount = 8;
+                motionBlur.MaxBlurRadius = 20.0f;
+                motionBlur.Intensity = 0.5f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Subtle motion blur\nGood for first-person games");
+            }
+
+            if (ImGui.Button($"Cinematic (16 samples)##{index}", new Vector2(-1, 0)))
+            {
+                motionBlur.SampleCount = 16;
+                motionBlur.MaxBlurRadius = 40.0f;
+                motionBlur.Intensity = 1.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Cinematic motion blur\nBalanced quality and performance");
+            }
+
+            if (ImGui.Button($"Extreme (32 samples)##{index}", new Vector2(-1, 0)))
+            {
+                motionBlur.SampleCount = 32;
+                motionBlur.MaxBlurRadius = 80.0f;
+                motionBlur.Intensity = 1.5f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Extreme motion blur\nVery strong effect, high quality");
             }
         }
     }

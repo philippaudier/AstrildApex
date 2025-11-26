@@ -68,8 +68,11 @@ public class GamePanelModern
             // Build camera list for selector (avoid LINQ allocations)
             _tmpCameraIds.Clear();
             _tmpCameraNames.Clear();
-            foreach (var e in scene.Entities)
+            // Utilise ImGuiListClipper pour optimiser le parcours si beaucoup d'entités
+            int entityCount = scene.Entities.Count;
+            for (int i = 0; i < entityCount; i++)
             {
+                var e = scene.Entities[i];
                 var cam = e.GetComponent<CameraComponent>();
                 if (cam == null) continue;
                 _tmpCameraIds.Add(e.Id);

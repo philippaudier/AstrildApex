@@ -13,6 +13,12 @@ namespace Engine.Serialization
     /// </summary>
     public static class ComponentSerializer
     {
+        private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            IncludeFields = true,
+            AllowTrailingCommas = true
+        };
         private static readonly Dictionary<Type, IComponentSerializer> _customSerializers = new();
 
         static ComponentSerializer()
@@ -208,31 +214,31 @@ namespace Engine.Serialization
             }
             if (targetType == typeof(Vector3))
             {
-                var array = JsonSerializer.Deserialize<float[]>(element);
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 3 ? new Vector3(array[0], array[1], array[2]) : Vector3.Zero;
             }
 
             if (targetType == typeof(Vector2))
             {
-                var array = JsonSerializer.Deserialize<float[]>(element);
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 2 ? new Vector2(array[0], array[1]) : Vector2.Zero;
             }
 
             if (targetType == typeof(Vector4))
             {
-                var array = JsonSerializer.Deserialize<float[]>(element);
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 4 ? new Vector4(array[0], array[1], array[2], array[3]) : Vector4.Zero;
             }
 
             if (targetType == typeof(Quaternion))
             {
-                var array = JsonSerializer.Deserialize<float[]>(element);
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 4 ? new Quaternion(array[0], array[1], array[2], array[3]) : Quaternion.Identity;
             }
 
             if (targetType == typeof(Matrix4))
             {
-                var array = JsonSerializer.Deserialize<float[]>(element);
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 if (array?.Length >= 16)
                 {
                     return new Matrix4(
@@ -280,7 +286,7 @@ namespace Engine.Serialization
             }
 
             // Pour les types simples, utiliser la sérialisation JSON standard
-            return JsonSerializer.Deserialize(element, targetType);
+            return JsonSerializer.Deserialize(element, targetType, _jsonOptions);
         }
 
         /// <summary>
@@ -290,10 +296,102 @@ namespace Engine.Serialization
         {
             // Enregistrer le sérialiseur pour GlobalEffects
             RegisterCustomSerializer(new GlobalEffectsSerializer());
+            // Register AudioSource serializer to handle filter settings
+            RegisterCustomSerializer(new AudioSourceSerializer());
         }
+        /// Enregistre un sérialiseur personnalisé pour un type de component
 
         /// <summary>
-        /// Enregistre un sérialiseur personnalisé pour un type de component
+        /// Custom serializer for AudioSource that explicitly serializes/deserializes filters
+        /// so that the filter settings can be typed correctly.
+        /// </summary>
+        private class AudioSourceSerializer : IComponentSerializer<Engine.Audio.Components.AudioSource>
+        {
+            public Dictionary<string, object> Serialize(Engine.Audio.Components.AudioSource audio)
+            {
+                var data = SerializeByReflection(audio);
+
+                if (audio.Filters != null && audio.Filters.Count > 0)
+                {
+                    var list = new List<object>();
+                    foreach (var f in audio.Filters)
+                    {
+                        var item = new Dictionary<string, object>
+                        {
+                            ["type"] = f.Type.ToString(),
+                            ["enabled"] = f.Enabled
+                        };
+                        if (f.Settings != null)
+                        {
+                            item["settings"] = f.Settings; // only add settings when non-null
+                        }
+                        list.Add(item);
+                    }
+                    data["filters"] = list;
+                }
+
+                return data;
+            }
+
+            public void Deserialize(Engine.Audio.Components.AudioSource audio, Dictionary<string, JsonElement> data)
+            {
+
+                // Use default reflection-based deserialization first
+                DeserializeByReflection(audio, data);
+
+                // Now handle filters specialized type
+                if (data.TryGetValue("filters", out var filtersEl) && filtersEl.ValueKind != JsonValueKind.Null)
+                {
+                    try
+                    {
+                        if (filtersEl.ValueKind == JsonValueKind.Array)
+                        {
+                            var list = new List<Engine.Audio.Components.AudioSourceFilter>();
+                            foreach (var el in filtersEl.EnumerateArray())
+                            {
+                                try
+                                {
+                                    if (el.ValueKind != JsonValueKind.Object) continue;
+                                    if (!el.TryGetProperty("type", out var typeEl)) continue;
+                                    var typeStr = typeEl.GetString() ?? "None";
+                                    if (!Enum.TryParse<Engine.Audio.Components.AudioSourceFilterType>(typeStr, out var ftype)) ftype = Engine.Audio.Components.AudioSourceFilterType.None;
+                                    var f = new Engine.Audio.Components.AudioSourceFilter(ftype);
+                                    if (el.TryGetProperty("enabled", out var enabledEl))
+                                    {
+                                        f.Enabled = enabledEl.GetBoolean();
+                                    }
+                                    if (el.TryGetProperty("settings", out var settingsEl) && settingsEl.ValueKind != JsonValueKind.Null)
+                                    {
+                                        switch (f.Type)
+                                        {
+                                            case Engine.Audio.Components.AudioSourceFilterType.LowPass:
+                                                f.Settings = JsonSerializer.Deserialize<Engine.Audio.Effects.LowPassSettings>(settingsEl.GetRawText(), _jsonOptions);
+                                                break;
+                                            case Engine.Audio.Components.AudioSourceFilterType.HighPass:
+                                                f.Settings = JsonSerializer.Deserialize<Engine.Audio.Effects.HighPassSettings>(settingsEl.GetRawText(), _jsonOptions);
+                                                break;
+                                            case Engine.Audio.Components.AudioSourceFilterType.BandPass:
+                                                f.Settings = JsonSerializer.Deserialize<Engine.Audio.Effects.BandPassSettings>(settingsEl.GetRawText(), _jsonOptions);
+                                                break;
+                                            default:
+                                                f.Settings = null;
+                                                break;
+                                        }
+                                    }
+
+                                    // Ensure EFX handle will be created later by EnsureFilterHandle after ResolveReferences
+                                    list.Add(f);
+                                }
+                                catch { }
+                            }
+
+                            audio.Filters = list;
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
         /// </summary>
         public static void RegisterCustomSerializer<T>(IComponentSerializer<T> serializer) where T : Component
         {

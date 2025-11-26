@@ -16,6 +16,10 @@ namespace Editor
         private static Scene? _playScene;
         private static float _fixedTimeAccumulator = 0f;
         private static float _fixedDeltaTime = 0.02f; // 50 FPS fixed update
+
+        // PERFORMANCE: Cache component lists to avoid repeated GetAllComponents() allocations
+        private static readonly Dictionary<uint, List<Engine.Components.Component>> _cachedComponentsByEntity
+            = new Dictionary<uint, List<Engine.Components.Component>>();
         
         public enum PlayState
         {
@@ -113,9 +117,13 @@ namespace Editor
                 Engine.Utils.DebugLogger.Log($"[PlayMode] Material preload failed: {ex.Message}");
             }
 
-            // DO NOT clear material/texture cache when entering Play Mode
-            // The global cache should be preserved so GameRenderer can reuse loaded materials
-            Engine.Utils.DebugLogger.Log("[PlayMode] Entering Play Mode - preserving material/texture cache");
+            // Clear material cache when entering Play Mode to force reload with fresh texture handles
+            // This ensures both the GamePanel's renderer and the main Scene viewport reload materials
+            // so they pick up the newly-uploaded GL texture handles.
+            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+            try { EditorUI.MainViewport.Renderer?.ClearMaterialCache(); } catch { }
+            try { Panels.GamePanel.ClearMaterialCache(); } catch { }
+            Engine.Utils.DebugLogger.Log("[PlayMode] Entering Play Mode - cleared global, main viewport and GamePanel material caches to force fresh texture load");
 
             // PERFORMANCE: Flush any pending texture uploads immediately when entering Play Mode
             // This ensures all textures are ready before the first frame renders
@@ -157,6 +165,9 @@ namespace Editor
             // Configurer les contextes d'input pour le mode Play
             Engine.Input.InputManager.Instance?.SetPlayModeActive(true);
             
+            // Indicate runtime play mode to engine components BEFORE initializing components
+            try { Engine.Core.RuntimeEnvironment.IsPlayMode = true; } catch { }
+
             // Ne pas changer la scène du ViewportPanel en entrant en Play Mode.
             InitializePlayModeComponents();
             
@@ -165,7 +176,13 @@ namespace Editor
             {
                 Panels.GamePanel.SetMaximized(true);
             }
-                   
+
+            // Focus Game Panel if option is enabled
+            if (Panels.GamePanel.Options.FocusOnPlay)
+            {
+                Panels.GamePanel.FocusWindow();
+            }
+
             _state = PlayState.Playing;
             // Play Mode started
         }
@@ -210,16 +227,19 @@ namespace Editor
 
             // Reset GamePanel cursor state and restore safe cursor state
             Panels.GamePanel.ResetCursorState();
-            
+
             // Force unlock cursor and ensure clean state - CRITICAL ORDER:
             // 1. First unlock via InputManager (sets CursorState.Normal)
             Engine.Input.InputManager.Instance?.UnlockCursor();
-            
+
             // 2. Then force cursor properties (should already be set by UnlockCursor)
             Engine.Input.Cursor.lockState = Engine.Input.CursorLockMode.None;
             Engine.Input.Cursor.visible = true;
-            
+
             Engine.Utils.DebugLogger.Log("[PlayMode] Stop - Cursor unlocked and reset to normal");
+
+            // Clear collision system to remove ghost colliders from play mode
+            Engine.Physics.CollisionSystem.ClearAll();
             
             // Call OnDestroy() on all components before cleanup
             if (_playScene != null)
@@ -238,6 +258,12 @@ namespace Editor
             _playScene = null;
             _originalScene = null;
             _fixedTimeAccumulator = 0f;
+
+            // Clear component cache
+            _cachedComponentsByEntity.Clear();
+
+            // Clear runtime play-mode flag so engine components know we're back in Edit mode
+            try { Engine.Core.RuntimeEnvironment.IsPlayMode = false; } catch { }
             
             // Force reload terrain shader BEFORE disposing GamePanel to ensure shader is valid
             // This prevents black screen / InvalidOperation errors when returning to Edit mode
@@ -355,11 +381,21 @@ namespace Editor
         {
             if (_playScene == null) return;
 
-            foreach (var entity in _playScene.Entities)
+            // Clear and rebuild component cache
+            _cachedComponentsByEntity.Clear();
+
+            var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
+            for (int i = 0; i < entitiesSpan.Length; i++)
             {
+                var entity = entitiesSpan[i];
                 if (!entity.Active) continue;
 
-                foreach (var component in entity.GetAllComponents())
+                var comps = entity.GetAllComponents();
+
+                // Cache components for this entity (PERFORMANCE)
+                _cachedComponentsByEntity[entity.Id] = new List<Engine.Components.Component>(comps);
+
+                foreach (var component in comps)
                 {
                     if (!component.Enabled) continue;
 
@@ -379,12 +415,19 @@ namespace Editor
         {
             if (_playScene == null) return;
 
-            foreach (var entity in _playScene.Entities)
+            var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
+            for (int i = 0; i < span.Length; i++)
             {
+                var entity = span[i];
                 if (!entity.Active) continue;
 
-                foreach (var component in entity.GetAllComponents())
+                // Use cached component list (PERFORMANCE - zero allocation!)
+                if (!_cachedComponentsByEntity.TryGetValue(entity.Id, out var comps))
+                    continue;
+
+                for (int c = 0; c < comps.Count; c++)
                 {
+                    var component = comps[c];
                     if (!component.Enabled) continue;
 
                     try
@@ -402,12 +445,19 @@ namespace Editor
         {
             if (_playScene == null) return;
 
-            foreach (var entity in _playScene.Entities)
+            var spanFixed = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
+            for (int i = 0; i < spanFixed.Length; i++)
             {
+                var entity = spanFixed[i];
                 if (!entity.Active) continue;
 
-                foreach (var component in entity.GetAllComponents())
+                // Use cached component list (PERFORMANCE - zero allocation!)
+                if (!_cachedComponentsByEntity.TryGetValue(entity.Id, out var comps))
+                    continue;
+
+                for (int c = 0; c < comps.Count; c++)
                 {
+                    var component = comps[c];
                     if (!component.Enabled) continue;
 
                     try
@@ -425,12 +475,19 @@ namespace Editor
         {
             if (_playScene == null) return;
 
-            foreach (var entity in _playScene.Entities)
+            var spanLate = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
+            for (int i = 0; i < spanLate.Length; i++)
             {
+                var entity = spanLate[i];
                 if (!entity.Active) continue;
 
-                foreach (var component in entity.GetAllComponents())
+                // Use cached component list (PERFORMANCE - zero allocation!)
+                if (!_cachedComponentsByEntity.TryGetValue(entity.Id, out var comps))
+                    continue;
+
+                for (int c = 0; c < comps.Count; c++)
                 {
+                    var component = comps[c];
                     if (!component.Enabled) continue;
 
                     try

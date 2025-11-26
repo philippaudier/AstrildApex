@@ -376,20 +376,19 @@ public static class ModernUIHelpers
         // Sort items by priority (0 = always visible, higher = hide first)
         var sortedItems = _flexItems.OrderBy(x => x.priority).ToList();
         
+        int itemCount = sortedItems.Count;
         bool firstItem = true;
-        foreach (var item in sortedItems)
+        for (int i = 0; i < itemCount; i++)
         {
-            // Check if we should render this item based on available width
+            var item = sortedItems[i];
             if (item.minWidth > 0 && _flexContainerWidth < item.minWidth)
             {
                 continue; // Skip items that don't fit
             }
-            
             if (!firstItem)
             {
                 ImGui.SameLine();
             }
-            
             item.drawAction();
             firstItem = false;
         }

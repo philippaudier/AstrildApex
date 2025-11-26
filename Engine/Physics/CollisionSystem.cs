@@ -24,6 +24,8 @@ namespace Engine.Physics
 
         public static void Register(Collider c)
         {
+            if (c == null) return;
+
             _colliders.Add(c);
             _spatialHash.Insert(c);
             _dirty.Add(c);
@@ -37,17 +39,80 @@ namespace Engine.Physics
 
         public static void Unregister(Collider c)
         {
+            if (c == null) return;
+
             _colliders.Remove(c);
             _spatialHash.Remove(c);
             _dirty.Remove(c);
             _staticColliders.Remove(c);
             _sleepingColliders.Remove(c);
+
+            // Debug: Uncomment to track ghost colliders
+            // Console.WriteLine($"[CollisionSystem] Unregistered '{c.Entity?.Name ?? "Unknown"}' (remaining: {_colliders.Count})");
         }
+
+        /// <summary>
+        /// Clear all colliders from the system (for scene reload/cleanup)
+        /// </summary>
+        public static void ClearAll()
+        {
+            Console.WriteLine($"[CollisionSystem] Clearing all colliders (had {_colliders.Count} registered)");
+            _colliders.Clear();
+            _spatialHash.Clear();
+            _dirty.Clear();
+            _staticColliders.Clear();
+            _sleepingColliders.Clear();
+            _currentPairs.Clear();
+            _previousPairs.Clear();
+        }
+
+        /// <summary>
+        /// Get count of registered colliders (for debugging)
+        /// </summary>
+        public static int GetColliderCount() => _colliders.Count;
+
+        /// <summary>
+        /// Remove orphaned colliders (colliders whose entity is null or destroyed)
+        /// Call this periodically or when detecting ghost colliders
+        /// </summary>
+        public static int RemoveOrphanedColliders()
+        {
+            var orphaned = new List<Collider>();
+
+            foreach (var c in _colliders)
+            {
+                if (c == null || c.Entity == null)
+                {
+                    if (c != null)
+                        orphaned.Add(c);
+                }
+            }
+
+            foreach (var c in orphaned)
+            {
+                Console.WriteLine($"[CollisionSystem] Removing orphaned collider (entity: {c?.Entity?.Name ?? "null"})");
+                if (c != null) Unregister(c);
+            }
+
+            if (orphaned.Count > 0)
+            {
+                Console.WriteLine($"[CollisionSystem] Removed {orphaned.Count} orphaned colliders. Remaining: {_colliders.Count}");
+            }
+
+            return orphaned.Count;
+        }
+
+        /// <summary>
+        /// Get list of all registered colliders for debugging
+        /// </summary>
+        public static List<Collider> GetAllColliders() => new List<Collider>(_colliders);
 
         public static void MarkDirty(Collider c)
         {
+            if (c == null) return;
+
             _dirty.Add(c);
-            
+
             // Wake up if sleeping
             if (_sleepingColliders.Contains(c))
             {
@@ -55,11 +120,23 @@ namespace Engine.Physics
             }
         }
 
+        private static int _frameCounter = 0;
+
         public static void Step(float dt)
         {
+            // Periodically remove orphaned colliders (every 60 frames = ~1 second at 60fps)
+            _frameCounter++;
+            if (_frameCounter % 60 == 0)
+            {
+                RemoveOrphanedColliders();
+            }
+
             // Update bounds for dirty colliders and update spatial hash
             foreach (var c in _dirty)
             {
+                // Skip null or orphaned colliders
+                if (c == null || c.Entity == null) continue;
+
                 c.UpdateWorldBounds();
                 _spatialHash.Update(c);
             }
@@ -208,12 +285,52 @@ namespace Engine.Physics
             return false;
         }
 
+        // Stats for RaycastAll optimization
+        private static int _raycastCallsThisSecond = 0;
+        private static int _totalCollidersTestedThisSecond = 0;
+        private static System.Diagnostics.Stopwatch _raycastStatsTimer = System.Diagnostics.Stopwatch.StartNew();
+
         public static List<RaycastHit> RaycastAll(Ray ray, float maxDistance, int layerMask = ~0, QueryTriggerInteraction qti = QueryTriggerInteraction.UseGlobal)
         {
+            _raycastCallsThisSecond++;
+
             bool includeTriggers = qti == QueryTriggerInteraction.Include || (qti == QueryTriggerInteraction.UseGlobal && QueriesHitTriggers == QueryTriggerInteraction.Include);
             var results = new List<RaycastHit>(8);
 
-            foreach (var c in _colliders)
+            // OPTIMIZATION: Use spatial hash to query only nearby colliders
+            // Calculate AABB for the ray (from origin to maxDistance)
+            Vector3 rayEnd = ray.Origin + ray.Direction * maxDistance;
+            Vector3 rayMin = Vector3.ComponentMin(ray.Origin, rayEnd);
+            Vector3 rayMax = Vector3.ComponentMax(ray.Origin, rayEnd);
+
+            var rayAABB = new AABB
+            {
+                Min = rayMin - new Vector3(0.1f), // Small margin for numerical precision
+                Max = rayMax + new Vector3(0.1f)
+            };
+
+            // Query spatial hash for colliders in the ray's path
+            var candidates = new HashSet<Collider>();
+            _spatialHash.QueryAABB(rayAABB.Min, rayAABB.Max, candidates);
+
+            // If spatial hash returns no results, fall back to all colliders (safety net)
+            if (candidates.Count == 0)
+                candidates = _colliders;
+
+            _totalCollidersTestedThisSecond += candidates.Count;
+
+            // PERF FIX: Removed per-second raycast stats logging (massive performance hit)
+            // Debug stats every second
+            // if (_raycastStatsTimer.ElapsedMilliseconds > 1000)
+            // {
+            //     float avgCollidersPerRaycast = _raycastCallsThisSecond > 0 ? (float)_totalCollidersTestedThisSecond / _raycastCallsThisSecond : 0;
+            //     Console.WriteLine($"[CollisionSystem] RaycastAll: {_raycastCallsThisSecond} calls/sec, avg {avgCollidersPerRaycast:F1} colliders tested per raycast (total colliders: {_colliders.Count})");
+            //     _raycastCallsThisSecond = 0;
+            //     _totalCollidersTestedThisSecond = 0;
+            //     _raycastStatsTimer.Restart();
+            // }
+
+            foreach (var c in candidates)
             {
                 if (!c.Enabled || c.Entity == null) continue;
                 if (((1 << c.Layer) & layerMask) == 0) continue;

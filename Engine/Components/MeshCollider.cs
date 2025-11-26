@@ -25,16 +25,25 @@ namespace Engine.Components
         public bool UseMeshRendererMesh = true; // Si true, utilise automatiquement le mesh du MeshRenderer
 
         // Cache des triangles du mesh pour les collisions
-        private List<Triangle> _triangles = new();
+        private List<Physics.Triangle> _triangles = new();
         private bool _trianglesCached = false;
 
-        // TODO: BVH (Bounding Volume Hierarchy) for accelerated raycasts
-        // private BVHNode? _bvhRoot = null;
+        // BVH (Bounding Volume Hierarchy) for accelerated raycasts
+        private Physics.BVH? _bvh = null;
+        private bool _bvhBuilt = false;
 
-        // Debug counters
-        private static int _totalRaycastsThisFrame = 0;
-        private static int _totalTrianglesTestedThisFrame = 0;
-        private static System.Diagnostics.Stopwatch _frameTimer = System.Diagnostics.Stopwatch.StartNew();
+        // Transform caching to avoid recalculating every raycast
+        private Vector3 _cachedWorldPos;
+        private Quaternion _cachedWorldRot;
+        private Vector3 _cachedWorldScale;
+        private Quaternion _cachedInvRot;
+        private Vector3 _cachedInvScale;
+        private bool _transformCached = false;
+
+        // PERF FIX: Debug counters disabled (were never used after logging removal)
+        // private static int _totalRaycastsThisFrame = 0;
+        // private static int _totalTrianglesTestedThisFrame = 0;
+        // private static System.Diagnostics.Stopwatch _frameTimer = System.Diagnostics.Stopwatch.StartNew();
         
         /// <summary>
         /// Nombre de triangles actuellement cachés pour les collisions
@@ -49,7 +58,7 @@ namespace Engine.Components
         /// <summary>
         /// Obtenir les triangles cachés du mesh pour le rendu du gizmo
         /// </summary>
-        public List<Triangle>? GetCachedTriangles()
+        public List<Physics.Triangle>? GetCachedTriangles()
         {
             if (!_trianglesCached) return null;
             return _triangles;
@@ -60,18 +69,28 @@ namespace Engine.Components
             base.OnAttached();
             CacheTriangles();
             UpdateWorldBounds();
-            
-            if (_triangles.Count == 0)
-            {
-                Console.WriteLine($"[MeshCollider] WARNING: No triangles cached for '{Entity?.Name ?? "Unknown"}'. Check that the mesh is properly loaded.");
-            }
+
+            // PERF FIX: Removed per-attach log (happens every scene load)
+            // if (_triangles.Count == 0)
+            // {
+            //     Console.WriteLine($"[MeshCollider] WARNING: No triangles cached for '{Entity?.Name ?? "Unknown"}'. Check that the mesh is properly loaded.");
+            // }
         }
 
         public override void Update(float deltaTime)
         {
-            // NE RIEN FAIRE dans Update pour éviter les calculs constants
-            // Les bounds sont mis à jour uniquement quand nécessaire (OnAttached, RefreshMesh)
-            // Ceci évite les chutes de FPS
+            // Cache transform once per frame to avoid recalculating for every raycast
+            if (Entity != null)
+            {
+                Entity.GetWorldTRS(out _cachedWorldPos, out _cachedWorldRot, out _cachedWorldScale);
+                _cachedInvRot = _cachedWorldRot.Inverted();
+                _cachedInvScale = new Vector3(
+                    MathF.Abs(_cachedWorldScale.X) > 0.0001f ? 1f / _cachedWorldScale.X : 1f,
+                    MathF.Abs(_cachedWorldScale.Y) > 0.0001f ? 1f / _cachedWorldScale.Y : 1f,
+                    MathF.Abs(_cachedWorldScale.Z) > 0.0001f ? 1f / _cachedWorldScale.Z : 1f
+                );
+                _transformCached = true;
+            }
         }
 
         public override OBB GetWorldOBB()
@@ -104,20 +123,30 @@ namespace Engine.Components
         {
             hit = default;
 
-            // Debug: Count raycasts per frame
-            _totalRaycastsThisFrame++;
-            if (_frameTimer.ElapsedMilliseconds > 1000)
-            {
-                Console.WriteLine($"[MeshCollider] {_totalRaycastsThisFrame} raycasts/sec, {_totalTrianglesTestedThisFrame:N0} triangles tested/sec");
-                _totalRaycastsThisFrame = 0;
-                _totalTrianglesTestedThisFrame = 0;
-                _frameTimer.Restart();
-            }
+            // PERF FIX: Debug counter disabled (was never used after logging removal)
+            // _totalRaycastsThisFrame++;
 
             if (!_trianglesCached)
             {
                 CacheTriangles();
                 if (!_trianglesCached) return false;
+            }
+
+            // Build BVH if not built yet
+            // For large meshes (>50k triangles), use fallback until BVH is ready
+            if (!_bvhBuilt && _triangles.Count > 0)
+            {
+                // Build immediately for small meshes (< 10k triangles)
+                if (_triangles.Count < 10000)
+                {
+                    BuildBVH();
+                }
+                else if (_bvh == null)
+                {
+                    // Large mesh: build in background (first frame uses fallback)
+                    System.Threading.Tasks.Task.Run(() => BuildBVH());
+                    // Use fallback this frame
+                }
             }
 
             var e = Entity;
@@ -130,57 +159,88 @@ namespace Engine.Components
                 return false; // Ray doesn't even hit the bounding box
             }
 
-            _totalTrianglesTestedThisFrame += _triangles.Count; // Count when we actually test triangles
+            // Use cached transform if available, otherwise compute
+            Vector3 wpos, wscl, invScale;
+            Quaternion wrot, invRot;
 
-            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+            if (_transformCached)
+            {
+                wpos = _cachedWorldPos;
+                wrot = _cachedWorldRot;
+                wscl = _cachedWorldScale;
+                invRot = _cachedInvRot;
+                invScale = _cachedInvScale;
+            }
+            else
+            {
+                e.GetWorldTRS(out wpos, out wrot, out wscl);
+                invRot = wrot.Inverted();
+                invScale = new Vector3(
+                    MathF.Abs(wscl.X) > 0.0001f ? 1f / wscl.X : 1f,
+                    MathF.Abs(wscl.Y) > 0.0001f ? 1f / wscl.Y : 1f,
+                    MathF.Abs(wscl.Z) > 0.0001f ? 1f / wscl.Z : 1f
+                );
+            }
 
             // Transformer le rayon en espace local du mesh
-            var invRot = wrot.Inverted();
             var localOrigin = Vector3.Transform(ray.Origin - wpos, invRot);
             var localDir = Vector3.Transform(ray.Direction, invRot).Normalized();
 
             // Appliquer l'inverse du scale
-            var invScale = new Vector3(
-                MathF.Abs(wscl.X) > 0.0001f ? 1f / wscl.X : 1f,
-                MathF.Abs(wscl.Y) > 0.0001f ? 1f / wscl.Y : 1f,
-                MathF.Abs(wscl.Z) > 0.0001f ? 1f / wscl.Z : 1f
-            );
             localOrigin *= invScale;
-            // Ne pas normaliser localDir après scale car on veut garder la direction correcte
 
-            float closestDist = float.MaxValue;
-            Vector3 closestPoint = Vector3.Zero;
-            Vector3 closestNormal = Vector3.UnitY;
+            // Use BVH for fast traversal (10-50 triangle tests instead of 10,000+)
             bool foundHit = false;
+            float closestDist = float.MaxValue;
+            Vector3 closestNormal = Vector3.UnitY;
+            int trianglesTested = 0;
 
-            // Tester chaque triangle (TODO: Use BVH/Octree for large meshes)
-            foreach (var tri in _triangles)
+            if (_bvh != null && _bvhBuilt)
             {
-                if (RayTriangleIntersect(localOrigin, localDir, tri.V0, tri.V1, tri.V2, out float t, out Vector3 bary))
+                var localRay = new Physics.Ray { Origin = localOrigin, Direction = localDir };
+                foundHit = _bvh.Traverse(localRay, _triangles, out closestDist, out closestNormal, out trianglesTested);
+            }
+            else
+            {
+                // Fallback: brute force (for very small meshes < 10 triangles)
+                foreach (var tri in _triangles)
                 {
-                    if (t >= 0 && t < closestDist)
+                    trianglesTested++;
+                    if (RayTriangleIntersect(localOrigin, localDir, tri.V0, tri.V1, tri.V2, out float t, out Vector3 bary))
                     {
-                        closestDist = t;
-                        foundHit = true;
+                        if (t >= 0 && t < closestDist)
+                        {
+                            closestDist = t;
+                            foundHit = true;
 
-                        // Point d'intersection en espace local
-                        closestPoint = localOrigin + localDir * t;
-
-                        // Normale du triangle (en espace local)
-                        var e1 = tri.V1 - tri.V0;
-                        var e2 = tri.V2 - tri.V0;
-                        closestNormal = Vector3.Cross(e1, e2).Normalized();
+                            var e1 = tri.V1 - tri.V0;
+                            var e2 = tri.V2 - tri.V0;
+                            closestNormal = Vector3.Cross(e1, e2).Normalized();
+                        }
                     }
                 }
             }
 
+            // PERF FIX: Removed per-second raycast stats logging (caused FPS drops)
+            // Debug stats
+            // _totalTrianglesTestedThisFrame += trianglesTested;
+            // if (_frameTimer.ElapsedMilliseconds > 1000)
+            // {
+            //     float reductionPercent = _triangles.Count > 0 ? (1f - (float)trianglesTested / _triangles.Count) * 100f : 0f;
+            //     Console.WriteLine($"[MeshCollider] {_totalRaycastsThisFrame} raycasts/sec, {_totalTrianglesTestedThisFrame:N0} triangles tested/sec (BVH reduced by {reductionPercent:F1}%)");
+            //     _totalRaycastsThisFrame = 0;
+            //     _totalTrianglesTestedThisFrame = 0;
+            //     _frameTimer.Restart();
+            // }
+
             if (foundHit)
             {
                 // Reconvertir en espace monde
-                closestPoint *= wscl; // Réappliquer le scale
+                Vector3 closestPoint = localOrigin + localDir * closestDist;
+                closestPoint *= wscl;
                 closestPoint = Vector3.Transform(closestPoint, wrot) + wpos;
 
-                // Transformer la normale (utiliser le quaternion directement)
+                // Transformer la normale
                 closestNormal = Vector3.Transform(closestNormal, wrot).Normalized();
 
                 // Distance en espace monde
@@ -219,11 +279,7 @@ namespace Engine.Components
                 if (meshRenderer != null && meshRenderer.CustomMeshGuid.HasValue)
                 {
                     targetGuid = meshRenderer.CustomMeshGuid.Value;
-                    Console.WriteLine($"[MeshCollider] Using mesh from MeshRenderer: {targetGuid}");
-                }
-                else
-                {
-                    Console.WriteLine($"[MeshCollider] MeshRenderer found but no CustomMeshGuid set for '{Entity?.Name ?? "Unknown"}'");
+                    // PERF FIX: Removed log (called on every mesh load)
                 }
             }
 
@@ -231,12 +287,11 @@ namespace Engine.Components
             if (targetGuid == Guid.Empty && MeshGuid.HasValue && MeshGuid.Value != Guid.Empty)
             {
                 targetGuid = MeshGuid.Value;
-                Console.WriteLine($"[MeshCollider] Using custom mesh GUID: {targetGuid}");
             }
-            
+
             if (targetGuid == Guid.Empty)
             {
-                Console.WriteLine($"[MeshCollider] No mesh GUID available for '{Entity?.Name ?? "Unknown"}'");
+                // PERF FIX: Removed log (called on every collision check attempt)
                 return;
             }
 
@@ -253,33 +308,30 @@ namespace Engine.Components
                         meshAssetPath += ".meshasset";
                     }
 
-                    Console.WriteLine($"[MeshCollider] Loading mesh from: {meshAssetPath}");
-
+                    // PERF FIX: Removed per-load logging
                     if (!File.Exists(meshAssetPath))
                     {
-                        Console.WriteLine($"[MeshCollider] ERROR: MeshAsset file not found: {meshAssetPath}");
-                        Console.WriteLine($"[MeshCollider] Make sure the model has been imported properly.");
+                        // Mesh asset file not found - silently fail
                         return;
                     }
 
                     meshAsset = MeshAsset.Load(meshAssetPath);
-                    Console.WriteLine($"[MeshCollider] Mesh loaded: {meshAsset.Name}, SubMeshes: {meshAsset.SubMeshes.Count}");
                 }
-                catch (Exception ex)
+                catch
                 {
-                    Console.WriteLine($"[MeshCollider] Erreur lors du chargement du mesh {record.Path}: {ex.Message}");
+                    // PERF FIX: Removed exception logging (happens during normal operation)
                     return;
                 }
             }
             else
             {
-                Console.WriteLine($"[MeshCollider] Mesh GUID {targetGuid} not found in AssetDatabase");
+                // PERF FIX: Removed "not found" logging
                 return;
             }
 
             if (meshAsset == null)
             {
-                Console.WriteLine($"[MeshCollider] Aucun mesh trouvé pour la collision sur {Entity?.Name ?? "Unknown"}");
+                // PERF FIX: Removed null mesh logging
                 return;
             }
 
@@ -310,7 +362,7 @@ namespace Engine.Components
                     var v1 = new Vector3(vertices[i1 * 8], vertices[i1 * 8 + 1], vertices[i1 * 8 + 2]);
                     var v2 = new Vector3(vertices[i2 * 8], vertices[i2 * 8 + 1], vertices[i2 * 8 + 2]);
 
-                    _triangles.Add(new Triangle
+                    _triangles.Add(new Physics.Triangle
                     {
                         V0 = v0,
                         V1 = v1,
@@ -320,16 +372,30 @@ namespace Engine.Components
             }
 
             _trianglesCached = _triangles.Count > 0;
-            
-            if (_triangles.Count > 0)
+            _bvhBuilt = false; // Need to rebuild BVH
+
+            // PERF FIX: Removed success/warning logging (called on every mesh load)
+        }
+
+        /// <summary>
+        /// Build BVH acceleration structure for fast raycasting
+        /// Uses cache to avoid rebuilding on every load
+        /// </summary>
+        private void BuildBVH()
+        {
+            if (_triangles.Count == 0)
             {
-                Console.WriteLine($"[MeshCollider] ✓ Successfully cached {_triangles.Count:N0} triangles for '{Entity?.Name ?? "Unknown"}'");
-                Console.WriteLine($"[MeshCollider]   Collision will follow mesh geometry precisely.");
+                _bvhBuilt = false;
+                return;
             }
-            else
-            {
-                Console.WriteLine($"[MeshCollider] ⚠ WARNING: 0 triangles cached for '{Entity?.Name ?? "Unknown"}' - No collision will occur!");
-            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            _bvh = new Physics.BVH();
+            _bvh.Build(_triangles);
+            _bvhBuilt = true;
+            sw.Stop();
+
+            // PERF FIX: Removed BVH build logging (happens on every mesh load)
         }
 
         /// <summary>
@@ -414,16 +480,9 @@ namespace Engine.Components
         public void RefreshMesh()
         {
             _trianglesCached = false;
+            _bvhBuilt = false;
             CacheTriangles();
             UpdateWorldBounds();
-        }
-
-        /// <summary>
-        /// Triangle du mesh en coordonnées mondiales
-        /// </summary>
-        public struct Triangle
-        {
-            public Vector3 V0, V1, V2;
         }
 
         /// <summary>

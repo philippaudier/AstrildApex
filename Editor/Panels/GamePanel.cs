@@ -42,6 +42,10 @@ namespace Editor.Panels
         // Maximize on Play state
         private static bool _isMaximized = false;
 
+        // Track if Game Panel window is focused (for cursor management)
+        private static bool _isWindowFocused = false;
+        public static bool IsWindowFocused => _isWindowFocused;
+
         public static void Draw()
         {
             // CRITICAL: If we're in maximized mode but not in Play Mode, exit maximized mode
@@ -71,13 +75,17 @@ namespace Editor.Panels
                 
                 bool visible = ImGui.Begin("Game (Maximized)", windowFlags);
                 ImGui.PopStyleVar(3);
-                
+
                 if (!visible) {
                     Engine.Input.Cursor.ClearSystemConfine();
+                    _isWindowFocused = false;
                     ImGui.End();
                     return;
                 }
-                
+
+                // Maximized window is always considered focused
+                _isWindowFocused = true;
+
                 // ESC to exit maximized mode
                 if (ImGui.IsKeyPressed(ImGuiKey.Escape))
                 {
@@ -98,10 +106,14 @@ namespace Editor.Panels
                 bool visible = ImGui.Begin("Game");
                 if (!visible) {
                     Engine.Input.Cursor.ClearSystemConfine();
+                    _isWindowFocused = false;
                     ImGui.End();
                     return;
                 }
             }
+
+            // Update focus state for cursor management
+            _isWindowFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
             
             // Utiliser la scène runtime en Play Mode, sinon la scène d'édition
             Scene? scene;
@@ -225,42 +237,93 @@ namespace Editor.Panels
             int availWidth = Math.Max(1, (int)avail.X);
             int availHeight = Math.Max(1, (int)avail.Y);
             
-            // Calculate render dimensions with aspect ratio constraints (Unity-style)
-            int renderWidth = availWidth;
-            int renderHeight = availHeight;
+            // Determine desired render resolution based on editor settings (presets / custom / auto)
+            int desiredRenderWidth = availWidth;
+            int desiredRenderHeight = availHeight;
+
+            int presetIndex = Editor.State.EditorSettings.ViewportResolutionPresetIndex; // -1 = Auto, 0..5 = presets, 6 = Custom
+            if (presetIndex >= 0)
+            {
+                switch (presetIndex)
+                {
+                    case 0: desiredRenderWidth = 1920; desiredRenderHeight = 1080; break;
+                    case 1: desiredRenderWidth = 1600; desiredRenderHeight = 900; break;
+                    case 2: desiredRenderWidth = 1280; desiredRenderHeight = 720; break;
+                    case 3: desiredRenderWidth = 1366; desiredRenderHeight = 768; break;
+                    case 4: desiredRenderWidth = 1024; desiredRenderHeight = 768; break;
+                    case 5: desiredRenderWidth = 800; desiredRenderHeight = 600; break;
+                    default:
+                        // Custom or out-of-range: read custom values (fall back to auto if invalid)
+                        var cw = Editor.State.EditorSettings.ViewportCustomWidth;
+                        var ch = Editor.State.EditorSettings.ViewportCustomHeight;
+                        if (cw > 0 && ch > 0)
+                        {
+                            desiredRenderWidth = cw;
+                            desiredRenderHeight = ch;
+                        }
+                        break;
+                }
+            }
+
+            // Compute display size to fit the panel while preserving aspect ratio (letterbox / pillarbox)
+            float targetAspect = (float)desiredRenderWidth / Math.Max(1, desiredRenderHeight);
+            int displayWidth = availWidth;
+            int displayHeight = availHeight;
             float offsetX = 0f;
             float offsetY = 0f;
-            
-            float targetAspect = GetTargetAspectRatio();
-            if (targetAspect > 0)
+
+            if (presetIndex == -1)
             {
-                float panelAspect = (float)availWidth / availHeight;
-                
-                if (panelAspect > targetAspect)
+                // Auto: fill available area and respect any editor aspect lock logic via GetTargetAspectRatio
+                float editorTarget = GetTargetAspectRatio();
+                if (editorTarget > 0)
                 {
-                    // Panel too wide - fit to height, add pillarbox (black bars on sides)
-                    renderWidth = (int)(availHeight * targetAspect);
-                    renderHeight = availHeight;
-                    offsetX = (availWidth - renderWidth) * 0.5f;
+                    float panelAspect = (float)availWidth / availHeight;
+                    if (panelAspect > editorTarget)
+                    {
+                        displayWidth = (int)(availHeight * editorTarget);
+                        displayHeight = availHeight;
+                        offsetX = (availWidth - displayWidth) * 0.5f;
+                    }
+                    else
+                    {
+                        displayWidth = availWidth;
+                        displayHeight = (int)(availWidth / editorTarget);
+                        offsetY = (availHeight - displayHeight) * 0.5f;
+                    }
+                    // When auto with locked aspect, renderer should match the computed display aspect
+                    desiredRenderWidth = displayWidth;
+                    desiredRenderHeight = displayHeight;
                 }
                 else
                 {
-                    // Panel too tall - fit to width, add letterbox (black bars top/bottom)
-                    renderWidth = availWidth;
-                    renderHeight = (int)(availWidth / targetAspect);
-                    offsetY = (availHeight - renderHeight) * 0.5f;
+                    // Fully free - use panel size
+                    desiredRenderWidth = availWidth;
+                    desiredRenderHeight = availHeight;
                 }
             }
-            
+            else
+            {
+                // Fixed preset or custom: scale the desired resolution down to fit the panel if needed
+                float scale = Math.Min((float)availWidth / desiredRenderWidth, (float)availHeight / desiredRenderHeight);
+                if (scale > 1f) scale = 1f; // don't upscale the rendered image beyond its native size
+                displayWidth = Math.Max(1, (int)(desiredRenderWidth * scale));
+                displayHeight = Math.Max(1, (int)(desiredRenderHeight * scale));
+
+                // Center the image in the panel
+                offsetX = (availWidth - displayWidth) * 0.5f;
+                offsetY = (availHeight - displayHeight) * 0.5f;
+            }
+
             // Apply offset to center the render
             if (offsetX > 0 || offsetY > 0)
             {
                 var cursorPos = ImGui.GetCursorPos();
                 ImGui.SetCursorPos(new System.Numerics.Vector2(cursorPos.X + offsetX, cursorPos.Y + offsetY));
             }
-            
-            int w = renderWidth;
-            int h = renderHeight;
+
+            int w = desiredRenderWidth;
+            int h = desiredRenderHeight;
 
             if (_gameRenderer == null)
             {
@@ -324,11 +387,22 @@ namespace Editor.Panels
                 // Forcer l'utilisation des matrices de la caméra de jeu
                 _gameRenderer.SetCameraMatrices(viewMat, projMat);
 
-                // Rendu de la scène
-                _gameRenderer.RenderScene();
+                // PERF FIX: Only render if window is visible, focused, or in Play Mode
+                // This prevents expensive render calls when GamePanel is collapsed/hidden/not visible
+                bool shouldRender = ImGui.IsWindowAppearing() ||
+                                   _isWindowFocused ||
+                                   ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows) ||
+                                   PlayMode.IsInPlayMode ||
+                                   (w > 8 && h > 8);
 
-                // Afficher la texture avec la taille calculée (pas la taille du panel entier)
-                var renderSize = new System.Numerics.Vector2(renderWidth, renderHeight);
+                // Rendu de la scène (only when necessary)
+                if (shouldRender)
+                {
+                    _gameRenderer.RenderScene();
+                }
+
+                // Afficher la texture avec la taille calculée (scaled display size, preserve aspect ratio)
+                var renderSize = new System.Numerics.Vector2(displayWidth, displayHeight);
                 ImGui.Image((IntPtr)_gameRenderer.ColorTexture, renderSize, new System.Numerics.Vector2(0, 1), new System.Numerics.Vector2(1, 0));
                 
                 // Store image rect for UI overlay and input
@@ -541,6 +615,30 @@ namespace Editor.Panels
                 }
             }
         }
+
+        /// <summary>
+        /// Clear the GamePanel's local material cache (used when entering Play Mode)
+        /// </summary>
+        public static void ClearMaterialCache()
+        {
+            try
+            {
+                _gameRenderer?.ClearMaterialCache();
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>
+        /// Clear all framebuffer textures in GamePanel renderer
+        /// </summary>
+        public static void ClearFramebuffers()
+        {
+            try
+            {
+                _gameRenderer?.ClearFramebuffers();
+            }
+            catch (Exception) { }
+        }
         
         public static void Dispose() {
             // Full dispose: release GL resources owned by the GamePanel renderer
@@ -599,11 +697,19 @@ namespace Editor.Panels
         /// Check if Game Panel is currently maximized
         /// </summary>
         public static bool IsMaximized => _isMaximized;
-        
+
         /// <summary>
         /// Access to Game Panel options (Unity-style settings)
         /// </summary>
         public static GamePanelOptions Options => _options;
+
+        /// <summary>
+        /// Focus the Game Panel window (bring it to front in docked layout)
+        /// </summary>
+        public static void FocusWindow()
+        {
+            ImGui.SetWindowFocus("Game");
+        }
 
         // Debug accessor for other panels to inspect current game color texture
         public static int? CurrentColorTexture => _gameRenderer?.ColorTexture;

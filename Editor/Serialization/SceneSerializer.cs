@@ -35,6 +35,11 @@ namespace Editor.Serialization
             NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
+        // Support field serialization to persist data classes that use public fields (LowPassSettings, etc.)
+        static SceneSerializer()
+        {
+            _jsonOptions.IncludeFields = true;
+        }
 
         // Scene file format v5 (supports custom mesh imports via CustomMeshGuid)
         private class SceneFileV4 // Keep class name for compatibility
@@ -1057,6 +1062,75 @@ namespace Editor.Serialization
                     ComponentSerializer.Deserialize(component, componentData);
                     // After basic value load, resolve entity/component references using current scene
                     ComponentSerializer.ResolveReferences(component, componentData, scene);
+
+                    // Special-case: resolve asset GUIDs to runtime objects for certain components
+                    try
+                    {
+                        // If this is an AudioSource, attempt to resolve its ClipGuid to an IAudioClip
+                        if (component is Engine.Audio.Components.AudioSource audioComp && audioComp.ClipGuid.HasValue)
+                        {
+                            var clipGuid = audioComp.ClipGuid.Value;
+                            // First try the in-memory audio importer cache
+                            var loaded = Engine.Audio.Assets.AudioImporter.GetClip(clipGuid);
+                            if (loaded == null)
+                            {
+                                // If not loaded, try to find the asset record and load from disk
+                                if (Engine.Assets.AssetDatabase.TryGet(clipGuid, out var rec))
+                                {
+                                    try
+                                    {
+                                        loaded = Engine.Audio.Assets.AudioImporter.LoadClip(rec.Path);
+                                    }
+                                    catch { }
+                                }
+                                else
+                                {
+                                    // Fallback: some assets may have been assigned a deterministic GUID
+                                    // based on their file path (MD5 of full path) while the AssetDatabase
+                                    // stored a different GUID (legacy behavior). Attempt to find an
+                                    // asset record whose path generates the same deterministic GUID
+                                    // so we can load the clip from disk.
+                                    try
+                                    {
+                                        foreach (var candidate in Engine.Assets.AssetDatabase.All())
+                                        {
+                                            try
+                                            {
+                                                using var md5 = System.Security.Cryptography.MD5.Create();
+                                                var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(System.IO.Path.GetFullPath(candidate.Path)));
+                                                var derived = new Guid(hash);
+                                                if (derived == clipGuid)
+                                                {
+                                                    loaded = Engine.Audio.Assets.AudioImporter.LoadClip(candidate.Path);
+                                                    if (loaded != null) break;
+                                                }
+                                            }
+                                            catch { }
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+
+                            if (loaded != null)
+                            {
+                                audioComp.Clip = loaded;
+                            }
+                        }
+                        // Ensure filters are recreated after deserialization
+                        if (component is Engine.Audio.Components.AudioSource audioWithFilters && audioWithFilters.Filters != null && audioWithFilters.Filters.Count > 0)
+                        {
+                            try
+                            {
+                                foreach (var f in audioWithFilters.Filters)
+                                {
+                                    Engine.Audio.Components.AudioSourceFilterExtensions.EnsureFilterHandle(f);
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
                     // Console.WriteLine($"[SceneSerializer] Deserialized data for {componentTypeName}");
 
                     // Special case: Terrain component needs to generate mesh after deserialization

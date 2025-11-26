@@ -62,12 +62,12 @@ namespace Engine.Scripting
             // Mouvement horizontal
             if (moveInput.LengthSquared > 0.001f)
             {
-                Vector3 calculatedMove = CalculateMovement(moveInput);
-                finalMove = calculatedMove * dt;
+                Vector3 velocity = CalculateMovement(moveInput);
+                finalMove = velocity * dt;
 
                 if (debugInput)
                 {
-                    LogManager.LogVerbose($"[PlayerController] Calculated move: {calculatedMove:F3}, final move: {finalMove:F3}, dt: {dt:F3}", "PlayerController");
+                    LogManager.LogVerbose($"[PlayerController] Velocity: {velocity:F3}, FinalMove: {finalMove:F3}, dt: {dt:F3}", "PlayerController");
                 }
 
             }

@@ -44,6 +44,11 @@ namespace Engine.Assets
         public float[] TextureTiling { get; set; } = new float[] { 1f, 1f };     // UV scale (X, Y)
         public float[] TextureOffset { get; set; } = new float[] { 0f, 0f };    // UV offset (X, Y)
 
+        // Triplanar mapping properties
+        public int UseTriplanar { get; set; } = 0;                               // 0 = off, 1 = on
+        public float TriplanarScale { get; set; } = 1.0f;                        // World-space scale factor
+        public float TriplanarBlendSharpness { get; set; } = 4.0f;               // Blend sharpness (1-10)
+
         // Rendering mode: 0 = Opaque, 1 = Transparent
         public int TransparencyMode { get; set; } = 0;
 

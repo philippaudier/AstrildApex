@@ -5,6 +5,7 @@ layout(location=1) out uint outId;
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUV;
+in vec3 vViewDirTangent;
 
 // ============================================================================
 // Simple Shadow Mapping - Inlined for compatibility
@@ -103,6 +104,7 @@ layout(std140) uniform Global {
 
 uniform sampler2D u_AlbedoTex;
 uniform sampler2D u_NormalTex;
+uniform sampler2D u_HeightTex;
 // Debug switches (0 = off). Can be set from C# with SetInt("u_DebugShowAlbedo", 1) or
 // SetInt("u_DebugShowNormals", 1) to visualize the respective data.
 uniform int u_DebugShowAlbedo;
@@ -112,7 +114,13 @@ uniform int u_TransparencyMode; // 0 = opaque, 1 = transparent
 uniform float u_NormalStrength;
 uniform float u_Metallic;
 uniform float u_Smoothness;
+uniform float u_HeightScale;
 uniform uint  u_ObjectId;
+
+// Triplanar mapping settings
+uniform int u_UseTriplanar; // 0 = off, 1 = on
+uniform float u_TriplanarScale; // Scale factor for world-space UVs
+uniform float u_TriplanarBlendSharpness; // Controls blend sharpness between projections
 
 // SSAO uniforms
 uniform sampler2D u_SSAOTexture;
@@ -122,7 +130,119 @@ uniform vec2 u_ScreenSize;
 
 #include "Includes/IBL.glsl"
 
+// Parallax Occlusion Mapping
+vec2 ParallaxOcclusionMapping(vec2 texCoords, vec3 viewDir, float heightScale)
+{
+    // If height scale is zero or very small, skip parallax mapping
+    if (heightScale < 0.001) return texCoords;
 
+    // Number of depth layers - reduced for better performance
+    // Original: 8-32 layers (too expensive)
+    // Optimized: 4-8 layers (good quality/performance balance)
+    const float minLayers = 4.0;
+    const float maxLayers = 8.0;
+    float numLayers = mix(maxLayers, minLayers, abs(dot(vec3(0.0, 0.0, 1.0), viewDir)));
+
+    // Calculate the size of each layer
+    float layerDepth = 1.0 / numLayers;
+    float currentLayerDepth = 0.0;
+
+    // The amount to shift the texture coordinates per layer (from vector P)
+    vec2 P = viewDir.xy * heightScale;
+    vec2 deltaTexCoords = P / numLayers;
+
+    // Get initial values
+    vec2 currentTexCoords = texCoords;
+    float currentDepthMapValue = texture(u_HeightTex, currentTexCoords).r;
+
+    // Iterate until we find the first point below the surface
+    while(currentLayerDepth < currentDepthMapValue)
+    {
+        // Shift texture coordinates along direction of P
+        currentTexCoords -= deltaTexCoords;
+        // Get depthmap value at current texture coordinates
+        currentDepthMapValue = texture(u_HeightTex, currentTexCoords).r;
+        // Get depth of next layer
+        currentLayerDepth += layerDepth;
+    }
+
+    // Get texture coordinates before collision (reverse operations)
+    vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
+
+    // Get depth after and before collision for linear interpolation
+    float afterDepth  = currentDepthMapValue - currentLayerDepth;
+    float beforeDepth = texture(u_HeightTex, prevTexCoords).r - currentLayerDepth + layerDepth;
+
+    // Interpolation of texture coordinates
+    float weight = afterDepth / (afterDepth - beforeDepth);
+    vec2 finalTexCoords = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
+
+    return finalTexCoords;
+}
+
+// Triplanar texture sampling with proper normal blending
+struct TriplanarSample {
+    vec3 albedo;
+    vec3 normal;
+};
+
+TriplanarSample SampleTriplanar(vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
+{
+    // Calculate blend weights based on surface normal
+    vec3 blendWeights = abs(worldNormal);
+
+    // Apply sharpness to blend (higher = sharper transitions)
+    blendWeights = pow(blendWeights, vec3(blendSharpness));
+
+    // Normalize blend weights so they sum to 1
+    blendWeights /= (blendWeights.x + blendWeights.y + blendWeights.z);
+
+    // Calculate UVs for each projection plane
+    vec2 uvX = worldPos.yz * scale; // Side projection (X-axis)
+    vec2 uvY = worldPos.xz * scale; // Top/Bottom projection (Y-axis)
+    vec2 uvZ = worldPos.xy * scale; // Front/Back projection (Z-axis)
+
+    // Sample albedo from all three projections
+    vec3 albedoX = texture(u_AlbedoTex, uvX).rgb;
+    vec3 albedoY = texture(u_AlbedoTex, uvY).rgb;
+    vec3 albedoZ = texture(u_AlbedoTex, uvZ).rgb;
+
+    // Blend albedo
+    vec3 albedo = albedoX * blendWeights.x +
+                  albedoY * blendWeights.y +
+                  albedoZ * blendWeights.z;
+
+    // Sample normal maps from all three projections
+    vec3 normalX = texture(u_NormalTex, uvX).xyz * 2.0 - 1.0;
+    vec3 normalY = texture(u_NormalTex, uvY).xyz * 2.0 - 1.0;
+    vec3 normalZ = texture(u_NormalTex, uvZ).xyz * 2.0 - 1.0;
+
+    // Flip Y channel for OpenGL normal maps
+    normalX.y = -normalX.y;
+    normalY.y = -normalY.y;
+    normalZ.y = -normalZ.y;
+
+    // Transform tangent-space normals to world space for each projection
+    // X-axis projection (YZ plane): tangent=Y, bitangent=Z, normal=X
+    vec3 worldNormalX = vec3(normalX.z, normalX.x, normalX.y);
+    // Y-axis projection (XZ plane): tangent=X, bitangent=Z, normal=Y
+    vec3 worldNormalY = vec3(normalY.x, normalY.z, normalY.y);
+    // Z-axis projection (XY plane): tangent=X, bitangent=Y, normal=Z
+    vec3 worldNormalZ = vec3(normalZ.x, normalZ.y, normalZ.z);
+
+    // Flip X-projection to match world-space orientation
+    worldNormalX.x = -worldNormalX.x;
+
+    // Blend world-space normals
+    vec3 blendedNormal = worldNormalX * blendWeights.x +
+                         worldNormalY * blendWeights.y +
+                         worldNormalZ * blendWeights.z;
+
+    TriplanarSample result;
+    result.albedo = albedo;
+    result.normal = blendedNormal;
+    return result;
+}
 
 vec3 FresnelSchlick(float cosTheta, vec3 F0){ return F0 + (1.0 - F0)*pow(1.0 - cosTheta, 5.0); }
 
@@ -169,17 +289,40 @@ void main(){
         }
     }
 
-    vec3 normalMap = texture(u_NormalTex, vUV).rgb * 2.0 - 1.0; 
-    normalMap.y = -normalMap.y; 
-    normalMap.xy *= u_NormalStrength; 
-    
-
+    // Choose between triplanar or standard UV mapping
+    vec3 baseCol;
+    vec3 normalMap;
     vec3 baseNormal = normalize(vNormal);
-    vec3 N = normalize(baseNormal + normalMap * 0.1); 
-    
-    vec3 V = normalize(uCameraPos - vWorldPos);
 
-    vec3 baseCol = texture(u_AlbedoTex, vUV).rgb * u_AlbedoColor.rgb;
+    if (u_UseTriplanar == 1)
+    {
+        // Use triplanar mapping - world-space projection
+        TriplanarSample triSample = SampleTriplanar(vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness);
+        baseCol = triSample.albedo * u_AlbedoColor.rgb;
+
+        // Apply normal strength to triplanar normals
+        normalMap = triSample.normal * u_NormalStrength;
+    }
+    else
+    {
+        // Standard UV mapping with optional parallax
+        vec2 adjustedUV = vUV;
+        if (u_HeightScale > 0.001)
+        {
+            adjustedUV = ParallaxOcclusionMapping(vUV, normalize(vViewDirTangent), u_HeightScale);
+        }
+
+        baseCol = texture(u_AlbedoTex, adjustedUV).rgb * u_AlbedoColor.rgb;
+
+        normalMap = texture(u_NormalTex, adjustedUV).rgb * 2.0 - 1.0;
+        normalMap.y = -normalMap.y;
+        normalMap.xy *= u_NormalStrength;
+    }
+
+    // Calculate final normal
+    vec3 N = normalize(baseNormal + normalMap * 0.1);
+
+    vec3 V = normalize(uCameraPos - vWorldPos);
     float smoothness = clamp(u_Smoothness, 0.0, 1.0);
     float rough = clamp(1.0 - smoothness, 0.01, 0.99);
     float metal = clamp(u_Metallic, 0.0, 1.0);
@@ -305,7 +448,7 @@ void main(){
     // If IBL is available, use it for both diffuse and specular ambient contribution
     // calculateIBL returns diffuse+specular contribution already factoring F0 and metallic response
     if (int(u_HasIBL) != 0) {
-        ambient = calculateIBL(N, V, rough, F0, baseCol) * uAmbientIntensity * ssaoFactor;
+        ambient = calculateIBL(N, V, rough, F0, baseCol, metal) * uAmbientIntensity * ssaoFactor;
     } else {
         ambient = baseCol * uAmbientColor * uAmbientIntensity * (1.0 - metal * 0.5) * ssaoFactor;
     }
@@ -326,7 +469,7 @@ void main(){
         // If an albedo texture is present, use its alpha channel multiplied by the albedo color alpha.
         float texAlpha = 1.0;
         // We sample the albedo texture's alpha; if no alpha channel, this will be 1.0 from the white 1x1 default.
-        texAlpha = texture(u_AlbedoTex, vUV).a;
+        texAlpha = texture(u_AlbedoTex, adjustedUV).a;
         outAlpha = clamp(texAlpha * u_AlbedoColor.a, 0.0, 1.0);
     }
 

@@ -55,7 +55,7 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2DMultisample, _msaaColorTex);
             GL.TexImage2DMultisample(TextureTargetMultisample.Texture2DMultisample, _samples, PixelInternalFormat.Rgba16f, _width, _height, true);
             var err1 = GL.GetError();
-            if (err1 != ErrorCode.NoError) Console.WriteLine($"[MSAA] ERROR after color texture creation: {err1}");
+            if (err1 != ErrorCode.NoError) try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR after color texture creation: {err1}"); } catch { }
             if (err1 == ErrorCode.NoError)
             {
                 GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2DMultisample, _msaaColorTex, 0);
@@ -65,7 +65,7 @@ namespace Engine.Rendering
                 // Fallback: create a multisampled renderbuffer for color if texture creation failed
                 try
                 {
-                    Console.WriteLine("[MSAA] Falling back to multisample renderbuffer for color attachment");
+                    try { Engine.Utils.DebugLogger.Log("[MSAA] Falling back to multisample renderbuffer for color attachment"); } catch { }
                     _msaaColorRBO = (uint)GL.GenRenderbuffer();
                     GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, _msaaColorRBO);
                     GL.RenderbufferStorageMultisample(RenderbufferTarget.Renderbuffer, _samples, RenderbufferStorage.Rgba8, _width, _height);
@@ -77,7 +77,7 @@ namespace Engine.Rendering
                 }
             }
             var err2 = GL.GetError();
-            if (err2 != ErrorCode.NoError) Console.WriteLine($"[MSAA] ERROR after color attachment: {err2}");
+            if (err2 != ErrorCode.NoError) try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR after color attachment: {err2}"); } catch { }
 
             // Create ID renderbuffer with R32ui format (ColorAttachment1)
             // This allows shaders to write to o_EntityId without errors
@@ -88,20 +88,20 @@ namespace Engine.Rendering
             var err3 = GL.GetError();
             if (err3 != ErrorCode.NoError)
             {
-                Console.WriteLine($"[MSAA] WARNING: R32ui not supported for MSAA renderbuffer (err={err3}), trying R8ui...");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] WARNING: R32ui not supported for MSAA renderbuffer (err={err3}), trying R8ui..."); } catch { }
                 // Try R8ui as fallback
                 GL.RenderbufferStorageMultisample(RenderbufferTarget.Renderbuffer, _samples, RenderbufferStorage.R8ui, _width, _height);
                 var err3b = GL.GetError();
-                if (err3b != ErrorCode.NoError)
-                {
-                    Console.WriteLine($"[MSAA] WARNING: R8ui also failed (err={err3b}), trying R8...");
-                    // Last resort: normalized format
-                    GL.RenderbufferStorageMultisample(RenderbufferTarget.Renderbuffer, _samples, RenderbufferStorage.R8, _width, _height);
-                }
+                    if (err3b != ErrorCode.NoError)
+                    {
+                        try { Engine.Utils.DebugLogger.Log($"[MSAA] WARNING: R8ui also failed (err={err3b}), trying R8..."); } catch { }
+                        // Last resort: normalized format
+                        GL.RenderbufferStorageMultisample(RenderbufferTarget.Renderbuffer, _samples, RenderbufferStorage.R8, _width, _height);
+                    }
             }
             GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment1, RenderbufferTarget.Renderbuffer, _msaaIdRBO);
             var err4 = GL.GetError();
-            if (err4 != ErrorCode.NoError) Console.WriteLine($"[MSAA] ERROR after ID attachment: {err4}");
+            if (err4 != ErrorCode.NoError) try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR after ID attachment: {err4}"); } catch { }
 
             // Create multisampled depth renderbuffer
             _msaaDepthRBO = (uint)GL.GenRenderbuffer();
@@ -116,18 +116,18 @@ namespace Engine.Rendering
             var status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (status != FramebufferErrorCode.FramebufferComplete)
             {
-                Console.WriteLine($"[MSAA] ERROR: Framebuffer not complete! Status={status}, samples={_samples}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR: Framebuffer not complete! Status={status}, samples={_samples}"); } catch { }
                 throw new Exception($"MSAA framebuffer not complete! Status={status}, samples={_samples}");
             }
 
             var err = GL.GetError();
             if (err != ErrorCode.NoError)
             {
-                Console.WriteLine($"[MSAA] ERROR: OpenGL error after framebuffer creation: {err}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR: OpenGL error after framebuffer creation: {err}"); } catch { }
             }
             else
             {
-                Console.WriteLine($"[MSAA] Framebuffer created successfully: {_width}x{_height} @ {_samples}x samples, FBO={_msaaFBO}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] Framebuffer created successfully: {_width}x{_height} @ {_samples}x samples, FBO={_msaaFBO}"); } catch { }
             }
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -157,14 +157,14 @@ namespace Engine.Rendering
             var err = GL.GetError();
             if (err != ErrorCode.NoError)
             {
-                Console.WriteLine($"[MSAA] ERROR in BeginRender after binding FBO: {err}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR in BeginRender after binding FBO: {err}"); } catch { }
             }
 
             // Verify framebuffer is still complete
             var status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (status != FramebufferErrorCode.FramebufferComplete)
             {
-                Console.WriteLine($"[MSAA] ERROR in BeginRender: FBO not complete! Status={status}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR in BeginRender: FBO not complete! Status={status}"); } catch { }
             }
 
             // BeginRender: silent in normal operation to avoid per-frame console spam
@@ -196,7 +196,7 @@ namespace Engine.Rendering
             var err = GL.GetError();
             if (err != ErrorCode.NoError)
             {
-                Console.WriteLine($"[MSAA] ERROR during blit: {err}");
+                try { Engine.Utils.DebugLogger.Log($"[MSAA] ERROR during blit: {err}"); } catch { }
             }
 
             // CRITICAL: Restore DrawBuffers to render to both color attachments in target FBO
@@ -204,6 +204,23 @@ namespace Engine.Rendering
             GL.DrawBuffers(2, new[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 });
 
             // Resolve complete (silent)
+        }
+
+        /// <summary>
+        /// Clear MSAA framebuffer to default color
+        /// </summary>
+        public void ClearFramebuffer()
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _msaaFBO);
+            GL.Viewport(0, 0, _width, _height);
+            GL.ClearColor(0.15f, 0.16f, 0.18f, 1f);
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+
+            // Clear ID buffer (ColorAttachment1)
+            uint zero = 0;
+            GL.ClearBuffer(ClearBuffer.Color, 1, ref zero);
+
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         }
 
         public void Dispose()

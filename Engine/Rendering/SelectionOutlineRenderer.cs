@@ -47,7 +47,7 @@ namespace Engine.Rendering
 
             if (!System.IO.File.Exists(vertPath) || !System.IO.File.Exists(fragPath))
             {
-                Console.WriteLine($"[SelectionOutlineRenderer] Shader files not found: {vertPath} or {fragPath}");
+                try { Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] Shader files not found: {vertPath} or {fragPath}"); } catch { }
                 return;
             }
 
@@ -75,11 +75,11 @@ namespace Engine.Rendering
                 GL.DeleteShader(vertShader);
                 GL.DeleteShader(fragShader);
 
-                Console.WriteLine("[SelectionOutlineRenderer] Edge shader compiled successfully");
+                try { Engine.Utils.DebugLogger.Log("[SelectionOutlineRenderer] Edge shader compiled successfully"); } catch { }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SelectionOutlineRenderer] Failed to compile edge shader: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] Failed to compile edge shader: {ex.Message}"); } catch { }
                 return;
             }
 
@@ -113,7 +113,7 @@ namespace Engine.Rendering
             GL.BindVertexArray(0);
 
             _initialized = true;
-            Console.WriteLine("[SelectionOutlineRenderer] Initialized successfully");
+            try { Engine.Utils.DebugLogger.Log("[SelectionOutlineRenderer] Initialized successfully"); } catch { }
         }
 
         /// <summary>
@@ -138,41 +138,73 @@ namespace Engine.Rendering
             if (!_initialized || !settings.Enabled || selectedEntityId == 0)
                 return;
 
-            GL.UseProgram(_edgeShader);
+            try
+            {
+                // Verbose debug: log texture ids, shader and selected id
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                {
+                    try
+                    {
+                        Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] RenderOutline: shader={_edgeShader}, colorTex={colorTexture}, idTex={idTexture}, selectedId={selectedEntityId}, screen={screenWidth}x{screenHeight}");
+                        // Query texture sizes for additional diagnostics
+                        GL.BindTexture(TextureTarget.Texture2D, colorTexture);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int cW);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int cH);
+                        GL.BindTexture(TextureTarget.Texture2D, idTexture);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int iW);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int iH);
+                        Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] Textures: color={cW}x{cH}, id={iW}x{iH}");
+                    }
+                    catch { }
+                }
 
-            // Set uniforms
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_ColorTexture"), 0);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_IdTexture"), 1);
-            GL.Uniform2(GL.GetUniformLocation(_edgeShader, "u_ScreenSize"), (float)screenWidth, (float)screenHeight);
-            GL.Uniform4(GL.GetUniformLocation(_edgeShader, "u_OutlineColor"), settings.Color);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_OutlineWidth"), settings.Thickness);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_SelectedId"), (float)selectedEntityId);
+                GL.UseProgram(_edgeShader);
 
-            // Pulse parameters
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_Time"), time);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_EnablePulse"), settings.EnablePulse ? 1 : 0);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseSpeed"), settings.PulseSpeed);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseMinAlpha"), settings.PulseMinAlpha);
-            GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseMaxAlpha"), settings.PulseMaxAlpha);
+                // Set uniforms
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_ColorTexture"), 0);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_IdTexture"), 1);
+                GL.Uniform2(GL.GetUniformLocation(_edgeShader, "u_ScreenSize"), (float)screenWidth, (float)screenHeight);
+                GL.Uniform4(GL.GetUniformLocation(_edgeShader, "u_OutlineColor"), settings.Color);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_OutlineWidth"), settings.Thickness);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_SelectedId"), (float)selectedEntityId);
 
-            // Bind textures
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, colorTexture);
-            GL.ActiveTexture(TextureUnit.Texture1);
-            GL.BindTexture(TextureTarget.Texture2D, idTexture);
+                // Pulse parameters
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_Time"), time);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_EnablePulse"), settings.EnablePulse ? 1 : 0);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseSpeed"), settings.PulseSpeed);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseMinAlpha"), settings.PulseMinAlpha);
+                GL.Uniform1(GL.GetUniformLocation(_edgeShader, "u_PulseMaxAlpha"), settings.PulseMaxAlpha);
 
-            // Draw fullscreen quad
-            GL.BindVertexArray(_vao);
-            GL.Disable(EnableCap.DepthTest);
-            GL.Enable(EnableCap.Blend);
-            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                // Bind textures
+                GL.ActiveTexture(TextureUnit.Texture0);
+                GL.BindTexture(TextureTarget.Texture2D, colorTexture);
+                GL.ActiveTexture(TextureUnit.Texture1);
+                GL.BindTexture(TextureTarget.Texture2D, idTexture);
 
-            GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
+                // Draw fullscreen quad
+                GL.BindVertexArray(_vao);
+                GL.Disable(EnableCap.DepthTest);
+                GL.Enable(EnableCap.Blend);
+                GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
-            GL.Disable(EnableCap.Blend);
-            GL.Enable(EnableCap.DepthTest);
-            GL.BindVertexArray(0);
-            GL.UseProgram(0);
+                GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
+
+                // Check for GL errors immediately after draw
+                var err = GL.GetError();
+                if (err != ErrorCode.NoError)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] GL error after DrawArrays: {err}"); } catch { }
+                }
+
+                GL.Disable(EnableCap.Blend);
+                GL.Enable(EnableCap.DepthTest);
+                GL.BindVertexArray(0);
+                GL.UseProgram(0);
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] Exception in RenderOutline: {ex.Message}"); } catch { }
+            }
         }
 
         private void CheckShaderCompileStatus(int shader, string name)

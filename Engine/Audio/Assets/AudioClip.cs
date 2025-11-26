@@ -40,10 +40,21 @@ namespace Engine.Audio.Assets
 
         private AudioClip(string filePath, string name)
         {
-            Guid = Guid.NewGuid();
+            // Use deterministic GUID based on file path to ensure same clip has same GUID across loads
+            Guid = GenerateGuidFromPath(filePath);
             FilePath = filePath;
             Name = name;
             BufferId = -1;
+        }
+
+        /// <summary>
+        /// Génère un GUID déterministe basé sur le chemin du fichier
+        /// </summary>
+        private static Guid GenerateGuidFromPath(string filePath)
+        {
+            using var md5 = System.Security.Cryptography.MD5.Create();
+            var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(filePath)));
+            return new Guid(hash);
         }
 
         /// <summary>

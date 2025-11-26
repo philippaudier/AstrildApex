@@ -71,7 +71,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[UIRenderSystem] Error: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[UIRenderSystem] Error: {ex.Message}"); } catch { }
             }
             finally
             {
@@ -430,7 +430,7 @@ void main()
             if (success == 0)
             {
                 string infoLog = GL.GetShaderInfoLog(shader);
-                Console.WriteLine($"[UIRenderSystem] {type} shader compilation error:\n{infoLog}");
+                try { Engine.Utils.DebugLogger.Log($"[UIRenderSystem] {type} shader compilation error:\n{infoLog}"); } catch { }
             }
         }
 
@@ -440,7 +440,7 @@ void main()
             if (success == 0)
             {
                 string infoLog = GL.GetProgramInfoLog(program);
-                Console.WriteLine($"[UIRenderSystem] Shader program linking error:\n{infoLog}");
+                try { Engine.Utils.DebugLogger.Log($"[UIRenderSystem] Shader program linking error:\n{infoLog}"); } catch { }
             }
         }
 

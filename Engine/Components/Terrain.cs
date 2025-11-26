@@ -315,14 +315,16 @@ namespace Engine.Components
                     uint bottomLeft = (uint)((z + 1) * res + x);
                     uint bottomRight = (uint)((z + 1) * res + x + 1);
 
-                    // Triangle 1 (CCW winding to face upward with backface culling)
+                    // Triangle 1 (CCW winding when viewed from above Y+)
+                    // Order: topLeft → bottomLeft → topRight
                     indices[iIdx++] = topLeft;
-                    indices[iIdx++] = topRight;
                     indices[iIdx++] = bottomLeft;
+                    indices[iIdx++] = topRight;
 
-                    // Triangle 2 (CCW winding to face upward with backface culling)
-                    indices[iIdx++] = bottomLeft;
+                    // Triangle 2 (CCW winding when viewed from above Y+)
+                    // Order: topRight → bottomLeft → bottomRight
                     indices[iIdx++] = topRight;
+                    indices[iIdx++] = bottomLeft;
                     indices[iIdx++] = bottomRight;
                 }
             }
@@ -349,7 +351,8 @@ namespace Engine.Components
 
             // Build a deterministic key from heightmap guid + parameters
             // Include heightmap file modification time when available so the cache invalidates when the source changes
-            string key = $"{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}";
+            // V2: Fixed winding order and normals calculation
+            string key = $"v2_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}";
             try
             {
                 if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
@@ -719,13 +722,18 @@ namespace Engine.Components
                     float worldStepX = TerrainWidth / (resolution - 1);
                     float worldStepZ = TerrainLength / (resolution - 1);
 
-                    // Calculate the tangent and bitangent vectors
-                    float dx = (hR - hL) * TerrainHeight / (2.0f * worldStepX);
-                    float dz = (hU - hD) * TerrainHeight / (2.0f * worldStepZ);
+                    // Calculate tangent vectors (derivatives of position wrt u and v)
+                    // Tangent along X axis: (1, dHeight/dX, 0)
+                    // Tangent along Z axis: (0, dHeight/dZ, 1)
+                    float dHeightDx = (hR - hL) * TerrainHeight / (2.0f * worldStepX);
+                    float dHeightDz = (hU - hD) * TerrainHeight / (2.0f * worldStepZ);
 
-                    // Normal is perpendicular to the surface
-                    // FIX: Inverted normal direction - was pointing down, now points up
-                    var normal = new System.Numerics.Vector3(dx, 1.0f, dz);
+                    var tangentX = new System.Numerics.Vector3(1.0f, dHeightDx, 0.0f);
+                    var tangentZ = new System.Numerics.Vector3(0.0f, dHeightDz, 1.0f);
+
+                    // Normal is cross product: tangentZ × tangentX (reversed order to point upward)
+                    // This ensures correct orientation (pointing upward for CCW winding)
+                    var normal = System.Numerics.Vector3.Cross(tangentZ, tangentX);
                     normal = System.Numerics.Vector3.Normalize(normal);
 
                     vertices[idx + 3] = normal.X;
@@ -831,7 +839,7 @@ namespace Engine.Components
                 }
             }
 
-            // Optional debug visualization: disable culling or force wireframe if env var set
+            // Optional debug visualization: wireframe mode if env var set
             bool debugVis = false;
             try {
                 debugVis = Environment.GetEnvironmentVariable("TERRAIN_DEBUG_VIS") == "1";
@@ -839,14 +847,11 @@ namespace Engine.Components
 
             if (debugVis)
             {
-                GL.Disable(EnableCap.CullFace);
-                // Use the TriangleFace overload to avoid obsolete API warnings
                 GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
             }
 
-            // Always disable face culling to ensure terrain is visible from all angles
-            GL.Disable(EnableCap.CullFace);
-
+            // Culling is ENABLED - terrain triangles are wound CCW (counter-clockwise) to face upward
+            // This allows backface culling to work properly, improving performance
             GL.BindVertexArray(_vao);
             GL.DrawElements(PrimitiveType.Triangles, _indexCount, DrawElementsType.UnsignedInt, 0);
             GL.BindVertexArray(0);
@@ -854,7 +859,6 @@ namespace Engine.Components
             if (debugVis)
             {
                 GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
-                GL.Enable(EnableCap.CullFace);
             }
         }
 
@@ -938,11 +942,20 @@ namespace Engine.Components
 
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-            GL.Disable(EnableCap.CullFace);
+
+            // Water needs double-sided rendering since it's a flat plane
+            // Temporarily disable culling for water only
+            bool cullingWasEnabled = GL.IsEnabled(EnableCap.CullFace);
+            if (cullingWasEnabled)
+                GL.Disable(EnableCap.CullFace);
 
             GL.BindVertexArray(_waterVao);
             GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, 0);
             GL.BindVertexArray(0);
+
+            // Restore culling state
+            if (cullingWasEnabled)
+                GL.Enable(EnableCap.CullFace);
 
             GL.Disable(EnableCap.Blend);
         }

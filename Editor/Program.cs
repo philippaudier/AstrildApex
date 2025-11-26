@@ -88,6 +88,13 @@ public static class Program
             
             // Also write a short startup message to the engine log
             DebugLogger.Log($"[Program] Set working directory to: {exeDir}");
+            // Enable verbose debug logging for this diagnostic run
+            try
+            {
+                DebugLogger.EnableVerbose = true;
+                DebugLogger.Log("[Program] DebugLogger.EnableVerbose = true (diagnostic)");
+            }
+            catch { }
         }
 
         // Configure Serilog: route events to both the terminal and the in-editor Console panel.
@@ -99,10 +106,18 @@ public static class Program
 
         Log.Information("{Name} Editor starting v{Version}", EngineInfo.Name, EngineInfo.Version);
 
+        // Indicate to the Engine that we're running inside the Editor so engine
+        // components can avoid editor-only behaviors (e.g., PlayOnAwake auto-play).
+        try
+        {
+            Engine.Core.RuntimeEnvironment.IsEditor = true;
+        }
+        catch { }
+
         var native = new NativeWindowSettings()
         {
             Title = $"{EngineInfo.Name} Editor",
-            ClientSize = new Vector2i(1280, 800),
+            ClientSize = new Vector2i(1920, 1080),
             APIVersion = new Version(4, 6),
             Flags = ContextFlags.ForwardCompatible,
             StartFocused = true,
@@ -215,6 +230,10 @@ public static class Program
             Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial();
             Log.Information("AssetDatabase initialized");
             Editor.Utils.StartupProfiler.EndSection();
+
+            // CRITICAL FIX: Clear collision system at editor startup
+            // Ensures no phantom colliders from previous sessions remain in memory
+            Engine.Physics.CollisionSystem.ClearAll();
 
             // Auto-load last scene if available
             loadingManager.UpdateStep("Loading scene...");

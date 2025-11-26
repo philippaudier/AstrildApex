@@ -62,6 +62,12 @@ namespace Editor.State
             
             // UI positions (persist overlay HUD positions)
             public UIPositionsData UI { get; set; } = new UIPositionsData();
+            // Viewport resolution presets (Unity-like) - -1 = Use panel size
+            public int ViewportResolutionPresetIndex { get; set; } = -1;
+            public int ViewportCustomWidth { get; set; } = 1280;
+            public int ViewportCustomHeight { get; set; } = 720;
+            public bool ViewportLockAspect { get; set; } = true;
+            public int ViewportAspectIndex { get; set; } = 0; // 0=16:9,1=4:3,2=Custom
         }
 
         public class UIPositionsData
@@ -802,6 +808,97 @@ namespace Editor.State
                     if (_currentSettings.UI == null) _currentSettings.UI = new UIPositionsData();
                     _currentSettings.UI.ViewportHudPosX = value.X;
                     _currentSettings.UI.ViewportHudPosY = value.Y;
+                    SaveSettings();
+                }
+            }
+        }
+
+        // Viewport resolution presets and custom size (Unity-like Game view)
+        public static int ViewportResolutionPresetIndex
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportResolutionPresetIndex ?? -1;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportResolutionPresetIndex = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        public static int ViewportCustomWidth
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportCustomWidth ?? 1280;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportCustomWidth = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        public static int ViewportCustomHeight
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportCustomHeight ?? 720;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportCustomHeight = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        public static bool ViewportLockAspect
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportLockAspect ?? true;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportLockAspect = value;
+                    SaveSettings();
+                }
+            }
+        }
+
+        public static int ViewportAspectIndex
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportAspectIndex ?? 0;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportAspectIndex = value;
                     SaveSettings();
                 }
             }

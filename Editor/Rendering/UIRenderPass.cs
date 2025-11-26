@@ -134,13 +134,20 @@ void main()
         {
             if (scene == null) return;
 
-            // Find all canvas entities
-            var canvasEntities = scene.Entities
-                .Where(e => e.HasComponent<Engine.Components.UI.CanvasComponent>())
-                .OrderBy(e => e.GetComponent<Engine.Components.UI.CanvasComponent>()?.SortOrder ?? 0)
-                .ToList();
+            // Find all canvas entities (avoid LINQ allocations per-frame)
+            var canvasEntities = new System.Collections.Generic.List<(Engine.Scene.Entity Entity, Engine.Components.UI.CanvasComponent Comp)>();
+            var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scene.Entities);
+            for (int i = 0; i < entitiesSpan.Length; i++)
+            {
+                var e = entitiesSpan[i];
+                var c = e.GetComponent<Engine.Components.UI.CanvasComponent>();
+                if (c != null) canvasEntities.Add((e, c));
+            }
 
             if (canvasEntities.Count == 0) return;
+
+            // Sort by SortOrder once per-frame
+            canvasEntities.Sort((a, b) => a.Comp.SortOrder.CompareTo(b.Comp.SortOrder));
 
             // Save current OpenGL state
             SaveGLState(out var state);
@@ -154,9 +161,10 @@ void main()
             GL.UseProgram(_shader);
             GL.BindVertexArray(_quadVao);
 
-            foreach (var canvasEntity in canvasEntities)
+            foreach (var tuple in canvasEntities)
             {
-                var canvas = canvasEntity.GetComponent<Engine.Components.UI.CanvasComponent>();
+                var canvasEntity = tuple.Entity;
+                var canvas = tuple.Comp;
                 if (canvas == null) continue;
 
                 RenderCanvas(canvasEntity, canvas, scene, viewportWidth, viewportHeight, view, projection);
@@ -183,13 +191,22 @@ void main()
         private void RenderCanvas(Engine.Scene.Entity canvasEntity, Engine.Components.UI.CanvasComponent canvas,
             Engine.Scene.Scene scene, int viewportWidth, int viewportHeight, Matrix4 view, Matrix4 projection)
         {
-            // Find all UI elements that are children of this canvas
-            var uiElements = scene.Entities
-                .Where(e => e.Parent?.Id == canvasEntity.Id &&
-                       (e.HasComponent<Engine.Components.UI.UIImageComponent>() ||
-                        e.HasComponent<Engine.Components.UI.UITextComponent>() ||
-                        e.HasComponent<Engine.Components.UI.UIButtonComponent>()))
-                .ToList();
+            // Find all UI elements that are children of this canvas (cache components)
+            var uiElements = new System.Collections.Generic.List<(Engine.Scene.Entity Entity, Engine.Components.UI.UIImageComponent? Img, Engine.Components.UI.UITextComponent? Txt, Engine.Components.UI.UIButtonComponent? Btn)>();
+            var ents = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scene.Entities);
+            for (int i = 0; i < ents.Length; i++)
+            {
+                var e = ents[i];
+                if (e.Parent?.Id != canvasEntity.Id) continue;
+
+                var img = e.GetComponent<Engine.Components.UI.UIImageComponent>();
+                var txt = e.GetComponent<Engine.Components.UI.UITextComponent>();
+                var btn = e.GetComponent<Engine.Components.UI.UIButtonComponent>();
+
+                if (img == null && txt == null && btn == null) continue;
+
+                uiElements.Add((e, img, txt, btn));
+            }
 
             // Early return if no UI elements to render
             if (uiElements.Count == 0) return;
@@ -200,22 +217,20 @@ void main()
             // Calculate canvas dimensions
             System.Numerics.Vector2 canvasSize = new System.Numerics.Vector2(canvas.Width > 0 ? canvas.Width : 1920, canvas.Height > 0 ? canvas.Height : 1080);
 
-            foreach (var elementEntity in uiElements)
+            for (int i = 0; i < uiElements.Count; i++)
             {
-                RenderUIElement(elementEntity, canvas, canvasSize, worldPos, worldRot, worldScale,
-                    viewportWidth, viewportHeight, view, projection);
+                var tuple = uiElements[i];
+                RenderUIElement(tuple.Entity, canvas, canvasSize, worldPos, worldRot, worldScale,
+                    viewportWidth, viewportHeight, view, projection, tuple.Img, tuple.Txt, tuple.Btn);
             }
         }
 
         private void RenderUIElement(Engine.Scene.Entity entity, Engine.Components.UI.CanvasComponent canvas,
             System.Numerics.Vector2 canvasSize, OpenTK.Mathematics.Vector3 canvasWorldPos, OpenTK.Mathematics.Quaternion canvasWorldRot, OpenTK.Mathematics.Vector3 canvasWorldScale,
-            int viewportWidth, int viewportHeight, Matrix4 view, Matrix4 projection)
+            int viewportWidth, int viewportHeight, Matrix4 view, Matrix4 projection,
+            Engine.Components.UI.UIImageComponent? imageComp, Engine.Components.UI.UITextComponent? textComp, Engine.Components.UI.UIButtonComponent? buttonComp)
         {
-            // Try to get any UI component
-            var imageComp = entity.GetComponent<Engine.Components.UI.UIImageComponent>();
-            var textComp = entity.GetComponent<Engine.Components.UI.UITextComponent>();
-            var buttonComp = entity.GetComponent<Engine.Components.UI.UIButtonComponent>();
-
+            // Components are passed in to avoid repeated GetComponent calls
             if (imageComp == null && textComp == null && buttonComp == null) return;
 
             // Get the rect transform (all UI components have it)

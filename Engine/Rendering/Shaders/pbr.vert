@@ -14,23 +14,23 @@ layout(std140) uniform Global {
     mat4 uProj;
     mat4 uViewProj;
     vec3 uCameraPos; float _pad1;
-    
+
 
     vec3 uDirLightDirection; float _pad2;
     vec3 uDirLightColor; float uDirLightIntensity;
-    
+
 
     int uPointLightCount; float _pad3; float _pad4; float _pad5;
     vec4 uPointLightPos0; vec4 uPointLightColor0;
     vec4 uPointLightPos1; vec4 uPointLightColor1;
     vec4 uPointLightPos2; vec4 uPointLightColor2;
     vec4 uPointLightPos3; vec4 uPointLightColor3;
-    
+
 
     int uSpotLightCount; float _pad6; float _pad7; float _pad8;
     vec4 uSpotLightPos0; vec4 uSpotLightDir0; vec4 uSpotLightColor0; float uSpotLightAngle0; float uSpotLightInnerAngle0; float _pad9; float _pad10;
     vec4 uSpotLightPos1; vec4 uSpotLightDir1; vec4 uSpotLightColor1; float uSpotLightAngle1; float uSpotLightInnerAngle1; float _pad11; float _pad12;
-    
+
     vec3 uAmbientColor; float uAmbientIntensity;
     vec3 uSkyboxTint; float uSkyboxExposure;
 
@@ -42,11 +42,29 @@ layout(std140) uniform Global {
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUV;
+out vec3 vViewDirTangent; // View direction in tangent space for parallax
 
 void main(){
     vec4 wp = u_Model * vec4(aPos,1.0);
     vWorldPos = wp.xyz;
     vNormal   = normalize(u_NormalMat * aNormal);
     vUV = aUV * u_TextureTiling + u_TextureOffset;
+
+    // Calculate tangent and bitangent in world space
+    // Since we don't have tangent attribute, derive it from normal
+    vec3 c1 = cross(vNormal, vec3(0.0, 0.0, 1.0));
+    vec3 c2 = cross(vNormal, vec3(0.0, 1.0, 0.0));
+    vec3 vTangent;
+    if (length(c1) > length(c2))
+        vTangent = normalize(c1);
+    else
+        vTangent = normalize(c2);
+    vec3 vBitangent = normalize(cross(vNormal, vTangent));
+
+    // Calculate view direction in tangent space for parallax mapping
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    mat3 TBN = transpose(mat3(vTangent, vBitangent, vNormal));
+    vViewDirTangent = TBN * viewDir;
+
     gl_Position = uViewProj * wp;
 }

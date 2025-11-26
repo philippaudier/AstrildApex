@@ -5,8 +5,8 @@
   "TerrainLayers": null,
   "AlbedoTexture": null,
   "AlbedoColor": [
-    1,
-    1,
+    0,
+    0.49350667,
     1,
     1
   ],
@@ -28,8 +28,8 @@
   "DetailMaskTexture": null,
   "DetailAlbedoTexture": null,
   "DetailNormalTexture": null,
-  "Metallic": 0,
-  "Roughness": 1,
+  "Metallic": 1,
+  "Roughness": 0,
   "TextureTiling": [
     1,
     1
@@ -38,6 +38,9 @@
     0,
     0
   ],
+  "UseTriplanar": 0,
+  "TriplanarScale": 1,
+  "TriplanarBlendSharpness": 4,
   "TransparencyMode": 0,
   "Opacity": 1,
   "Saturation": 1,

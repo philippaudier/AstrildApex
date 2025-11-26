@@ -86,11 +86,13 @@ namespace Editor.UI
                 // because it can change docking focus and cause the UI to flicker when the mouse
                 // hovers the toolbar. Allow ImGui to handle focus naturally; NoBringToFrontOnFocus
                 // prevents aggressive reordering while still allowing item activation on click.
+
+                // PERF FIX: Commented out debug info that was creating unnecessary draw calls
                 // Debug: show ImGui input/capture state to help diagnose interaction issues
-                var _io = ImGui.GetIO();
-                ImGui.TextDisabled($"io.WantCaptureMouse: {_io.WantCaptureMouse}  MouseDown0: {_io.MouseDown[0]}");
-                ImGui.SameLine();
-                ImGui.TextDisabled($"AnyItemActive: {ImGui.IsAnyItemActive()} WindowHovered: {ImGui.IsWindowHovered()} WindowFocused: {ImGui.IsWindowFocused()} ");
+                // var _io = ImGui.GetIO();
+                // ImGui.TextDisabled($"io.WantCaptureMouse: {_io.WantCaptureMouse}  MouseDown0: {_io.MouseDown[0]}");
+                // ImGui.SameLine();
+                // ImGui.TextDisabled($"AnyItemActive: {ImGui.IsAnyItemActive()} WindowHovered: {ImGui.IsWindowHovered()} WindowFocused: {ImGui.IsWindowFocused()} ");
 
                 // Enforce clamping to the scene rect so the window cannot leave the image area.
                 // Only set the window pos when it is actually outside the allowed rect to avoid

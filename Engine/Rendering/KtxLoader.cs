@@ -56,8 +56,8 @@ namespace Engine.Rendering
             uint numberOfMipmapLevels = br.ReadUInt32();
             uint bytesOfKeyValueData = br.ReadUInt32();
 
-            try { Console.WriteLine($"[KtxLoader] Header: glType=0x{glType:X}, glTypeSize={glTypeSize}, glFormat=0x{glFormat:X}, glInternalFormat=0x{glInternalFormat:X}, glBaseInternalFormat=0x{glBaseInternalFormat:X}"); } catch { }
-            try { Console.WriteLine($"[KtxLoader] Size: {pixelWidth}x{pixelHeight}, faces={numberOfFaces}, mips={numberOfMipmapLevels}"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Header: glType=0x{glType:X}, glTypeSize={glTypeSize}, glFormat=0x{glFormat:X}, glInternalFormat=0x{glInternalFormat:X}, glBaseInternalFormat=0x{glBaseInternalFormat:X}"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Size: {pixelWidth}x{pixelHeight}, faces={numberOfFaces}, mips={numberOfMipmapLevels}"); } catch { }
 
             // Skip key/value data
             if (bytesOfKeyValueData > 0)
@@ -70,7 +70,7 @@ namespace Engine.Rendering
             // glType != 0 means uncompressed (even if data seems smaller than expected)
             bool isCompressed = (glType == 0);
             
-            try { Console.WriteLine($"[KtxLoader] glType={glType}, isCompressed={isCompressed}"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"[KtxLoader] glType={glType}, isCompressed={isCompressed}"); } catch { }
             
             var kimg = new KtxImage
             {
@@ -96,7 +96,7 @@ namespace Engine.Rendering
                 kimg.Format = PixelFormat.Rgb; // Not used for compressed
                 kimg.Type = PixelType.UnsignedByte; // Not used for compressed
                 kimg.IsFloatFormat = true; // Assume HDR for cmgen outputs
-                try { Console.WriteLine($"[KtxLoader] Detected COMPRESSED format: 0x{glInternalFormat:X}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Detected COMPRESSED format: 0x{glInternalFormat:X}"); } catch { }
             }
             // Check for packed HDR format (R11F_G11F_B10F)
             else if (glInternalFormat == GL_R11F_G11F_B10F || glType == GL_R11F_G11F_B10F)
@@ -106,7 +106,7 @@ namespace Engine.Rendering
                 kimg.Format = PixelFormat.Rgb;
                 kimg.Type = PixelType.UnsignedInt10F11F11FRev;
                 kimg.IsFloatFormat = true;
-                try { Console.WriteLine($"[KtxLoader] Detected R11F_G11F_B10F packed HDR format"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Detected R11F_G11F_B10F packed HDR format"); } catch { }
             }
             else if (glInternalFormat == GL_RGB16F || glInternalFormat == GL_RGBA16F)
             {
@@ -123,7 +123,7 @@ namespace Engine.Rendering
                     kimg.InternalFormat = PixelInternalFormat.Rgb16f;
                     kimg.Format = PixelFormat.Rgb;
                 }
-                try { Console.WriteLine($"[KtxLoader] Detected RGB16F half-float format"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Detected RGB16F half-float format"); } catch { }
             }
             else if (glTypeSize == 1)
             {
@@ -164,7 +164,7 @@ namespace Engine.Rendering
                 kimg.IsFloatFormat = false;
                 kimg.InternalFormat = (glBaseInternalFormat == 0x1908) ? PixelInternalFormat.Rgba8 : PixelInternalFormat.Rgb8;
                 kimg.Format = (glBaseInternalFormat == 0x1908) ? PixelFormat.Rgba : PixelFormat.Rgb;
-                try { Console.WriteLine($"[KtxLoader] WARNING: Unknown format, falling back to RGB8"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] WARNING: Unknown format, falling back to RGB8"); } catch { }
             }
 
             // Read mip levels
@@ -174,7 +174,7 @@ namespace Engine.Rendering
                 uint imageSize = 0;
                 try { imageSize = br.ReadUInt32(); } catch { throw new EndOfStreamException("Unexpected EOF reading KTX imageSize"); }
 
-                try { Console.WriteLine($"[KtxLoader] Mip {mip}: imageSize={imageSize} bytes"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Mip {mip}: imageSize={imageSize} bytes"); } catch { }
 
                 var faceData = new byte[faces][];
 
@@ -215,7 +215,7 @@ namespace Engine.Rendering
                 int expectedFaceSize = mipWidth * mipHeight * bytesPerPixel;
                 int expectedTotalSize = expectedFaceSize * faces;
 
-                try { Console.WriteLine($"[KtxLoader] Mip {mip}: {mipWidth}x{mipHeight}, expected {expectedFaceSize} bytes/face, total {expectedTotalSize} vs actual {imageSize}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Mip {mip}: {mipWidth}x{mipHeight}, expected {expectedFaceSize} bytes/face, total {expectedTotalSize} vs actual {imageSize}"); } catch { }
 
                 // CRITICAL FIX: If imageSize doesn't match expected uncompressed size,
                 // the data is actually compressed regardless of glType
@@ -223,7 +223,7 @@ namespace Engine.Rendering
                 if (!kimg.IsCompressed && imageSize != expectedTotalSize)
                 {
                     kimg.IsCompressed = true;
-                    try { Console.WriteLine($"[KtxLoader] DATA SIZE MISMATCH - Treating as COMPRESSED: actual {imageSize} != expected {expectedTotalSize}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[KtxLoader] DATA SIZE MISMATCH - Treating as COMPRESSED: actual {imageSize} != expected {expectedTotalSize}"); } catch { }
                 }
 
                 // Read all data at once and split evenly among faces (cmgen format)
@@ -237,7 +237,7 @@ namespace Engine.Rendering
                     var arr = new byte[length];
                     Array.Copy(mipBytes, start, arr, 0, length);
                     faceData[f] = arr;
-                    try { Console.WriteLine($"[KtxLoader] Face {f}: {length} bytes"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[KtxLoader] Face {f}: {length} bytes"); } catch { }
                 }
 
                 kimg.MipFaces.Add(faceData);

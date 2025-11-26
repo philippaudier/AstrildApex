@@ -75,19 +75,41 @@ namespace Editor.Panels
     private static readonly Queue<string> _externalImportQueue = new();
     private static readonly object _externalImportLock = new();
 
+        // ====== PERF OPTIMIZATION: Dirty flags ======
+        private static bool _isDirty = true;  // Mark for full redraw
+        private static bool _watcherInitialized = false; // Track watcher init
+        private static int _framesSinceLastCheck = 0;  // Throttle FS checks
+        private const int FS_CHECK_INTERVAL = 30;  // Check filesystem every 30 frames (~0.5s at 60fps)
+
         // ============= PUBLIC =============
         public static void Draw()
         {
-            EnsureWatcher();
-
-            if (_pendingRefresh && (DateTime.UtcNow - _lastFsEvent).TotalMilliseconds > DebounceMs)
+            // PERF FIX: Initialize watcher only once instead of every frame
+            if (!_watcherInitialized)
             {
-                _pendingRefresh = false;
-                RefreshNow();
+                EnsureWatcher();
+                _watcherInitialized = true;
             }
 
-            // Process any external imports before drawing contents, so items appear immediately
-            TryProcessExternalImports();
+            // PERF FIX: Throttle filesystem refresh checks to every 30 frames instead of every frame
+            _framesSinceLastCheck++;
+            if (_framesSinceLastCheck >= FS_CHECK_INTERVAL)
+            {
+                _framesSinceLastCheck = 0;
+                if (_pendingRefresh && (DateTime.UtcNow - _lastFsEvent).TotalMilliseconds > DebounceMs)
+                {
+                    _pendingRefresh = false;
+                    RefreshNow();
+                    _isDirty = true;  // Mark for redraw after filesystem change
+                }
+            }
+
+            // PERF FIX: Only process external imports if queue is not empty
+            if (_externalImportQueue.Count > 0)
+            {
+                TryProcessExternalImports();
+                _isDirty = true;  // Mark for redraw after import
+            }
 
             ImGui.Begin("Assets");
 
@@ -747,6 +769,10 @@ namespace Editor.Panels
                     _newKind = NewKind.SkyboxMaterial; _newName = "NewSkyboxMaterial";
                     _newTargetRel = relDir; _newPopupJustOpened = true;
                 }
+                if (ImGui.MenuItem("Create PBR Material from Folder"))
+                {
+                    CreatePBRMaterialFromFolder(relDir);
+                }
                 if (ImGui.MenuItem("New Folder"))
                 {
                     _newKind = NewKind.Folder; _newName = "NewFolder";
@@ -794,7 +820,15 @@ namespace Editor.Panels
 
             if (a.Type.Equals("Texture2D", StringComparison.OrdinalIgnoreCase))
             {
-                int handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                // PERFORMANCE FIX: Only load texture previews for visible items to avoid loading hundreds of textures
+                // This prevents the infinite TextureCache reload loop when opening folders with many textures
+                int handle = 0;
+                bool isVisible = IsRectVisible(tl, br);
+                if (isVisible || selected)
+                {
+                    handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                }
+
                 if (handle != 0)
                 {
                     ImGui.GetWindowDrawList().AddImage(
@@ -1265,7 +1299,14 @@ namespace Editor.Panels
 
                 if (a.Type.Equals("Texture2D", StringComparison.OrdinalIgnoreCase))
                 {
-                    int handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                    // PERFORMANCE FIX: Only load texture previews for visible items to avoid loading hundreds of textures
+                    int handle = 0;
+                    bool isVisible = IsRectVisible(rowStart, rowEnd);
+                    if (isVisible || selected)
+                    {
+                        handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                    }
+
                     if (handle != 0)
                     {
                         dl.AddImage((IntPtr)handle, iconTL, iconBR, new SysVec2(0, 1), new SysVec2(1, 0), 0xFFFFFFFF);
@@ -2227,6 +2268,161 @@ namespace Editor.Panels
             _renameFolderRel = folderRel;
             _renameName = suggested;
             _renameJustOpened = true;
+        }
+
+        // ===== Create PBR Material from Folder =====
+        private static void CreatePBRMaterialFromFolder(string folderRel)
+        {
+            try
+            {
+                var folderAbs = Path.Combine(AssetDatabase.AssetsRoot, folderRel);
+                if (!Directory.Exists(folderAbs))
+                {
+                    Console.WriteLine($"[AssetsPanel] Folder not found: {folderAbs}");
+                    return;
+                }
+
+                // Get all texture files in the folder
+                var texFiles = Directory.GetFiles(folderAbs, "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => {
+                        var ext = Path.GetExtension(f).ToLowerInvariant();
+                        return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".exr";
+                    })
+                    .Select(f => Path.GetFileName(f))
+                    .ToList();
+
+                if (texFiles.Count == 0)
+                {
+                    Console.WriteLine($"[AssetsPanel] No texture files found in folder: {folderRel}");
+                    return;
+                }
+
+                // Create new material
+                var materialName = Path.GetFileName(folderRel.TrimEnd('/', '\\'));
+                if (string.IsNullOrEmpty(materialName)) materialName = "Material";
+
+                var mat = new MaterialAsset
+                {
+                    Guid = Guid.NewGuid(),
+                    Name = materialName,
+                    Shader = "ForwardBase"
+                };
+
+                // Auto-detect and assign textures based on filename patterns
+                foreach (var texFile in texFiles)
+                {
+                    var lowerName = texFile.ToLowerInvariant();
+                    var texPath = Path.Combine(folderAbs, texFile);
+
+                    // Try to find the asset GUID for this texture
+                    // SIMPLER APPROACH: Just match by absolute path since we know the exact file location
+                    var texAsset = AssetDatabase.All().FirstOrDefault(a =>
+                        (a.Type.Equals("Texture", StringComparison.OrdinalIgnoreCase) ||
+                         a.Type.Equals("Texture2D", StringComparison.OrdinalIgnoreCase)) &&
+                        Path.GetFullPath(a.Path).Equals(Path.GetFullPath(texPath), StringComparison.OrdinalIgnoreCase));
+                    if (texAsset == null || texAsset.Guid == Guid.Empty)
+                    {
+                        // Texture not imported yet, skip
+                        Console.WriteLine($"[AssetsPanel] Texture not found in AssetDatabase: {texFile}");
+                        Console.WriteLine($"[AssetsPanel] Looking for path: {Path.GetFullPath(texPath)}");
+                        continue;
+                    }
+
+                    Console.WriteLine($"[AssetsPanel] Found texture: {texFile} -> GUID: {texAsset.Guid}");
+
+                    // Albedo / Diffuse / Color / BaseColor
+                    if ((lowerName.Contains("albedo") || lowerName.Contains("diffuse") ||
+                         lowerName.Contains("color") || lowerName.Contains("basecolor") ||
+                         lowerName.Contains("base_color") || lowerName.Contains("col")) &&
+                        !lowerName.Contains("ao") && !lowerName.Contains("occlusion"))
+                    {
+                        mat.AlbedoTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Albedo: {texFile}");
+                    }
+                    // Normal
+                    else if (lowerName.Contains("normal") || lowerName.Contains("norm") || lowerName.Contains("nrm"))
+                    {
+                        mat.NormalTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Normal: {texFile}");
+                    }
+                    // Metallic
+                    else if (lowerName.Contains("metallic") || lowerName.Contains("metal") || lowerName.Contains("met"))
+                    {
+                        mat.MetallicTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Metallic: {texFile}");
+                    }
+                    // Roughness
+                    else if (lowerName.Contains("roughness") || lowerName.Contains("rough") || lowerName.Contains("rgh"))
+                    {
+                        mat.RoughnessTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Roughness: {texFile}");
+                    }
+                    // MetallicRoughness (combined)
+                    else if (lowerName.Contains("metallicroughness") || lowerName.Contains("metalrough") ||
+                             lowerName.Contains("orm") || lowerName.Contains("mr"))
+                    {
+                        mat.MetallicRoughnessTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned MetallicRoughness: {texFile}");
+                    }
+                    // Ambient Occlusion
+                    else if (lowerName.Contains("ao") || lowerName.Contains("occlusion") || lowerName.Contains("ambient"))
+                    {
+                        mat.OcclusionTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Occlusion: {texFile}");
+                    }
+                    // Emissive / Emission / Glow
+                    else if (lowerName.Contains("emissive") || lowerName.Contains("emission") ||
+                             lowerName.Contains("emit") || lowerName.Contains("glow"))
+                    {
+                        mat.EmissiveTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Emissive: {texFile}");
+                    }
+                    // Height / Displacement / Parallax
+                    else if (lowerName.Contains("height") || lowerName.Contains("displacement") ||
+                             lowerName.Contains("disp") || lowerName.Contains("parallax") || lowerName.Contains("bump"))
+                    {
+                        mat.HeightTexture = texAsset.Guid;
+                        Console.WriteLine($"[AssetsPanel] Assigned Height: {texFile}");
+                    }
+                }
+
+                // Save material
+                var materialPath = Path.Combine(folderAbs, materialName + ".material");
+                MaterialAsset.Save(materialPath, mat);
+
+                // Refresh asset database
+                RefreshNow();
+
+                Console.WriteLine($"[AssetsPanel] Created PBR material: {materialPath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AssetsPanel] Error creating PBR material: {ex.Message}");
+            }
+        }
+
+        // ===== Visibility Check =====
+        /// <summary>
+        /// Check if a rectangle (in screen space) is visible in the current ImGui window
+        /// </summary>
+        private static bool IsRectVisible(SysVec2 rectMin, SysVec2 rectMax)
+        {
+            var windowMin = ImGui.GetWindowPos();
+            var windowMax = new SysVec2(
+                windowMin.X + ImGui.GetWindowSize().X,
+                windowMin.Y + ImGui.GetWindowSize().Y
+            );
+
+            // Add a small margin to preload items that are just about to come into view
+            const float margin = 100f;
+            windowMin.X -= margin;
+            windowMin.Y -= margin;
+            windowMax.X += margin;
+            windowMax.Y += margin;
+
+            // Check if rectangles overlap
+            return !(rectMax.X < windowMin.X || rectMin.X > windowMax.X ||
+                     rectMax.Y < windowMin.Y || rectMin.Y > windowMax.Y);
         }
 
         // ===== Utils =====

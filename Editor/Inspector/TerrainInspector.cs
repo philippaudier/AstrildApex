@@ -46,30 +46,33 @@ namespace Editor.Inspector
             ImGui.Text("Mesh Resolution");
             ImGui.TextDisabled("Higher = smoother but slower");
 
-            int meshRes = terrain.MeshResolution;
-            if (ImGui.SliderInt("Resolution", ref meshRes, 32, 1024))
+            // Dropdown with power-of-2 resolutions
+            string[] resolutionLabels = { "128", "256", "512", "1024", "2048", "4096" };
+            int[] resolutionValues = { 128, 256, 512, 1024, 2048, 4096 };
+
+            int currentMeshRes = terrain.MeshResolution;
+            int currentIndex = Array.IndexOf(resolutionValues, currentMeshRes);
+            if (currentIndex == -1) currentIndex = 2; // Default to 512 if not found
+
+            string preview = resolutionLabels[currentIndex];
+            if (ImGui.BeginCombo("Resolution", preview))
             {
-                terrain.MeshResolution = meshRes;
+                for (int i = 0; i < resolutionLabels.Length; i++)
+                {
+                    bool isSelected = (currentIndex == i);
+                    if (ImGui.Selectable(resolutionLabels[i], isSelected))
+                    {
+                        terrain.MeshResolution = resolutionValues[i];
+                        currentIndex = i;
+                    }
+                    if (isSelected)
+                        ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
             }
 
             ImGui.SameLine();
-            ImGui.TextDisabled($"({meshRes}x{meshRes} vertices)");
-
-            // Quick preset buttons
-            if (ImGui.Button("Low (128)"))
-            {
-                terrain.MeshResolution = 128;
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Med (256)"))
-            {
-                terrain.MeshResolution = 256;
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("High (512)"))
-            {
-                terrain.MeshResolution = 512;
-            }
+            ImGui.TextDisabled($"({terrain.MeshResolution}x{terrain.MeshResolution} = {terrain.MeshResolution * terrain.MeshResolution:N0} vertices)");
 
             ImGui.Separator();
 
@@ -321,6 +324,37 @@ namespace Editor.Inspector
             {
                 terrain.ClearTerrain();
                 LogManager.LogInfo("Terrain cleared", "TerrainInspector");
+            }
+
+            // === CLEAR CACHE BUTTON ===
+            if (ImGui.Button("Clear Cache & Regenerate", new System.Numerics.Vector2(-1, 0)))
+            {
+                try
+                {
+                    // Delete all cache files
+                    string cacheDir = System.IO.Path.Combine("Cache", "Terrain");
+                    if (System.IO.Directory.Exists(cacheDir))
+                    {
+                        var files = System.IO.Directory.GetFiles(cacheDir, "*.cache");
+                        foreach (var file in files)
+                        {
+                            try { System.IO.File.Delete(file); } catch { }
+                        }
+                        LogManager.LogInfo($"Deleted {files.Length} cache files", "TerrainInspector");
+                    }
+
+                    // Clear and regenerate
+                    terrain.ClearTerrain();
+                    if (canGenerate)
+                    {
+                        terrain.GenerateTerrain();
+                        LogManager.LogInfo("Terrain regenerated with fresh cache!", "TerrainInspector");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogWarning($"Failed to clear cache: {ex.Message}", "TerrainInspector");
+                }
             }
 
             ImGui.Separator();

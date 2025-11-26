@@ -61,21 +61,103 @@ namespace Editor.SceneManagement
         
         public static void NewScene()
         {
-            var sc = EditorUI.MainViewport.Renderer?.Scene;
-            if (sc == null) return;
-            
-            sc.Entities.Clear();
+            var oldRenderer = EditorUI.MainViewport.Renderer;
+
+            // Create a fresh Scene instance.
+            var newScene = new Engine.Scene.Scene();
+
+            if (oldRenderer != null)
+            {
+                // Reuse existing renderer instance to avoid lifecycle issues.
+                try
+                {
+                    oldRenderer.SetScene(newScene);
+                    // Ensure editor-like state
+                    oldRenderer.ForceEditorCamera = true;
+                    oldRenderer.GridVisible = Editor.State.EditorSettings.ShowGrid;
+                    oldRenderer.SetGameMode(false);
+
+                    // Clear caches and framebuffers to avoid stale textures
+                    try { oldRenderer.ClearMaterialCache(); } catch { }
+                    try { oldRenderer.ClearFramebuffers(); } catch { }
+
+                    // Force a resize using the main window client size so FBOs are created
+                    try
+                    {
+                        var gw = Program.GameWindow;
+                        if (gw != null)
+                        {
+                            var size = gw.ClientSize;
+                            oldRenderer.Resize(size.X, size.Y);
+                        }
+                    }
+                    catch { }
+                }
+                catch { }
+            }
+            else
+            {
+                // No existing renderer: create one and assign scene
+                var renderer = new Editor.Rendering.ViewportRenderer();
+                try
+                {
+                    renderer.GridVisible = Editor.State.EditorSettings.ShowGrid;
+                    renderer.ForceEditorCamera = true;
+                    renderer.SetGameMode(false);
+                }
+                catch { }
+
+                EditorUI.MainViewport.Renderer = renderer;
+                try { Engine.Assets.AssetDatabase.MaterialSaved += renderer.OnMaterialSaved; } catch { }
+
+                renderer.SetScene(newScene);
+                try { renderer.ClearMaterialCache(); } catch { }
+                try { renderer.ClearFramebuffers(); } catch { }
+            }
+
+            // Determine which renderer instance to operate on
+            var rendererToUse = EditorUI.MainViewport.Renderer;
+
+            // Clear collision system to remove orphaned colliders
+            Engine.Physics.CollisionSystem.ClearAll();
+
+            // Clear global caches to fully reset render state
+            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+            Engine.Rendering.TextureCache.ClearCache();
+
+            // Force clear viewport and game panel material caches to invalidate cached textures
+            try { rendererToUse?.ClearMaterialCache(); } catch { }
+            try { GamePanel.ClearMaterialCache(); } catch { }
+
+            // Clear GL framebuffers to avoid showing stale render data
+            try { rendererToUse?.ClearFramebuffers(); } catch { }
+            try { GamePanel.ClearFramebuffers(); } catch { }
+
+            // Reset selection/state
             Selection.ActiveEntityId = 0;
             _currentScenePath = null;
             _isSceneModified = false;
-            
-            // Reset selection and inspector
             Selection.ClearAll();
-            EditorUI.MainViewport.UpdateGizmoPivot();
+
+            // Sélectionne automatiquement le premier objet de la scène si présent
+            var mainRenderer = EditorUI.MainViewport.Renderer;
+            var newSceneInstance = mainRenderer?.Scene;
+            if (newSceneInstance != null && newSceneInstance.Entities.Count > 0)
+            {
+                Selection.ActiveEntityId = newSceneInstance.Entities[0].Id;
+                Selection.Selected.Add(Selection.ActiveEntityId);
+                EditorUI.MainViewport.UpdateGizmoPivot();
+            }
+            else
+            {
+                EditorUI.MainViewport.UpdateGizmoPivot();
+            }
             UndoRedo.RaiseAfterChange();
-            
+
             // Update window title
             Program.UpdateWindowTitle();
+
+            LogManager.LogInfo("New scene created - assigned fresh Scene instance and cleared caches/framebuffers", "SceneManager");
         }
         
         public static void SaveScene()
@@ -224,6 +306,10 @@ namespace Editor.SceneManagement
             var sc = EditorUI.MainViewport.Renderer?.Scene;
             if (sc == null) return;
 
+            // CRITICAL FIX: Clear all collision system data BEFORE loading scene
+            // This removes phantom/orphaned colliders from deleted meshes that persist across scenes
+            Engine.Physics.CollisionSystem.ClearAll();
+
             ProgressManager.StepTracker? tracker = null;
             try
             {
@@ -291,8 +377,52 @@ namespace Editor.SceneManagement
                         LogManager.LogWarning($"FlushPendingUploads failed: {ex.Message}", "SceneManager");
                     }
 
+                    // Diagnostic: log EnvironmentSettings skybox path and AssetDatabase resolution
+                    try
+                    {
+                        var envEntity = sc.Entities.FirstOrDefault(e => e.HasComponent<Engine.Components.EnvironmentSettings>());
+                        if (envEntity != null)
+                        {
+                            var env = envEntity.GetComponent<Engine.Components.EnvironmentSettings>();
+                            try { Engine.Utils.DebugLogger.Log($"[SceneManager] EnvironmentSettings.SkyboxMaterialPath = '{env.SkyboxMaterialPath}'"); } catch { }
+                            if (!string.IsNullOrEmpty(env.SkyboxMaterialPath))
+                            {
+                                if (Engine.Assets.AssetDatabase.TryGetByPath(env.SkyboxMaterialPath, out var rec))
+                                {
+                                    try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase resolved skybox -> GUID={rec.Guid} Path={rec.Path} Type={rec.Type}"); } catch { }
+                                }
+                                else
+                                {
+                                    try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase could NOT resolve skybox path: {env.SkyboxMaterialPath}"); } catch { }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            try { Engine.Utils.DebugLogger.Log("[SceneManager] No EnvironmentSettings entity found in scene"); } catch { }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Engine.Utils.DebugLogger.Log($"[SceneManager] Exception while logging EnvironmentSettings: {ex.Message}"); } catch { }
+                    }
+
                     // Clear material cache to force reload with fresh texture handles
                     Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+
+                    // CRITICAL FIX: Reset IBL cache to force regeneration with new scene's skybox
+                    // Without this, IBL from the previous scene persists and creates incorrect reflections
+                    // CRITICAL FIX: Reset IBL cache to force regeneration with new scene's skybox
+                    // The IBL will be generated automatically on the first render frame by RenderCubemap()
+                    try
+                    {
+                        Console.WriteLine($"[SceneManager] Resetting IBL cache for new scene");
+                        EditorUI.MainViewport.Renderer?.ResetIBLCache();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Failed to reset IBL cache: {ex.Message}", "SceneManager");
+                    }
 
                     // Save as last opened scene for auto-loading
                     var relativePath = Path.GetRelativePath(ProjectPaths.ProjectRoot, fullPath);
@@ -390,11 +520,23 @@ namespace Editor.SceneManagement
                 {
                     if (!string.IsNullOrEmpty(_saveAsFileName))
                     {
-                        var assetsDir = ProjectPaths.AssetsDir;
-                        var targetFolder = Path.Combine(assetsDir, _selectedFolder);
-                        var fullPath = Path.Combine(targetFolder, _saveAsFileName);
-                        
-                        SaveSceneToPath(fullPath);
+                        try
+                        {
+                            var assetsDir = ProjectPaths.AssetsDir;
+                            var targetFolder = Path.Combine(assetsDir, _selectedFolder);
+                            var fullPath = Path.Combine(targetFolder, _saveAsFileName);
+
+                            // Defer the actual save to avoid long blocking work and to
+                            // prevent exceptions from escaping the ImGui frame (which
+                            // would break the Begin/End pairing and cause Missing End()).
+                            Editor.Utils.DeferredActions.Enqueue(() => SaveSceneToPath(fullPath));
+                        }
+                        catch (Exception ex)
+                        {
+                            LogManager.LogError($"Failed to queue SaveSceneAs action: {ex.Message}", "SceneManager");
+                        }
+
+                        // Close dialog immediately (save happens asynchronously)
                         _showSaveAsDialog = false;
                     }
                 }

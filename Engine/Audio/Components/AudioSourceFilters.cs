@@ -29,6 +29,14 @@ namespace Engine.Audio.Components
         // EFX handle (internal)
         internal EfxFilterHandle FilterHandle;
 
+        // Parameterless constructor required for JSON deserialization
+        public AudioSourceFilter()
+        {
+            Type = AudioSourceFilterType.None;
+            Enabled = false;
+            Settings = null;
+        }
+
         public AudioSourceFilter(AudioSourceFilterType type)
         {
             Type = type;
@@ -69,6 +77,8 @@ namespace Engine.Audio.Components
                 }
             };
 
+            if (source.Filters == null)
+                source.Filters = new System.Collections.Generic.List<AudioSourceFilter>();
             source.Filters.Add(filter);
             CreateFilterHandle(filter);
             return filter;
@@ -89,6 +99,8 @@ namespace Engine.Audio.Components
                 }
             };
 
+            if (source.Filters == null)
+                source.Filters = new System.Collections.Generic.List<AudioSourceFilter>();
             source.Filters.Add(filter);
             CreateFilterHandle(filter);
             return filter;
@@ -152,6 +164,42 @@ namespace Engine.Audio.Components
             catch (Exception ex)
             {
                 Log.Error(ex, $"[AudioSourceFilter] Failed to create filter handle for {filter.Type}");
+            }
+        }
+
+        /// <summary>
+        /// Ensure a filter has a valid internal handle. Public helper for restoring
+        /// filter state after deserialization.
+        /// </summary>
+        public static void EnsureFilterHandle(AudioSourceFilter filter)
+        {
+            if (filter == null) return;
+            if (!AudioEfxBackend.Instance.IsEFXSupported) return;
+            try
+            {
+                if (!filter.FilterHandle.IsValid)
+                {
+                    // Reuse the same creation logic
+                    switch (filter.Type)
+                    {
+                        case AudioSourceFilterType.LowPass:
+                            if (filter.Settings is LowPassSettings lowPassSettings)
+                                filter.FilterHandle = AudioEfxBackend.Instance.CreateLowPassFilter(lowPassSettings);
+                            break;
+                        case AudioSourceFilterType.HighPass:
+                            if (filter.Settings is HighPassSettings highPassSettings)
+                                filter.FilterHandle = AudioEfxBackend.Instance.CreateHighPassFilter(highPassSettings);
+                            break;
+                        case AudioSourceFilterType.BandPass:
+                            if (filter.Settings is BandPassSettings bandPassSettings)
+                                filter.FilterHandle = AudioEfxBackend.Instance.CreateBandPassFilter(bandPassSettings);
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "[AudioSourceFilter] EnsureFilterHandle failed");
             }
         }
 

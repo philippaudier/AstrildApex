@@ -34,9 +34,9 @@ namespace Engine.Rendering.Terrain
             try
             {
                 if (Environment.GetEnvironmentVariable("TERRAIN_DEBUG_SHADER") == "1")
-                {
+                    {
                     shaderName = "TerrainDebug";
-                    Console.WriteLine("[TerrainRenderer] Using debug shader: TerrainDebug");
+                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] Using debug shader: TerrainDebug");
                 }
             }
             catch { }
@@ -44,7 +44,7 @@ namespace Engine.Rendering.Terrain
             _shader = LoadTerrainShader(shaderName);
             if (_shader == null)
             {
-                Console.WriteLine($"[TerrainRenderer] CRITICAL: Failed to load {shaderName} shader - terrain will not render!");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] CRITICAL: Failed to load {shaderName} shader - terrain will not render!");
             }
         }
 
@@ -57,14 +57,14 @@ namespace Engine.Rendering.Terrain
                 
                 if (shader == null)
                 {
-                    Console.WriteLine($"[TerrainRenderer] ERROR: Shader '{shaderName}' not found in ShaderLibrary");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Shader '{shaderName}' not found in ShaderLibrary");
                 }
                 
                 return shader;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[TerrainRenderer] ERROR: Failed to load shader '{shaderName}': {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Failed to load shader '{shaderName}': {ex.Message}");
                 return null;
             }
         }
@@ -101,7 +101,7 @@ namespace Engine.Rendering.Terrain
                 if (!_loggedFirstFrame)
                 {
                     if (Engine.Utils.DebugLogger.EnableVerbose)
-                        Console.WriteLine($"[TerrainRenderer] RenderTerrain FIRST CALL: shadows={shadowsEnabled}, ssao={ssaoEnabled}");
+                        Engine.Utils.DebugLogger.Log($"[TerrainRenderer] RenderTerrain FIRST CALL: shadows={shadowsEnabled}, ssao={ssaoEnabled}");
                     _loggedFirstFrame = true;
                 }
             }
@@ -109,7 +109,7 @@ namespace Engine.Rendering.Terrain
 
             if (terrain == null)
             {
-                Console.WriteLine("[TerrainRenderer] Terrain is null!");
+                Engine.Utils.DebugLogger.Log("[TerrainRenderer] Terrain is null!");
                 return;
             }
             if (_shader == null)
@@ -117,7 +117,7 @@ namespace Engine.Rendering.Terrain
                 _shader = LoadTerrainShader("TerrainForward");
                 if (_shader == null)
                 {
-                    Console.WriteLine("[TerrainRenderer] CRITICAL: Failed to load TerrainForward shader - terrain will not render!");
+                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] CRITICAL: Failed to load TerrainForward shader - terrain will not render!");
                     return;
                 }
             }
@@ -131,7 +131,7 @@ namespace Engine.Rendering.Terrain
                 
                 if (_shader == null || _shader.Handle == 0)
                 {
-                    Console.WriteLine("[TerrainRenderer] CRITICAL: Failed to reload shader after invalidation!");
+                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] CRITICAL: Failed to reload shader after invalidation!");
                     return;
                 }
             }
@@ -150,7 +150,8 @@ namespace Engine.Rendering.Terrain
             GL.Disable(EnableCap.Blend);
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
-            GL.Disable(EnableCap.CullFace);
+            // Culling ENABLED for terrain - triangles are wound CCW to face upward
+            GL.Enable(EnableCap.CullFace);
             GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
             
             // Check if debug face coloring is enabled
@@ -179,7 +180,7 @@ namespace Engine.Rendering.Terrain
                 }
                 else
                 {
-                    Console.WriteLine($"[TerrainRenderer] WARNING: Could not find 'Global' uniform block in shader!");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] WARNING: Could not find 'Global' uniform block in shader!");
                 }
             }
 
@@ -187,7 +188,7 @@ namespace Engine.Rendering.Terrain
             var shaderError = GL.GetError();
             if (shaderError != ErrorCode.NoError)
             {
-                Console.WriteLine($"[TerrainRenderer] GL error after shader.Use(): {shaderError}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] GL error after shader.Use(): {shaderError}");
             }
 
             // Verify shader is active (only in debug mode for performance)
@@ -195,7 +196,7 @@ namespace Engine.Rendering.Terrain
             int currentProgram = GL.GetInteger(GetPName.CurrentProgram);
             if (currentProgram != _shader.Handle)
             {
-                Console.WriteLine($"[TerrainRenderer] ERROR: Failed to activate shader! Expected {_shader.Handle}, got {currentProgram}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Failed to activate shader! Expected {_shader.Handle}, got {currentProgram}");
                 return;
             }
             #endif
@@ -291,7 +292,7 @@ namespace Engine.Rendering.Terrain
 
                 var err = GL.GetError();
                 if (err != ErrorCode.NoError)
-                    Console.WriteLine($"[TerrainRenderer] ERROR setting shadow uniforms: {err}");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR setting shadow uniforms: {err}");
             }
             else
             {
@@ -331,14 +332,14 @@ namespace Engine.Rendering.Terrain
                     var material = GetMaterialCached(terrain.TerrainMaterialGuid.Value);
                     if (material != null)
                     {
-                        if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine($"[TerrainRenderer] Using material {material.Guid} (name={material.Name}) for terrain");
+                        if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Using material {material.Guid} (name={material.Name}) for terrain");
                         if (material.TerrainLayers == null)
                         {
-                            if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine("[TerrainRenderer] Material has no TerrainLayers (null)");
+                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[TerrainRenderer] Material has no TerrainLayers (null)");
                         }
                         else
                         {
-                            if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine($"[TerrainRenderer] Material TerrainLayers length={material.TerrainLayers.Length}");
+                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Material TerrainLayers length={material.TerrainLayers.Length}");
                         }
                         // Configure terrain layers if they exist
                         if (material.TerrainLayers != null && material.TerrainLayers.Length > 0)
@@ -399,11 +400,11 @@ namespace Engine.Rendering.Terrain
                                         GL.Uniform1(albedoLoc, i * 2);
                                         var err = GL.GetError();
                                         if (err != ErrorCode.NoError && i == 0)
-                                            Console.WriteLine($"[TerrainRenderer] ERROR setting u_LayerAlbedo[{i}]: {err}");
+                                            Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR setting u_LayerAlbedo[{i}]: {err}");
                                     }
 
                                         // Debug: log bound texture handle for this layer's albedo
-                                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine($"[TerrainRenderer] Bound Layer {i} Albedo -> unit={i*2}, handleBound={(GL.GetInteger(GetPName.TextureBinding2D))}"); } catch { }
+                                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Bound Layer {i} Albedo -> unit={i*2}, handleBound={(GL.GetInteger(GetPName.TextureBinding2D))}"); } catch { }
 
                                     // Bind normal texture (from Material or legacy property)
                                     GL.ActiveTexture(TextureUnit.Texture0 + i * 2 + 1);
@@ -430,10 +431,10 @@ namespace Engine.Rendering.Terrain
                                         GL.Uniform1(normalLoc, i * 2 + 1);
                                         var err = GL.GetError();
                                         if (err != ErrorCode.NoError && i == 0)
-                                            Console.WriteLine($"[TerrainRenderer] ERROR setting u_LayerNormal[{i}]: {err}");
+                                            Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR setting u_LayerNormal[{i}]: {err}");
                                     }
 
-                                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Console.WriteLine($"[TerrainRenderer] Bound Layer {i} Normal -> unit={i*2+1}, handleBound={(GL.GetInteger(GetPName.TextureBinding2D))}"); } catch { }
+                                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Bound Layer {i} Normal -> unit={i*2+1}, handleBound={(GL.GetInteger(GetPName.TextureBinding2D))}"); } catch { }
 
                                     // Set layer parameters (UV transform comes from layer, not material)
                                     _shader.SetVec4($"u_LayerTilingOffset[{i}]", new Vector4(
@@ -563,7 +564,7 @@ namespace Engine.Rendering.Terrain
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"[TerrainRenderer] Error binding fallback material textures: {ex.Message}");
+                                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Error binding fallback material textures: {ex.Message}");
                                 GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                             }
                         }
@@ -578,7 +579,7 @@ namespace Engine.Rendering.Terrain
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[TerrainRenderer] Error loading terrain material: {ex.Message}");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Error loading terrain material: {ex.Message}");
                     _shader.SetInt("u_LayerCount", 0);
                     GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                 }
@@ -595,7 +596,7 @@ namespace Engine.Rendering.Terrain
             var preRenderError = GL.GetError();
             if (preRenderError != ErrorCode.NoError)
             {
-                Console.WriteLine($"[TerrainRenderer] GL error BEFORE terrain.Render(): {preRenderError}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] GL error BEFORE terrain.Render(): {preRenderError}");
             }
 
             // Render terrain
@@ -605,7 +606,7 @@ namespace Engine.Rendering.Terrain
             var postRenderError = GL.GetError();
             if (postRenderError != ErrorCode.NoError)
             {
-                Console.WriteLine($"[TerrainRenderer] ❌ GL error AFTER terrain.Render(): {postRenderError}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ❌ GL error AFTER terrain.Render(): {postRenderError}");
             }
             
             // Log first-frame debug info (only once per terrain)
@@ -613,7 +614,7 @@ namespace Engine.Rendering.Terrain
             {
                 if (!_loggedFirstFrame)
                 {
-                    Console.WriteLine($"[TerrainRenderer] First frame rendered: shader={_shader?.Handle}, VAO bound, LayerCount uniform set");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] First frame rendered: shader={_shader?.Handle}, VAO bound, LayerCount uniform set");
                     _loggedFirstFrame = true;
                 }
             }
@@ -730,7 +731,7 @@ namespace Engine.Rendering.Terrain
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[TerrainRenderer] Error rendering water plane: {ex.Message}");
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Error rendering water plane: {ex.Message}");
                 }
             }
 
@@ -738,22 +739,22 @@ namespace Engine.Rendering.Terrain
             GL.ActiveTexture(TextureUnit.Texture0);
             // restore previous program if any
             GL.UseProgram(prevProgram);
-            // Note: we deliberately do not attempt to restore polygon mode or cull face precisely here because
-            // the higher-level renderer will set its preferred state; keep face culling disabled to match ViewportRenderer.
-            GL.Disable(EnableCap.CullFace);
+            // Restore culling state - let higher-level renderer manage culling
+            // Don't force it off as that breaks backface culling for all subsequent renders
+            GL.Enable(EnableCap.CullFace);
         }
 
         private void OnMaterialSaved(Guid materialGuid)
         {
             // Invalidate cached material when it's saved (edited in inspector)
-            Console.WriteLine($"[TerrainRenderer] ⚠️ OnMaterialSaved CALLED for Material {materialGuid}");
+            Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ⚠️ OnMaterialSaved CALLED for Material {materialGuid}");
             if (_materialCache.Remove(materialGuid))
             {
-                Console.WriteLine($"[TerrainRenderer] Material {materialGuid} invalidated from cache - will reload on next frame");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Material {materialGuid} invalidated from cache - will reload on next frame");
             }
             else
             {
-                Console.WriteLine($"[TerrainRenderer] Material {materialGuid} was NOT in cache (already invalidated or never loaded)");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Material {materialGuid} was NOT in cache (already invalidated or never loaded)");
             }
         }
 
@@ -781,7 +782,7 @@ namespace Engine.Rendering.Terrain
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[TerrainRenderer] Failed to load material {materialGuid}: {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Failed to load material {materialGuid}: {ex.Message}");
             }
 
             return null;

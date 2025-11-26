@@ -11,6 +11,7 @@ namespace Editor.Inspector
         static bool _editCol, _editMetal, _editSmooth, _editNormStr, _editTiling, _editOffset;
         static bool _editSat, _editBright, _editContrast, _editHue, _editEmission;
         static bool _editOcclusionStr, _editEmissiveCol, _editHeightScale;
+        static bool _editTriplanarScale, _editTriplanarBlend;
         static MaterialAsset? _before;
         // Cache temporaire pour éviter que l'Inspector recharge depuis le disque
         // immédiatement après avoir sauvegardé (évite écrasements/reverts visibles).
@@ -44,6 +45,9 @@ namespace Editor.Inspector
             HeightScale = m.HeightScale,
             TextureTiling = (float[])m.TextureTiling.Clone(),
             TextureOffset = (float[])m.TextureOffset.Clone(),
+            UseTriplanar = m.UseTriplanar,
+            TriplanarScale = m.TriplanarScale,
+            TriplanarBlendSharpness = m.TriplanarBlendSharpness,
             Saturation = m.Saturation,
             Brightness = m.Brightness,
             Contrast = m.Contrast,
@@ -57,10 +61,11 @@ namespace Editor.Inspector
             
             // If we are currently live-editing ANY property, use the cached _before material
             // to avoid reloading from disk (which would lose unsaved edits)
-            bool isLiveEditing = _editCol || _editMetal || _editSmooth || _editNormStr || 
-                                 _editTiling || _editOffset || _editSat || _editBright || 
+            bool isLiveEditing = _editCol || _editMetal || _editSmooth || _editNormStr ||
+                                 _editTiling || _editOffset || _editSat || _editBright ||
                                  _editContrast || _editHue || _editEmission ||
-                                 _editOcclusionStr || _editEmissiveCol || _editHeightScale;
+                                 _editOcclusionStr || _editEmissiveCol || _editHeightScale ||
+                                 _editTriplanarScale || _editTriplanarBlend;
             
             if (isLiveEditing && _before != null)
             {
@@ -721,7 +726,7 @@ namespace Editor.Inspector
 
                     // Height Scale slider
                     float heightScale = mat.HeightScale;
-                    if (ImGui.SliderFloat("Height Scale", ref heightScale, 0.0f, 0.2f, "%.3f"))
+                    if (ImGui.DragFloat("Height Scale", ref heightScale, 0.001f, 0.0f, 0.5f, "%.3f"))
                     {
                         BeginLive(ref _editHeightScale, mat);
                         mat.HeightScale = heightScale;
@@ -954,6 +959,60 @@ namespace Editor.Inspector
                 ImGui.SetTooltip("Reset tiling to (1,1) and offset to (0,0)");
             }
 
+            // --- Triplanar Mapping ---
+            ImGui.Separator();
+            ImGui.Text("Triplanar Mapping");
+
+            // Triplanar enable checkbox
+            bool useTriplanar = mat.UseTriplanar == 1;
+            if (ImGui.Checkbox("Enable Triplanar", ref useTriplanar))
+            {
+                _before ??= Clone(mat);
+                mat.UseTriplanar = useTriplanar ? 1 : 0;
+                AssetDatabase.SaveMaterial(mat);
+                UndoRedo.RaiseAfterChange();
+                PushUndoIfNeeded(guid, "Toggle Triplanar Mapping", ref _before);
+                try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Use world-space triplanar projection instead of UV mapping.\nPrevents texture stretching on non-uniform meshes.");
+            }
+
+            // Only show triplanar controls if enabled
+            if (useTriplanar)
+            {
+                // Triplanar scale
+                float triScale = mat.TriplanarScale;
+                if (ImGui.DragFloat("World Scale", ref triScale, 0.01f, 0.01f, 10f))
+                {
+                    BeginLive(ref _editTriplanarScale, mat);
+                    mat.TriplanarScale = triScale;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Triplanar Scale", ref _editTriplanarScale, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Texture scale in world space units.\nLower values = larger texture repetition.");
+                }
+
+                // Triplanar blend sharpness
+                float triBlend = mat.TriplanarBlendSharpness;
+                if (ImGui.SliderFloat("Blend Sharpness", ref triBlend, 1f, 10f))
+                {
+                    BeginLive(ref _editTriplanarBlend, mat);
+                    mat.TriplanarBlendSharpness = triBlend;
+                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat); } catch { }
+                    UndoRedo.TouchEdit();
+                }
+                EndLiveIfReleased(guid, "Triplanar Blend", ref _editTriplanarBlend, ref _before, mat);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Controls how sharply the three projections blend.\nLower = smooth blend, Higher = sharp transitions.");
+                }
+            }
+
             // --- Stylization Parameters ---
             ImGui.Separator();
             ImGui.Text("Stylization");
@@ -1137,6 +1196,9 @@ namespace Editor.Inspector
             if (!ArrayEquals(a.AlbedoColor, b.AlbedoColor)) return false;
             if (!ArrayEquals(a.TextureTiling, b.TextureTiling)) return false;
             if (!ArrayEquals(a.TextureOffset, b.TextureOffset)) return false;
+            if (a.UseTriplanar != b.UseTriplanar) return false;
+            if (Math.Abs(a.TriplanarScale - b.TriplanarScale) > 1e-6f) return false;
+            if (Math.Abs(a.TriplanarBlendSharpness - b.TriplanarBlendSharpness) > 1e-6f) return false;
             return true;
         }
 

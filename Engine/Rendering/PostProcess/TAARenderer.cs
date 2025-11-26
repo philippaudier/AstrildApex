@@ -119,8 +119,8 @@ namespace Engine.Rendering.PostProcess
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[TAA] Failed to load shader: {ex.Message}");
-                Console.WriteLine($"[TAA] Stack trace: {ex.StackTrace}");
+                try { Engine.Utils.DebugLogger.Log($"[TAA] Failed to load shader: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[TAA] Stack trace: {ex.StackTrace}"); } catch { }
             }
 
             // Load ultra-fast blit shader for copying result
@@ -136,8 +136,8 @@ namespace Engine.Rendering.PostProcess
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[TAA] Failed to load blit shader: {ex.Message}");
-                Console.WriteLine($"[TAA] Stack trace: {ex.StackTrace}");
+                try { Engine.Utils.DebugLogger.Log($"[TAA] Failed to load blit shader: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[TAA] Stack trace: {ex.StackTrace}"); } catch { }
             }
 
             CreateResources();
@@ -167,7 +167,7 @@ namespace Engine.Rendering.PostProcess
             var status = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
             if (status != FramebufferErrorCode.FramebufferComplete)
             {
-                Console.WriteLine($"[TAA] History framebuffer incomplete: {status}");
+                try { Engine.Utils.DebugLogger.Log($"[TAA] History framebuffer incomplete: {status}"); } catch { }
             }
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -284,16 +284,22 @@ namespace Engine.Rendering.PostProcess
             if (_taaShader == null || !Settings.Enabled)
             {
                 // TAA disabled - return input directly
-                Console.WriteLine($"[TAARenderer] TAA disabled - shader null: {_taaShader == null}, enabled: {Settings.Enabled}");
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] TAA disabled - shader null: {_taaShader == null}, enabled: {Settings.Enabled}"); } catch { }
+                }
                 return inputTexture;
             }
 
             if (!_loggedOnce)
             {
-                Console.WriteLine($"[TAARenderer] TAA ACTIVE - input: {inputTexture}, depth: {depthTexture}, shader: {_taaShader.Handle}");
-                Console.WriteLine($"[TAARenderer] History texture: {_historyTexture}, FBO: {_historyFBO}");
-                Console.WriteLine($"[TAARenderer] Settings - FeedbackMin: {Settings.FeedbackMin}, FeedbackMax: {Settings.FeedbackMax}, YCoCg: {Settings.UseYCoCg}");
-                Console.WriteLine($"[TAARenderer] Jitter: ({_currentJitter.X:F6}, {_currentJitter.Y:F6})");
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] TAA ACTIVE - input: {inputTexture}, depth: {depthTexture}, shader: {_taaShader.Handle}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] History texture: {_historyTexture}, FBO: {_historyFBO}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] Settings - FeedbackMin: {Settings.FeedbackMin}, FeedbackMax: {Settings.FeedbackMax}, YCoCg: {Settings.UseYCoCg}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] Jitter: ({_currentJitter.X:F6}, {_currentJitter.Y:F6})"); } catch { }
+                }
                 _loggedOnce = true;
             }
 
@@ -373,7 +379,10 @@ namespace Engine.Rendering.PostProcess
         {
             if (_blitShader == null || _historyTexture == 0)
             {
-                Console.WriteLine($"[TAARenderer] BlitToTarget skipped - blitShader null: {_blitShader == null}, historyTex: {_historyTexture}");
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] BlitToTarget skipped - blitShader null: {_blitShader == null}, historyTex: {_historyTexture}"); } catch { }
+                }
                 return;
             }
 
@@ -420,7 +429,10 @@ namespace Engine.Rendering.PostProcess
             _isFirstFrame = true;
             _frameIndex = 0;
 
-            Console.WriteLine($"[TAA] Resized to {width}x{height}");
+            if (Engine.Utils.DebugLogger.EnableVerbose)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[TAA] Resized to {width}x{height}"); } catch { }
+            }
         }
 
         /// <summary>
@@ -430,7 +442,10 @@ namespace Engine.Rendering.PostProcess
         {
             _isFirstFrame = true;
             _frameIndex = 0;
-            Console.WriteLine("[TAA] History reset");
+            if (Engine.Utils.DebugLogger.EnableVerbose)
+            {
+                try { Engine.Utils.DebugLogger.Log("[TAA] History reset"); } catch { }
+            }
         }
 
         public void Dispose()

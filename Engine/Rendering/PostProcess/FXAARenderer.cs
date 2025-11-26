@@ -29,7 +29,7 @@ namespace Engine.Rendering.PostProcess
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FXAA] Shader load failed: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[FXAA] Shader load failed: {ex.Message}"); } catch { }
                 _shader = null;
             }
 

@@ -10,6 +10,7 @@ using Editor.SceneManagement;
 using Editor.UI;
 using Editor.Tasks;
 using Editor.Logging;
+using Editor.UIManager.Profiling;
 
 namespace Editor.Panels;
 
@@ -37,19 +38,23 @@ public static class EditorUI
 
     public static bool ShowDemoWindow = false;
     public static bool ShowIconManager = false;
+    public static bool ShowPerformanceOverlay = false;
+
+    // PERF FIX: IconManager initialized once on first use instead of checking every frame
+    private static bool _iconManagerInitialized = false;
 
     public static void DrawDockspaceAndMainMenu()
     {
-        System.IO.Directory.CreateDirectory(Editor.State.ProjectPaths.AssetsDir);
-        AssetDatabase.Initialize(Editor.State.ProjectPaths.AssetsDir);
-        // S'assure qu'un seul Default White existe (et ne le recrée pas à chaque lancement)
-        Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial();
-        
-        // Initialize IconManager
-    var iconsPath = System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, "Editor", "Icons", "astrild-apex-icons.json");
-        if (!IconManager.HasIcon("save")) // Only initialize once
+        // NOTE: AssetDatabase initialization moved to Program.cs Load event (line 222)
+        // IconManager initialization moved to one-time init to avoid per-frame overhead
+        // These operations should NEVER be called every frame as they cause severe performance degradation
+
+        // PERF FIX: Initialize IconManager only once (moved out of per-frame loop)
+        if (!_iconManagerInitialized)
         {
+            var iconsPath = System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, "Editor", "Icons", "astrild-apex-icons.json");
             IconManager.Initialize(iconsPath);
+            _iconManagerInitialized = true;
         }
 
         var vp = ImGui.GetMainViewport();
@@ -84,6 +89,8 @@ public static class EditorUI
                 ImGui.Separator();
                 var sd = ShowDemoWindow; if (ImGui.MenuItem("ImGui Demo Window", null, sd)) ShowDemoWindow = !ShowDemoWindow;
                 var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
+                ImGui.Separator();
+                var spo = ShowPerformanceOverlay; if (ImGui.MenuItem("⚡ Performance Overlay", null, spo)) ShowPerformanceOverlay = !ShowPerformanceOverlay;
                 ImGui.EndMenu();
             }
 
@@ -136,7 +143,7 @@ public static class EditorUI
             }
             
             // Play Mode Controls - centered in menu bar
-            DrawPlayModeControls();
+                DrawPlayModeControls();
             
             ImGui.EndMainMenuBar();
         }
@@ -183,28 +190,47 @@ public static class EditorUI
     public static void DrawDefaultLayoutWindows()
     {
         // Panneaux réels (branchés sur la scène + sélection)
-    if (ShowHierarchy) HierarchyPanel.Draw();
-    if (ShowInspector) InspectorPanel.Draw();
-    if (ShowEnvironment) EnvironmentPanel.Draw();
-    if (ShowRenderingSettings) RenderingSettingsPanel.Draw();
-    if (ShowAssets) AssetsPanel.Draw();
-    if (ShowConsole) ConsolePanel.Draw();
-    if (ShowGame) GamePanel.Draw();
-    if (ShowAudioMixer) AudioMixer.Draw();
-    MainViewport.Draw();
+        if (ShowHierarchy) { PanelProfiler.BeginPanel("Hierarchy"); HierarchyPanel.Draw(); PanelProfiler.EndPanel("Hierarchy"); }
+        if (ShowInspector) { PanelProfiler.BeginPanel("Inspector"); InspectorPanel.Draw(); PanelProfiler.EndPanel("Inspector"); }
+        if (ShowEnvironment) { PanelProfiler.BeginPanel("Environment"); EnvironmentPanel.Draw(); PanelProfiler.EndPanel("Environment"); }
+        if (ShowRenderingSettings) { PanelProfiler.BeginPanel("RenderingSettings"); RenderingSettingsPanel.Draw(); PanelProfiler.EndPanel("RenderingSettings"); }
+        if (ShowAssets) { PanelProfiler.BeginPanel("Assets"); AssetsPanel.Draw(); PanelProfiler.EndPanel("Assets"); }
+        if (ShowConsole) { PanelProfiler.BeginPanel("Console"); ConsolePanel.Draw(); PanelProfiler.EndPanel("Console"); }
+        if (ShowGame) { PanelProfiler.BeginPanel("Game"); GamePanel.Draw(); PanelProfiler.EndPanel("Game"); }
+        if (ShowAudioMixer) { PanelProfiler.BeginPanel("AudioMixer"); AudioMixer.Draw(); PanelProfiler.EndPanel("AudioMixer"); }
+
+        PanelProfiler.BeginPanel("Viewport");
+        MainViewport.Draw();
+        PanelProfiler.EndPanel("Viewport");
 
         if (ShowDemoWindow) ImGui.ShowDemoWindow(ref ShowDemoWindow);
         if (ShowIconManager) IconManager.RenderIconsTestWindow();
 
         // Render settings panels
+        PanelProfiler.BeginPanel("InputSettings");
         InputSettingsPanel.Draw();
+        PanelProfiler.EndPanel("InputSettings");
+
+        PanelProfiler.BeginPanel("Preferences");
         Preferences.Draw();
+        PanelProfiler.EndPanel("Preferences");
 
         // Render scene management dialogs
         SceneManager.RenderDialogs();
 
         // Render global progress popup (if any)
         Editor.UI.ProgressManager.Render();
+
+        // Performance overlay (drawn last, after all panels)
+        if (ShowPerformanceOverlay)
+        {
+            PerformanceOverlay.Visible = true;
+            PerformanceOverlay.Draw(ImGui.GetIO().DeltaTime);
+        }
+        else
+        {
+            PerformanceOverlay.Visible = false;
+        }
     }
 
     private static void DrawPlayModeControls()
@@ -212,10 +238,72 @@ public static class EditorUI
         // Center the play controls in the menu bar
         var menuBarWidth = ImGui.GetContentRegionAvail().X;
         var buttonWidth = 30f;
-        var totalWidth = buttonWidth * 3 + ImGui.GetStyle().ItemSpacing.X * 2; // 3 buttons + spacing
+        // We'll include a small width for the resolution dropdown to the left of play
+        var resDropdownWidth = 160f;
+        var totalWidth = resDropdownWidth + buttonWidth * 3 + ImGui.GetStyle().ItemSpacing.X * 3; // dropdown + 3 buttons + spacing
         var centerPos = (menuBarWidth - totalWidth) * 0.5f;
         
+        // Start the group at centerPos
         ImGui.SameLine(centerPos);
+
+        // --- Resolution dropdown (left of play) ---
+        ImGui.PushItemWidth(resDropdownWidth - 8);
+        try
+        {
+            var presets = new string[] {
+                "Panel Size (Auto)",
+                "1920 x 1080 (16:9)",
+                "1600 x 900 (16:9)",
+                "1280 x 720 (16:9)",
+                "1366 x 768 (16:9)",
+                "1024 x 768 (4:3)",
+                "800 x 600 (4:3)",
+                "Custom..."
+            };
+
+            // Stored index mapping: EditorSettings.ViewportResolutionPresetIndex
+            // -1 => Panel Size (we'll map to 0 in UI)
+            int stored = Editor.State.EditorSettings.ViewportResolutionPresetIndex;
+            int uiIndex = stored == -1 ? 0 : stored + 1; // shift by 1 because 0=Panel Size
+
+            if (ImGui.BeginCombo("##viewport_res", presets[uiIndex]))
+            {
+                for (int i = 0; i < presets.Length; i++)
+                {
+                    bool selected = (i == uiIndex);
+                    if (ImGui.Selectable(presets[i], selected))
+                    {
+                        uiIndex = i;
+                        // Map back to stored value
+                        if (uiIndex == 0) Editor.State.EditorSettings.ViewportResolutionPresetIndex = -1;
+                        else if (uiIndex == presets.Length - 1) Editor.State.EditorSettings.ViewportResolutionPresetIndex = presets.Length - 2; // custom -> special index (we'll treat last as custom)
+                        else Editor.State.EditorSettings.ViewportResolutionPresetIndex = uiIndex - 1;
+                    }
+                    if (selected) ImGui.SetItemDefaultFocus();
+                }
+                ImGui.EndCombo();
+            }
+
+            // If Custom selected, show compact inputs for width/height and aspect lock
+            if (uiIndex == presets.Length - 1)
+            {
+                ImGui.SameLine();
+                int w = Editor.State.EditorSettings.ViewportCustomWidth;
+                int h = Editor.State.EditorSettings.ViewportCustomHeight;
+                ImGui.PushItemWidth(60);
+                if (ImGui.InputInt("W##vp", ref w)) Editor.State.EditorSettings.ViewportCustomWidth = Math.Max(8, w);
+                ImGui.SameLine();
+                if (ImGui.InputInt("H##vp", ref h)) Editor.State.EditorSettings.ViewportCustomHeight = Math.Max(8, h);
+                ImGui.PopItemWidth();
+
+                ImGui.SameLine();
+                bool lockRatio = Editor.State.EditorSettings.ViewportLockAspect;
+                if (ImGui.Checkbox("Lock Ratio", ref lockRatio)) Editor.State.EditorSettings.ViewportLockAspect = lockRatio;
+            }
+        }
+        finally { ImGui.PopItemWidth(); }
+
+        ImGui.SameLine();
         
         // Play Mode state indicator and controls
         var state = PlayMode.State;

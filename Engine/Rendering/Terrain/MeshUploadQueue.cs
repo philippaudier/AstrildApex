@@ -49,7 +49,7 @@ namespace Engine.Rendering.Terrain
                 try
                 {
                     if (req.TargetChunk == null || req.Mesh == null) continue;
-                    try { Console.WriteLine($"[MeshUploadQueue] Uploading chunk at {req.TargetChunk.WorldPosition.X},{req.TargetChunk.WorldPosition.Z}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[MeshUploadQueue] Uploading chunk at {req.TargetChunk.WorldPosition.X},{req.TargetChunk.WorldPosition.Z}"); } catch { }
                     // If the chunk already has GPU handles, delete them first to avoid leaks
                     try {
                         if (req.TargetChunk.Vao != 0 || req.TargetChunk.Vbo != 0 || req.TargetChunk.Ebo != 0)

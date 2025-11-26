@@ -198,6 +198,28 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\fxaa.frag</Link>
     </None>
+    <!-- DOF (Depth of Field) Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\dof_coc.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\dof_coc.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\dof_downsample.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\dof_downsample.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\dof_bokeh.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\dof_bokeh.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\dof_recombine.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\dof_recombine.frag</Link>
+    </None>
+    <!-- Motion Blur Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\motionblur.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\motionblur.frag</Link>
+    </None>
     <None Update="Rendering\Shaders\PostProcess\Blit.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\Blit.vert</Link>

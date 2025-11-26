@@ -87,7 +87,7 @@ namespace Engine.Rendering.Terrain
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
 
             indexCount = idxCountLocal;
-            try { Console.WriteLine($"[MeshUploader] Upload complete vao={vao} indexCount={indexCount} vertices={vertexCount} indices={idxCountLocal}"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"[MeshUploader] Upload complete vao={vao} indexCount={indexCount} vertices={vertexCount} indices={idxCountLocal}"); } catch { }
 
             // Return pooled buffers
             MeshBufferPool.ReturnFloat(interleaved);

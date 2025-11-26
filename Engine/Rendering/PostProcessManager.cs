@@ -32,6 +32,8 @@ namespace Engine.Rendering
             RegisterRenderer<FXAAEffect>(new FXAARenderer());
             RegisterRenderer<SSAOEffect>(new SSAOPostEffectRenderer());
             RegisterRenderer<GTAOEffect>(new GTAORenderer());
+            RegisterRenderer<DepthOfFieldEffect>(new DepthOfFieldRenderer());
+            RegisterRenderer<MotionBlurEffect>(new MotionBlurRenderer());
 
 
             // Initialiser tous les renderers
@@ -137,16 +139,21 @@ namespace Engine.Rendering
                 if (globalEffect.Effects == null) continue;
 
                 // Get all active effects sorted by priority
-                var activeEffects = globalEffect.Effects
-                    .Where(e => e?.Enabled == true)
-                    .OrderBy(e => e?.Priority ?? 0)
-                    .ToList();
+                // PERFORMANCE: Avoid LINQ allocations with manual filtering
+                var activeEffects = new List<PostProcessEffect>(globalEffect.Effects.Count);
+                foreach (var e in globalEffect.Effects)
+                {
+                    if (e?.Enabled == true)
+                        activeEffects.Add(e);
+                }
+                activeEffects.Sort((a, b) => (a?.Priority ?? 0).CompareTo(b?.Priority ?? 0));
 
                 foreach (var effect in activeEffects)
                 {
                     if (effect == null) continue;
 
-                    Console.WriteLine($"[PostProcessManager] Applying effect: {effect.GetType().Name}, Enabled={effect.Enabled}, Intensity={effect.Intensity}");
+                    // PERFORMANCE: Debug logs removed (called every frame)
+                    // Engine.Utils.DebugLogger.Log($"[PostProcessManager] Applying effect: {effect.GetType().Name}");
 
                     try
                     {
@@ -157,7 +164,8 @@ namespace Engine.Rendering
 
                     if (_renderers.TryGetValue(effect.GetType(), out var renderer))
                     {
-                        Console.WriteLine($"[PostProcessManager] Found renderer for {effect.GetType().Name}, calling Render()...");
+                        // PERFORMANCE: Debug log removed (called every frame)
+                        // Engine.Utils.DebugLogger.Log($"[PostProcessManager] Found renderer for {effect.GetType().Name}");
                         renderer.Render(effect, context);
                         
                         // IMPORTANT: After rendering an effect, the result is now in the target framebuffer.

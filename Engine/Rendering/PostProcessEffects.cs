@@ -573,7 +573,7 @@ namespace Engine.Rendering
         {
             try
             {
-                Console.WriteLine("[SSAO] Initializing...");
+                Engine.Utils.DebugLogger.Log("[SSAO] Initializing...");
                 var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
 
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
@@ -597,11 +597,11 @@ namespace Engine.Rendering
                         _blurShader = ShaderProgram.FromSource(vertexSource, blurSource);
                     }
 
-                    Console.WriteLine("[SSAO] ✓ Initialized successfully");
+                    Engine.Utils.DebugLogger.Log("[SSAO] ✓ Initialized successfully");
                 }
                 else
                 {
-                    Console.WriteLine("[SSAO] ERROR: Shader files not found!");
+                    Engine.Utils.DebugLogger.Log("[SSAO] ERROR: Shader files not found!");
                 }
 
                 // Générer le kernel d'échantillonnage hémisphérique
@@ -612,7 +612,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[SSAO] INITIALIZATION FAILED: {ex.Message}");
+                Engine.Utils.DebugLogger.Log($"[SSAO] INITIALIZATION FAILED: {ex.Message}");
                 _ssaoShader = null;
                 _blurShader = null;
             }
@@ -773,19 +773,19 @@ namespace Engine.Rendering
             {
                 if (_ssaoShader == null || _blurShader == null)
                 {
-                    Console.WriteLine("[SSAO] Shaders not initialized, calling Initialize()...");
+                    Engine.Utils.DebugLogger.Log("[SSAO] Shaders not initialized, calling Initialize()...");
                     Initialize();
                 }
                 
                 if (_ssaoShader == null || _blurShader == null)
                 {
-                    Console.WriteLine("[SSAO] ERROR: Initialize() failed, shaders still null after init!");
+                    Engine.Utils.DebugLogger.Log("[SSAO] ERROR: Initialize() failed, shaders still null after init!");
                     return;
                 }
                 
                 if (!(effect is SSAOEffect))
                 {
-                    Console.WriteLine("[SSAO] ERROR: Effect is not SSAOEffect!");
+                    Engine.Utils.DebugLogger.Log("[SSAO] ERROR: Effect is not SSAOEffect!");
                     return;
                 }
                 
@@ -797,13 +797,13 @@ namespace Engine.Rendering
             if (context.DepthTexture == 0)
             {
                 // Pas de texture de profondeur disponible, impossible de faire du SSAO
-                Console.WriteLine("[SSAO] ERREUR: Pas de texture de profondeur disponible!");
+                Engine.Utils.DebugLogger.Log("[SSAO] ERREUR: Pas de texture de profondeur disponible!");
                 return;
             }
 
             if (!context.ProjectionMatrix.HasValue)
             {
-                Console.WriteLine("[SSAO] ERREUR: Pas de matrice de projection disponible!");
+                Engine.Utils.DebugLogger.Log("[SSAO] ERREUR: Pas de matrice de projection disponible!");
                 return;
             }
 
@@ -1073,6 +1073,550 @@ namespace Engine.Rendering
     }
 
     /// <summary>
+    /// Effet de Depth of Field (DOF) - Triple-A quality bokeh blur
+    /// </summary>
+    public class DepthOfFieldEffect : PostProcessEffect
+    {
+        public override string EffectName => "Depth of Field";
+
+        // Focus parameters
+        [Engine.Serialization.SerializableAttribute("focusdistance")]
+        public float FocusDistance { get; set; } = 10.0f; // Distance to focus plane
+
+        [Engine.Serialization.SerializableAttribute("focusrange")]
+        public float FocusRange { get; set; } = 2.0f; // Range around focus that stays sharp
+
+        [Engine.Serialization.SerializableAttribute("focallength")]
+        public float FocalLength { get; set; } = 50.0f; // Camera focal length (mm)
+
+        [Engine.Serialization.SerializableAttribute("aperture")]
+        public float Aperture { get; set; } = 2.8f; // f-stop (lower = more blur, typical: 1.4, 2.8, 5.6, 11)
+
+        [Engine.Serialization.SerializableAttribute("maxcoc")]
+        public float MaxCoC { get; set; } = 20.0f; // Maximum circle of confusion radius (pixels)
+
+        // Quality settings
+        [Engine.Serialization.SerializableAttribute("samplecount")]
+        public int SampleCount { get; set; } = 64; // Number of bokeh samples (32-128)
+
+        [Engine.Serialization.SerializableAttribute("bokehradius")]
+        public float BokehRadius { get; set; } = 4.0f; // Bokeh size multiplier
+
+        // Adaptive DOF (auto-focus) - DISABLED BY DEFAULT (expensive GL.ReadPixels sync)
+        [Engine.Serialization.SerializableAttribute("enableadaptive")]
+        public bool EnableAdaptiveDOF { get; set; } = false; // Keep false for performance!
+
+        [Engine.Serialization.SerializableAttribute("adaptivespeed")]
+        public float AdaptiveSpeed { get; set; } = 2.0f; // Focus adaptation speed (1.0 = slow, 5.0 = fast)
+
+        [Engine.Serialization.SerializableAttribute("adaptivecenterbias")]
+        public float AdaptiveCenterBias { get; set; } = 0.5f; // How much to bias towards screen center (0.0 = full screen, 1.0 = center only)
+
+        [Engine.Serialization.SerializableAttribute("adaptivemindistance")]
+        public float AdaptiveMinDistance { get; set; } = 1.0f; // Minimum focus distance
+
+        [Engine.Serialization.SerializableAttribute("adaptivemaxdistance")]
+        public float AdaptiveMaxDistance { get; set; } = 100.0f; // Maximum focus distance
+
+        public DepthOfFieldEffect()
+        {
+            Priority = 12; // After tone mapping (10), before chromatic aberration (20)
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // Handled by DepthOfFieldRenderer
+        }
+    }
+
+    /// <summary>
+    /// Renderer pour l'effet de Depth of Field
+    /// </summary>
+    public class DepthOfFieldRenderer : IPostProcessRenderer
+    {
+        private ShaderProgram? _cocShader;          // Circle of Confusion calculation
+        private ShaderProgram? _downsampleShader;   // Downsample with CoC preservation
+        private ShaderProgram? _bokehShader;        // Circular bokeh blur
+        private ShaderProgram? _recombineShader;    // Recombine with scene
+
+        // Textures and FBOs
+        private int _cocTexture;                    // Full-res with CoC in alpha
+        private int _downsampledTexture;            // Half-res for performance
+        private int _bokehTexture;                  // Blurred half-res
+        private int _cocFBO;
+        private int _downsampledFBO;
+        private int _bokehFBO;
+
+        private int _width, _height;
+        private float _currentFocusDistance = 10.0f; // For adaptive DOF
+
+        // Pooled buffers to avoid allocations (reused across frames)
+        private static readonly float[] _depthReadBuffer = new float[1];
+        private static readonly float[] _samplesBuffer = new float[5];
+
+        public void Initialize()
+        {
+            try
+            {
+                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var vertPath = Path.Combine(baseDir, "fullscreen.vert");
+                var cocFragPath = Path.Combine(baseDir, "dof_coc.frag");
+                var downsampleFragPath = Path.Combine(baseDir, "dof_downsample.frag");
+                var bokehFragPath = Path.Combine(baseDir, "dof_bokeh.frag");
+                var recombineFragPath = Path.Combine(baseDir, "dof_recombine.frag");
+
+                if (File.Exists(vertPath) && File.Exists(cocFragPath) &&
+                    File.Exists(downsampleFragPath) && File.Exists(bokehFragPath) &&
+                    File.Exists(recombineFragPath))
+                {
+                    string vertexSource = File.ReadAllText(vertPath);
+
+                    _cocShader = ShaderProgram.FromSource(vertexSource, File.ReadAllText(cocFragPath));
+                    _downsampleShader = ShaderProgram.FromSource(vertexSource, File.ReadAllText(downsampleFragPath));
+                    _bokehShader = ShaderProgram.FromSource(vertexSource, File.ReadAllText(bokehFragPath));
+                    _recombineShader = ShaderProgram.FromSource(vertexSource, File.ReadAllText(recombineFragPath));
+                }
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[DOF] Initialization failed: {ex.Message}"); } catch { }
+                _cocShader = null;
+                _downsampleShader = null;
+                _bokehShader = null;
+                _recombineShader = null;
+            }
+        }
+
+        private void ResizeBuffers(int width, int height)
+        {
+            if (_width == width && _height == height && _cocTexture != 0) return;
+
+            _width = width;
+            _height = height;
+
+            // Cleanup old resources
+            if (_cocTexture != 0) GL.DeleteTexture(_cocTexture);
+            if (_downsampledTexture != 0) GL.DeleteTexture(_downsampledTexture);
+            if (_bokehTexture != 0) GL.DeleteTexture(_bokehTexture);
+            if (_cocFBO != 0) GL.DeleteFramebuffer(_cocFBO);
+            if (_downsampledFBO != 0) GL.DeleteFramebuffer(_downsampledFBO);
+            if (_bokehFBO != 0) GL.DeleteFramebuffer(_bokehFBO);
+
+            // Create CoC texture (full resolution, RGBA16F - RGB = color, A = CoC)
+            _cocTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _cocTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, width, height, 0,
+                         PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            _cocFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _cocFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                                   TextureTarget.Texture2D, _cocTexture, 0);
+
+            // Create downsampled texture (half resolution for performance)
+            int halfWidth = width / 2;
+            int halfHeight = height / 2;
+
+            _downsampledTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _downsampledTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, halfWidth, halfHeight, 0,
+                         PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            _downsampledFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampledFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                                   TextureTarget.Texture2D, _downsampledTexture, 0);
+
+            // Create bokeh texture (half resolution)
+            _bokehTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _bokehTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, halfWidth, halfHeight, 0,
+                         PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            _bokehFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _bokehFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                                   TextureTarget.Texture2D, _bokehTexture, 0);
+
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        }
+
+        public void Render(PostProcessEffect effect, PostProcessContext context)
+        {
+            if (_cocShader == null || _downsampleShader == null || _bokehShader == null || _recombineShader == null)
+            {
+                Initialize();
+                if (_cocShader == null || _downsampleShader == null || _bokehShader == null || _recombineShader == null)
+                    return;
+            }
+
+            var dof = effect as DepthOfFieldEffect;
+            if (dof == null) return;
+
+            if (context.DepthTexture == 0) return; // Need depth for DOF
+
+            ResizeBuffers(context.Width, context.Height);
+
+            // Update adaptive focus if enabled (WARNING: expensive GL.ReadPixels!)
+            float focusDistance = dof.FocusDistance;
+            if (dof.EnableAdaptiveDOF && context.DepthTexture != 0)
+            {
+                focusDistance = UpdateAdaptiveFocus(dof, context);
+            }
+
+            // 1. Calculate Circle of Confusion
+            RenderCoC(dof, context, focusDistance);
+
+            // 2. Downsample
+            RenderDownsample(context);
+
+            // 3. Apply bokeh blur
+            RenderBokeh(dof, context);
+
+            // 4. Recombine with scene
+            RenderRecombine(dof, context);
+        }
+
+        private float UpdateAdaptiveFocus(DepthOfFieldEffect dof, PostProcessContext context)
+        {
+            // Sample depth buffer at screen center (and optionally nearby points)
+            float targetDistance = SampleDepthForFocus(context, dof.AdaptiveCenterBias);
+
+            // Smooth lerp towards target
+            float deltaTime = 1.0f / 60.0f; // Assume 60 FPS for now
+            float adaptSpeed = dof.AdaptiveSpeed * deltaTime;
+
+            _currentFocusDistance = _currentFocusDistance + (targetDistance - _currentFocusDistance) * adaptSpeed;
+            _currentFocusDistance = Math.Clamp(_currentFocusDistance, dof.AdaptiveMinDistance, dof.AdaptiveMaxDistance);
+
+            return _currentFocusDistance;
+        }
+
+        private int _depthReadFBO = 0;
+
+        private float SampleDepthForFocus(PostProcessContext context, float centerBias)
+        {
+            if (context.DepthTexture == 0) return 10.0f; // Fallback
+
+            try
+            {
+                // Create FBO for reading depth if not already created
+                if (_depthReadFBO == 0)
+                {
+                    _depthReadFBO = GL.GenFramebuffer();
+                }
+
+                // Bind depth texture to FBO
+                GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _depthReadFBO);
+                GL.FramebufferTexture2D(FramebufferTarget.ReadFramebuffer, FramebufferAttachment.DepthAttachment,
+                                       TextureTarget.Texture2D, context.DepthTexture, 0);
+
+                // Read a single pixel at screen center - USING POOLED BUFFER (no allocation!)
+                int centerX = context.Width / 2;
+                int centerY = context.Height / 2;
+
+                GL.ReadPixels(centerX, centerY, 1, 1, PixelFormat.DepthComponent, PixelType.Float, _depthReadBuffer);
+
+                // Use pooled samples buffer - NO ALLOCATIONS
+                _samplesBuffer[0] = _depthReadBuffer[0]; // Center
+
+                // Sample 4 points around center (reuse same buffer)
+                int offset = Math.Min(context.Width, context.Height) / 10; // 10% offset
+                GL.ReadPixels(centerX + offset, centerY, 1, 1, PixelFormat.DepthComponent, PixelType.Float, _depthReadBuffer);
+                _samplesBuffer[1] = _depthReadBuffer[0];
+                GL.ReadPixels(centerX - offset, centerY, 1, 1, PixelFormat.DepthComponent, PixelType.Float, _depthReadBuffer);
+                _samplesBuffer[2] = _depthReadBuffer[0];
+                GL.ReadPixels(centerX, centerY + offset, 1, 1, PixelFormat.DepthComponent, PixelType.Float, _depthReadBuffer);
+                _samplesBuffer[3] = _depthReadBuffer[0];
+                GL.ReadPixels(centerX, centerY - offset, 1, 1, PixelFormat.DepthComponent, PixelType.Float, _depthReadBuffer);
+                _samplesBuffer[4] = _depthReadBuffer[0];
+
+                // Unbind FBO
+                GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+
+                // Process samples
+                float centerDepthLinear = LinearizeDepth(_samplesBuffer[0], 0.1f, 1000.0f);
+                float avgDepth = 0.0f;
+                for (int i = 0; i < _samplesBuffer.Length; i++)
+                {
+                    avgDepth += LinearizeDepth(_samplesBuffer[i], 0.1f, 1000.0f);
+                }
+                avgDepth /= _samplesBuffer.Length;
+
+                // Blend between center and average based on centerBias
+                float targetDepth = centerDepthLinear * centerBias + avgDepth * (1.0f - centerBias);
+
+                return Math.Clamp(targetDepth, 0.1f, 1000.0f);
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[DOF] Adaptive focus sampling failed: {ex.Message}"); } catch { }
+                return 10.0f;
+            }
+        }
+
+        private float LinearizeDepth(float depth, float near, float far)
+        {
+            float z = depth * 2.0f - 1.0f; // Back to NDC
+            return (2.0f * near * far) / (far + near - z * (far - near));
+        }
+
+        private void RenderCoC(DepthOfFieldEffect dof, PostProcessContext context, float focusDistance)
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _cocFBO);
+            GL.Viewport(0, 0, _width, _height);
+            GL.Clear(ClearBufferMask.ColorBufferBit);
+
+            _cocShader!.Use();
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
+            _cocShader.SetInt("u_ColorTexture", 0);
+
+            GL.ActiveTexture(TextureUnit.Texture1);
+            GL.BindTexture(TextureTarget.Texture2D, context.DepthTexture);
+            _cocShader.SetInt("u_DepthTexture", 1);
+
+            _cocShader.SetFloat("u_FocusDistance", focusDistance);
+            _cocShader.SetFloat("u_FocusRange", dof.FocusRange);
+            _cocShader.SetFloat("u_FocalLength", dof.FocalLength);
+            _cocShader.SetFloat("u_Aperture", dof.Aperture);
+            _cocShader.SetFloat("u_MaxCoC", dof.MaxCoC);
+            _cocShader.SetFloat("u_NearPlane", 0.1f); // TODO: Get from camera
+            _cocShader.SetFloat("u_FarPlane", 1000.0f); // TODO: Get from camera
+
+            if (context.ProjectionMatrix.HasValue)
+            {
+                var invProj = context.ProjectionMatrix.Value.Inverted();
+                _cocShader.SetMat4("u_InvProjection", invProj);
+            }
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        }
+
+        private void RenderDownsample(PostProcessContext context)
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampledFBO);
+            GL.Viewport(0, 0, _width / 2, _height / 2);
+
+            _downsampleShader!.Use();
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _cocTexture);
+            _downsampleShader.SetInt("u_SourceTexture", 0);
+            _downsampleShader.SetVec2("u_TexelSize", new Vector2(1.0f / _width, 1.0f / _height));
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        }
+
+        private void RenderBokeh(DepthOfFieldEffect dof, PostProcessContext context)
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _bokehFBO);
+            GL.Viewport(0, 0, _width / 2, _height / 2);
+
+            _bokehShader!.Use();
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _downsampledTexture);
+            _bokehShader.SetInt("u_SourceTexture", 0);
+            _bokehShader.SetVec2("u_TexelSize", new Vector2(2.0f / _width, 2.0f / _height));
+            _bokehShader.SetInt("u_SampleCount", dof.SampleCount);
+            _bokehShader.SetFloat("u_BokehRadius", dof.BokehRadius);
+            _bokehShader.SetFloat("u_BokehRotation", (float)(Environment.TickCount * 0.001) % (2.0f * MathF.PI)); // Temporal rotation
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        }
+
+        private void RenderRecombine(DepthOfFieldEffect dof, PostProcessContext context)
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, context.TargetFramebuffer);
+            GL.Viewport(0, 0, _width, _height);
+
+            _recombineShader!.Use();
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _cocTexture);
+            _recombineShader.SetInt("u_SharpTexture", 0);
+
+            GL.ActiveTexture(TextureUnit.Texture1);
+            GL.BindTexture(TextureTarget.Texture2D, _bokehTexture);
+            _recombineShader.SetInt("u_BlurredTexture", 1);
+
+            GL.ActiveTexture(TextureUnit.Texture2);
+            GL.BindTexture(TextureTarget.Texture2D, context.DepthTexture);
+            _recombineShader.SetInt("u_DepthTexture", 2);
+
+            _recombineShader.SetFloat("u_NearPlane", 0.1f); // TODO: Get from camera
+            _recombineShader.SetFloat("u_FarPlane", 1000.0f); // TODO: Get from camera
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        }
+
+        public void Dispose()
+        {
+            _cocShader?.Dispose();
+            _downsampleShader?.Dispose();
+            _bokehShader?.Dispose();
+            _recombineShader?.Dispose();
+
+            if (_cocTexture != 0) GL.DeleteTexture(_cocTexture);
+            if (_downsampledTexture != 0) GL.DeleteTexture(_downsampledTexture);
+            if (_bokehTexture != 0) GL.DeleteTexture(_bokehTexture);
+            if (_cocFBO != 0) GL.DeleteFramebuffer(_cocFBO);
+            if (_downsampledFBO != 0) GL.DeleteFramebuffer(_downsampledFBO);
+            if (_bokehFBO != 0) GL.DeleteFramebuffer(_bokehFBO);
+            if (_depthReadFBO != 0) GL.DeleteFramebuffer(_depthReadFBO);
+        }
+    }
+
+    /// <summary>
+    /// Effet de Motion Blur (flou de mouvement)
+    /// </summary>
+    public class MotionBlurEffect : PostProcessEffect
+    {
+        public override string EffectName => "Motion Blur";
+
+        [Engine.Serialization.SerializableAttribute("samplecount")]
+        public int SampleCount { get; set; } = 16; // Number of samples along motion vector (4-32)
+
+        [Engine.Serialization.SerializableAttribute("maxblurradius")]
+        public float MaxBlurRadius { get; set; } = 50.0f; // Maximum blur radius in pixels
+
+        public MotionBlurEffect()
+        {
+            Priority = 18; // After DOF (12), before chromatic aberration (20)
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // Handled by MotionBlurRenderer
+        }
+    }
+
+    /// <summary>
+    /// Renderer pour l'effet de Motion Blur
+    /// </summary>
+    public class MotionBlurRenderer : IPostProcessRenderer
+    {
+        private ShaderProgram? _motionBlurShader;
+
+        // Previous frame matrices for velocity calculation
+        private Matrix4 _prevViewProj = Matrix4.Identity;
+        private bool _isFirstFrame = true;
+
+        public void Initialize()
+        {
+            try
+            {
+                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var vertPath = Path.Combine(baseDir, "fullscreen.vert");
+                var fragPath = Path.Combine(baseDir, "motionblur.frag");
+
+                if (File.Exists(vertPath) && File.Exists(fragPath))
+                {
+                    string vertexSource = File.ReadAllText(vertPath);
+                    string fragmentSource = File.ReadAllText(fragPath);
+                    _motionBlurShader = ShaderProgram.FromSource(vertexSource, fragmentSource);
+                }
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[MotionBlur] Initialization failed: {ex.Message}"); } catch { }
+                _motionBlurShader = null;
+            }
+        }
+
+        public void Render(PostProcessEffect effect, PostProcessContext context)
+        {
+            if (_motionBlurShader == null)
+            {
+                Initialize();
+                if (_motionBlurShader == null) return;
+            }
+
+            var motionBlur = effect as MotionBlurEffect;
+            if (motionBlur == null) return;
+
+            if (context.DepthTexture == 0) return; // Need depth for motion blur
+
+            // Skip first frame (no previous matrix available)
+            if (_isFirstFrame)
+            {
+                if (context.ProjectionMatrix.HasValue && context.ViewMatrix.HasValue)
+                {
+                    _prevViewProj = context.ViewMatrix.Value * context.ProjectionMatrix.Value;
+                    _isFirstFrame = false;
+                }
+                return;
+            }
+
+            // Bind target framebuffer
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, context.TargetFramebuffer);
+            GL.Viewport(0, 0, context.Width, context.Height);
+
+            _motionBlurShader.Use();
+
+            // Bind textures
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
+            _motionBlurShader.SetInt("u_ColorTexture", 0);
+
+            GL.ActiveTexture(TextureUnit.Texture1);
+            GL.BindTexture(TextureTarget.Texture2D, context.DepthTexture);
+            _motionBlurShader.SetInt("u_DepthTexture", 1);
+
+            // Velocity texture (if available, otherwise will use depth-based reconstruction)
+            GL.ActiveTexture(TextureUnit.Texture2);
+            int velocityTex = 0; // TODO: Get velocity texture from context if available
+            GL.BindTexture(TextureTarget.Texture2D, velocityTex);
+            _motionBlurShader.SetInt("u_VelocityTexture", 2);
+
+            // Motion blur parameters
+            _motionBlurShader.SetInt("u_SampleCount", motionBlur.SampleCount);
+            _motionBlurShader.SetFloat("u_Intensity", motionBlur.Intensity);
+            _motionBlurShader.SetFloat("u_MaxBlurRadius", motionBlur.MaxBlurRadius);
+
+            // Camera matrices
+            if (context.ProjectionMatrix.HasValue && context.ViewMatrix.HasValue)
+            {
+                var currentViewProj = context.ViewMatrix.Value * context.ProjectionMatrix.Value;
+                var invViewProj = currentViewProj.Inverted();
+
+                _motionBlurShader.SetMat4("u_InvViewProj", invViewProj);
+                _motionBlurShader.SetMat4("u_PrevViewProj", _prevViewProj);
+
+                // Update for next frame
+                _prevViewProj = currentViewProj;
+            }
+
+            _motionBlurShader.SetVec2("u_ScreenSize", new Vector2(context.Width, context.Height));
+            _motionBlurShader.SetFloat("u_NearPlane", 0.1f); // TODO: Get from camera
+            _motionBlurShader.SetFloat("u_FarPlane", 1000.0f); // TODO: Get from camera
+
+            // Render fullscreen triangle
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        }
+
+        public void Dispose()
+        {
+            _motionBlurShader?.Dispose();
+            _motionBlurShader = null;
+        }
+    }
+
+    /// <summary>
     /// Renderer pour l'effet GTAO
     /// </summary>
     public class GTAORenderer : IPostProcessRenderer
@@ -1109,7 +1653,7 @@ namespace Engine.Rendering
         {
             try
             {
-                Console.WriteLine("[GTAO] Initializing...");
+                try { Engine.Utils.DebugLogger.Log("[GTAO] Initializing..."); } catch { }
                 var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
                 
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
@@ -1135,16 +1679,16 @@ namespace Engine.Rendering
                     _blurShader = ShaderProgram.FromSource(vertexSource, blurSource);
                     _combineShader = ShaderProgram.FromSource(vertexSource, combineSource);
                     _depthMipmapShader = ShaderProgram.FromSource(vertexSource, depthMipmapSource);
-                    Console.WriteLine("[GTAO] ✓ Initialized successfully");
+                    try { Engine.Utils.DebugLogger.Log("[GTAO] ✓ Initialized successfully"); } catch { }
                 }
                 else
                 {
-                    Console.WriteLine("[GTAO] ERROR: Shader files not found!");
+                    try { Engine.Utils.DebugLogger.Log("[GTAO] ERROR: Shader files not found!"); } catch { }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[GTAO] INITIALIZATION FAILED: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[GTAO] INITIALIZATION FAILED: {ex.Message}"); } catch { }
                 _gtaoShader = null;
                 _temporalShader = null;
                 _blurShader = null;
@@ -1445,7 +1989,7 @@ namespace Engine.Rendering
             {
                 if (!hasValidMatrices)
                 {
-                    Console.WriteLine("[GTAO] Warning: ViewMatrix or ProjectionMatrix missing - temporal disabled for this frame");
+                    try { Engine.Utils.DebugLogger.Log("[GTAO] Warning: ViewMatrix or ProjectionMatrix missing - temporal disabled for this frame"); } catch { }
                 }
                 
                 // Simple copy using a blit or direct texture copy

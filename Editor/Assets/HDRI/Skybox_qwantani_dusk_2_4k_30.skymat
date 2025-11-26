@@ -53,8 +53,8 @@
     1,
     1
   ],
-  "PanoramicExposure": 0.5,
-  "PanoramicRotation": 0,
+  "PanoramicExposure": 1,
+  "PanoramicRotation": 153.5,
   "Mapping": 0,
   "MirrorOnBack": false,
   "ImageType": 0,

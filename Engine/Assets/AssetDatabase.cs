@@ -109,11 +109,11 @@ namespace Engine.Assets
                     try
                     {
                         var meta = JsonSerializer.Deserialize<MetaData>(File.ReadAllText(metaPath));
-                        guid = meta?.guid ?? Guid.NewGuid();
+                        guid = meta?.guid ?? GenerateGuidFromPath(f);
                     }
-                    catch { guid = Guid.NewGuid(); }
+                    catch { guid = GenerateGuidFromPath(f); }
                 }
-                else guid = Guid.NewGuid();
+                else guid = GenerateGuidFromPath(f);
 
                 var rec = new AssetRecord(guid, f, type);
                 Index(rec);
@@ -223,6 +223,24 @@ namespace Engine.Assets
                 catch { }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Génère un GUID déterministe basé sur le chemin du fichier.
+        /// Utilisé pour attribuer des GUID stables aux assets qui n'ont pas de .meta.
+        /// </summary>
+        private static Guid GenerateGuidFromPath(string filePath)
+        {
+            try
+            {
+                using var md5 = System.Security.Cryptography.MD5.Create();
+                var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(filePath)));
+                return new Guid(hash);
+            }
+            catch
+            {
+                return Guid.NewGuid();
+            }
         }
 
         public static IEnumerable<AssetRecord> All() => _byGuid.Values.OrderBy(r => r.Type).ThenBy(r => r.Name);

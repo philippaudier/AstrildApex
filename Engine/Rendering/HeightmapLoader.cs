@@ -49,7 +49,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[HeightmapLoader] Error loading heightmap: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[HeightmapLoader] Error loading heightmap: {ex.Message}"); } catch { }
                 return null;
             }
         }
@@ -79,7 +79,7 @@ namespace Engine.Rendering
                 int width = image.Width;
                 int height = image.Height;
 
-                Console.WriteLine($"[HeightmapLoader] Loading 16-bit grayscale heightmap: {width}x{height}");
+                try { Engine.Utils.DebugLogger.Log($"[HeightmapLoader] Loading 16-bit grayscale heightmap: {width}x{height}"); } catch { }
 
                 var heightData = new float[width, height];
 
@@ -108,7 +108,7 @@ namespace Engine.Rendering
             catch (Exception ex)
             {
                 // If 16-bit loading fails, try 8-bit as fallback
-                Console.WriteLine($"[HeightmapLoader] 16-bit load failed ({ex.Message}), trying 8-bit fallback...");
+                try { Engine.Utils.DebugLogger.Log($"[HeightmapLoader] 16-bit load failed ({ex.Message}), trying 8-bit fallback..."); } catch { }
 
                 try
                 {
@@ -118,7 +118,7 @@ namespace Engine.Rendering
                     int width = image.Width;
                     int height = image.Height;
 
-                    Console.WriteLine($"[HeightmapLoader] Loading 8-bit heightmap: {width}x{height} (may have quantization artifacts)");
+                    try { Engine.Utils.DebugLogger.Log($"[HeightmapLoader] Loading 8-bit heightmap: {width}x{height} (may have quantization artifacts)"); } catch { }
 
                     var heightData = new float[width, height];
 
@@ -140,7 +140,7 @@ namespace Engine.Rendering
                 }
                 catch (Exception ex2)
                 {
-                    Console.WriteLine($"[HeightmapLoader] Failed to load heightmap: {ex2.Message}");
+                    try { Engine.Utils.DebugLogger.Log($"[HeightmapLoader] Failed to load heightmap: {ex2.Message}"); } catch { }
                     return null;
                 }
             }

@@ -7,7 +7,8 @@ using Editor.Inspector;
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Professional Unity-style Camera Component inspector with validation and tooltips
+    /// Professional inspector for the unified CameraComponent
+    /// Supports all camera modes: FPS, Third Person, Top Down, Isometric, 2D Side Scroller, Orbit
     /// </summary>
     public static class CameraInspector
     {
@@ -17,7 +18,7 @@ namespace Editor.Inspector
             uint entityId = cam.Entity.Id;
 
             // === PROJECTION SECTION ===
-            if (InspectorWidgets.Section("Projection", defaultOpen: true, 
+            if (InspectorWidgets.Section("Projection", defaultOpen: true,
                 tooltip: "Camera projection settings"))
             {
                 var proj = cam.Projection;
@@ -25,225 +26,238 @@ namespace Editor.Inspector
                     tooltip: "Perspective: 3D with depth. Orthographic: flat 2D/isometric projection");
                 cam.Projection = proj;
 
-                // Show appropriate projection parameters based on mode
                 if (cam.Projection == CameraComponent.ProjectionMode.Perspective)
                 {
                     float fovDeg = MathHelper.RadiansToDegrees(cam.FieldOfView);
                     InspectorWidgets.SliderAngle("Field of View", ref fovDeg, 1f, 170f,
                         entityId, "FieldOfView",
-                        tooltip: "Camera's viewing angle. Lower = more zoomed in",
-                        helpText: "Common values: 60° (first-person), 45° (third-person), 90° (wide angle)");
+                        tooltip: "Camera's viewing angle. Lower = more zoomed in");
                     cam.FieldOfView = MathHelper.DegreesToRadians(fovDeg);
-
-                    // FOV Presets
-                    int preset = InspectorWidgets.PresetButtonRow(
-                        ("First Person (60°)", "Standard FPS camera"),
-                        ("Third Person (45°)", "Standard over-shoulder camera"),
-                        ("Wide Angle (90°)", "Wide field of view"));
-                    
-                    if (preset == 0) cam.FieldOfView = MathHelper.DegreesToRadians(60f);
-                    else if (preset == 1) cam.FieldOfView = MathHelper.DegreesToRadians(45f);
-                    else if (preset == 2) cam.FieldOfView = MathHelper.DegreesToRadians(90f);
                 }
-                else // Orthographic or 2D
+                else
                 {
                     InspectorWidgets.FloatField("Ortho Size", ref cam.OrthoSize, entityId, "OrthoSize",
                         speed: 0.1f, min: 0.1f, max: 1000f,
-                        tooltip: "Half-height of the camera view in world units",
-                        helpText: "Larger = more visible area (zoomed out)");
+                        tooltip: "Half-height of the camera view in world units");
                 }
 
-                InspectorWidgets.EndSection();
-            }
-
-            // === CLIPPING PLANES SECTION ===
-            if (InspectorWidgets.Section("Clipping Planes", defaultOpen: true,
-                tooltip: "Near and far render distance"))
-            {
                 InspectorWidgets.FloatField("Near", ref cam.Near, entityId, "Near",
                     speed: 0.01f, min: 0.001f, max: 10f, format: "%.3f",
-                    tooltip: "Closest distance the camera can see",
-                    validate: (n) => n < cam.Far ? null : "Near must be less than Far",
-                    helpText: "Too small = depth precision issues. Too large = objects clip close to camera");
+                    tooltip: "Closest distance the camera can see");
 
                 InspectorWidgets.FloatField("Far", ref cam.Far, entityId, "Far",
                     speed: 1f, min: 10f, max: 100000f,
-                    tooltip: "Farthest distance the camera can see",
-                    validate: (f) => f > cam.Near ? null : "Far must be greater than Near",
-                    helpText: "Larger = more draw distance but worse depth precision");
+                    tooltip: "Farthest distance the camera can see");
 
                 InspectorWidgets.EndSection();
             }
 
-            // === CAMERA SETTINGS ===
-            if (InspectorWidgets.Section("Camera Settings", defaultOpen: true))
+            // === CAMERA CONTROL MODE ===
+            if (InspectorWidgets.Section("Camera Control", defaultOpen: true))
             {
                 InspectorWidgets.Checkbox("Main Camera", ref cam.IsMain, entityId, "IsMain",
-                    tooltip: "This camera will be used for rendering (only one should be main)",
-                    helpText: "The main camera renders to the viewport. Only one camera should be main at a time");
+                    tooltip: "This camera will be used for rendering");
+
+                var mode = cam.Mode;
+                InspectorWidgets.EnumField("Control Mode", ref mode, entityId, "Mode",
+                    tooltip: "How the camera behaves: Manual, FPS, ThirdPerson, TopDown, Isometric, SideScroller2D, Orbit");
+                cam.Mode = mode;
 
                 var stage = cam.Stage;
                 InspectorWidgets.EnumField("Update Stage", ref stage, entityId, "Stage",
-                    tooltip: "When the camera updates its position/rotation");
+                    tooltip: "When the camera updates");
                 cam.Stage = stage;
-
-                var mode = cam.Mode;
-                InspectorWidgets.EnumField("Behavior", ref mode, entityId, "Mode",
-                    tooltip: "Camera control mode: Manual (script-controlled), FPS (WASD+mouse), Orbit (rotate around target)");
-                cam.Mode = mode;
-
-                InspectorWidgets.SliderFloat("Smooth Position", ref cam.SmoothPosition, 0f, 40f, "%.1f",
-                    entityId, "SmoothPosition",
-                    tooltip: "Position interpolation speed (0 = instant, higher = smoother)",
-                    helpText: "Reduces jittery movement. 10-20 is good for gameplay cameras");
-
-                InspectorWidgets.SliderFloat("Smooth Rotation", ref cam.SmoothRotation, 0f, 40f, "%.1f",
-                    entityId, "SmoothRotation",
-                    tooltip: "Rotation interpolation speed (0 = instant, higher = smoother)",
-                    helpText: "Reduces jittery rotation. 10-20 is good for gameplay cameras");
 
                 InspectorWidgets.EndSection();
             }
 
-            // === FPS MODE SETTINGS ===
-            if (cam.Mode == CameraComponent.Behavior.FPS)
+            // === COMMON SETTINGS (all non-Manual modes) ===
+            if (cam.Mode != CameraComponent.ControlMode.Manual)
             {
-                if (InspectorWidgets.Section("FPS Settings", defaultOpen: false,
-                    tooltip: "First-person camera controls with WASD movement"))
+                if (InspectorWidgets.Section("Common Settings", defaultOpen: true))
                 {
-                    InspectorWidgets.Checkbox("Enable Move (WASD)", ref cam.FpsEnableMove, entityId, "FpsEnableMove",
-                        tooltip: "Allow movement with WASD keys");
-
-                    InspectorWidgets.SliderFloat("Move Speed", ref cam.FpsMoveSpeed, 0.5f, 30f, "%.1f",
-                        entityId, "FpsMoveSpeed",
-                        tooltip: "Base movement speed (units per second)",
-                        helpText: "Typical values: 5-10 for walking, 15-20 for running");
-
-                    InspectorWidgets.SliderFloat("Sprint Multiplier", ref cam.FpsSprintMultiplier, 1f, 4f, "%.2f",
-                        entityId, "FpsSprintMultiplier",
-                        tooltip: "Speed multiplier when sprinting (hold Shift)");
-
-                    InspectorWidgets.SliderFloat("Mouse Sensitivity", ref cam.FpsSensitivity, 0.001f, 0.2f, "%.3f",
-                        entityId, "FpsSensitivity",
-                        tooltip: "Mouse look sensitivity");
-
-                    InspectorWidgets.Checkbox("Invert Y Axis", ref cam.FpsInvertY, entityId, "FpsInvertY",
-                        tooltip: "Invert vertical mouse look (flight sim style)");
-
-                    InspectorWidgets.EndSection();
-                }
-            }
-
-            // === ORBIT/FOLLOW MODE SETTINGS ===
-            if (cam.Mode == CameraComponent.Behavior.OrbitFollow)
-            {
-                if (InspectorWidgets.Section("Orbit & Follow Settings", defaultOpen: false,
-                    tooltip: "Third-person camera that orbits around a target"))
-                {
-                    // Follow target reference (component)
+                    // Follow Target
                     var scene = EditorUI.MainViewport.Renderer?.Scene;
                     if (scene != null)
                     {
                         TransformComponent? t = cam.FollowTarget;
                         if (FieldWidgets.ComponentRef("Follow Target", scene, ref t))
                             cam.FollowTarget = t;
-                        
-                        if (cam.FollowTarget == null)
-                        {
-                            InspectorWidgets.WarningBox("No follow target assigned. Camera will orbit around origin (0,0,0)");
-                        }
                     }
 
                     var off = cam.TargetOffset;
                     InspectorWidgets.Vector3FieldOTK("Target Offset", ref off, 0.01f, entityId, "TargetOffset",
-                        tooltip: "Offset from target position to look at",
-                        helpText: "Use to look at character's head instead of feet");
+                        tooltip: "Offset from target position");
                     cam.TargetOffset = off;
 
-                    InspectorWidgets.SliderFloat("Orbit Sensitivity", ref cam.OrbitSensitivity, 0.001f, 0.2f, "%.3f",
-                        entityId, "OrbitSensitivity",
-                        tooltip: "Mouse sensitivity for orbiting around target");
+                    InspectorWidgets.SliderFloat("Smooth Position", ref cam.SmoothPosition, 0f, 40f, "%.1f",
+                        entityId, "SmoothPosition",
+                        tooltip: "Position interpolation speed");
 
-                    InspectorWidgets.Checkbox("Orbit Behind Target", ref cam.OrbitBehindTarget, entityId, "OrbitBehindTarget",
-                        tooltip: "Automatically position camera behind target's forward direction",
-                        helpText: "Useful for follow-cam that stays behind moving character");
-
-                    InspectorWidgets.Checkbox("Invert Look X", ref cam.InvertLookX, entityId, "InvertLookX",
-                        tooltip: "Invert horizontal mouse look");
-
-                    InspectorWidgets.Checkbox("Invert Look Y", ref cam.InvertLookY, entityId, "InvertLookY",
-                        tooltip: "Invert vertical mouse look");
-
-                    InspectorWidgets.Separator();
-
-                    // Pitch limits
-                    InspectorWidgets.SliderFloat("Min Pitch", ref cam.MinPitchDeg, -89.9f, 0f, "%.1f°",
-                        entityId, "MinPitchDeg",
-                        tooltip: "Minimum vertical angle (looking down)",
-                        validate: (v) => v < cam.MaxPitchDeg ? null : "Min pitch must be less than max pitch");
-
-                    InspectorWidgets.SliderFloat("Max Pitch", ref cam.MaxPitchDeg, 0f, 89.9f, "%.1f°",
-                        entityId, "MaxPitchDeg",
-                        tooltip: "Maximum vertical angle (looking up)",
-                        validate: (v) => v > cam.MinPitchDeg ? null : "Max pitch must be greater than min pitch");
-
-                    InspectorWidgets.Separator();
-
-                    // Zoom settings
-                    InspectorWidgets.Checkbox("Enable Zoom", ref cam.EnableZoom, entityId, "EnableZoom",
-                        tooltip: "Allow zooming in/out with mouse wheel");
-
-                    if (cam.EnableZoom)
-                    {
-                        ImGui.Indent();
-
-                        InspectorWidgets.Checkbox("Invert Zoom Direction", ref cam.InvertZoomScroll, entityId, "InvertZoomScroll",
-                            tooltip: "Scroll up = zoom out (inverted)");
-
-                        InspectorWidgets.SliderFloat("Min Distance", ref cam.MinDistance, 0.1f, cam.MaxDistance - 0.01f, "%.2f",
-                            entityId, "MinDistance",
-                            tooltip: "Minimum distance from target (zoomed in)",
-                            validate: (v) => v < cam.MaxDistance ? null : "Min distance must be less than max distance");
-
-                        InspectorWidgets.SliderFloat("Max Distance", ref cam.MaxDistance, cam.MinDistance + 0.01f, 100f, "%.2f",
-                            entityId, "MaxDistance",
-                            tooltip: "Maximum distance from target (zoomed out)",
-                            validate: (v) => v > cam.MinDistance ? null : "Max distance must be greater than min distance");
-
-                        InspectorWidgets.SliderFloat("Zoom Speed", ref cam.ZoomSpeed, 0.1f, 5f, "%.2f",
-                            entityId, "ZoomSpeed",
-                            tooltip: "How fast the camera zooms in/out");
-
-                        InspectorWidgets.SliderFloat("Zoom Smoothing", ref cam.ZoomSmooth, 0f, 40f, "%.1f",
-                            entityId, "ZoomSmooth",
-                            tooltip: "Zoom interpolation speed (0 = instant, higher = smoother)");
-
-                        ImGui.Unindent();
-                    }
-
-                    InspectorWidgets.Separator();
-
-                    // Collision settings
-                    InspectorWidgets.Checkbox("Enable Collision", ref cam.EnableCollision, entityId, "EnableCollision",
-                        tooltip: "Prevent camera from clipping through geometry",
-                        helpText: "Uses raycasts to keep camera outside colliders");
-
-                    if (cam.EnableCollision)
-                    {
-                        ImGui.Indent();
-
-                        InspectorWidgets.SliderFloat("Collision Radius", ref cam.CollisionRadius, 0.05f, 1f, "%.2f",
-                            entityId, "CollisionRadius",
-                            tooltip: "Radius of camera collision sphere");
-
-                        InspectorWidgets.IntField("Collision LayerMask", ref cam.CollisionLayerMask, entityId, "CollisionLayerMask",
-                            tooltip: "Which layers to check for collisions (bitfield)",
-                            helpText: "Default = -1 (all layers). Use layer masks to ignore certain objects");
-
-                        ImGui.Unindent();
-                    }
+                    InspectorWidgets.SliderFloat("Smooth Rotation", ref cam.SmoothRotation, 0f, 40f, "%.1f",
+                        entityId, "SmoothRotation",
+                        tooltip: "Rotation interpolation speed");
 
                     InspectorWidgets.EndSection();
+                }
+
+                // === MOUSE/LOOK CONTROLS (FPS, ThirdPerson, Orbit) ===
+                if (cam.Mode == CameraComponent.ControlMode.FirstPerson ||
+                    cam.Mode == CameraComponent.ControlMode.ThirdPerson ||
+                    cam.Mode == CameraComponent.ControlMode.Orbit)
+                {
+                    if (InspectorWidgets.Section("Mouse Controls", defaultOpen: false))
+                    {
+                        InspectorWidgets.SliderFloat("Sensitivity", ref cam.Sensitivity, 0.001f, 0.2f, "%.3f",
+                            entityId, "Sensitivity",
+                            tooltip: "Mouse look sensitivity");
+
+                        InspectorWidgets.Checkbox("Invert Y", ref cam.InvertY, entityId, "InvertY");
+                        InspectorWidgets.Checkbox("Invert X", ref cam.InvertX, entityId, "InvertX");
+
+                        InspectorWidgets.SliderFloat("Min Pitch", ref cam.MinPitch, -89.9f, 0f, "%.1f°",
+                            entityId, "MinPitch",
+                            tooltip: "Minimum vertical angle (looking down)");
+
+                        InspectorWidgets.SliderFloat("Max Pitch", ref cam.MaxPitch, 0f, 89.9f, "%.1f°",
+                            entityId, "MaxPitch",
+                            tooltip: "Maximum vertical angle (looking up)");
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === DISTANCE/ZOOM CONTROLS (ThirdPerson, Orbit, TopDown, Isometric) ===
+                if (cam.Mode == CameraComponent.ControlMode.ThirdPerson ||
+                    cam.Mode == CameraComponent.ControlMode.Orbit ||
+                    cam.Mode == CameraComponent.ControlMode.TopDown ||
+                    cam.Mode == CameraComponent.ControlMode.Isometric)
+                {
+                    if (InspectorWidgets.Section("Distance & Zoom", defaultOpen: false))
+                    {
+                        InspectorWidgets.SliderFloat("Distance", ref cam.Distance, 0.1f, 100f, "%.2f",
+                            entityId, "Distance");
+
+                        InspectorWidgets.SliderFloat("Min Distance", ref cam.MinDistance, 0.1f, 50f, "%.2f",
+                            entityId, "MinDistance");
+
+                        InspectorWidgets.SliderFloat("Max Distance", ref cam.MaxDistance, 1f, 100f, "%.2f",
+                            entityId, "MaxDistance");
+
+                        InspectorWidgets.Checkbox("Enable Zoom", ref cam.EnableZoom, entityId, "EnableZoom");
+
+                        if (cam.EnableZoom)
+                        {
+                            InspectorWidgets.SliderFloat("Zoom Speed", ref cam.ZoomSpeed, 0.1f, 5f, "%.2f",
+                                entityId, "ZoomSpeed");
+
+                            InspectorWidgets.Checkbox("Invert Zoom", ref cam.InvertZoomScroll, entityId, "InvertZoomScroll");
+                        }
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === COLLISION (ThirdPerson) ===
+                if (cam.Mode == CameraComponent.ControlMode.ThirdPerson)
+                {
+                    if (InspectorWidgets.Section("Collision", defaultOpen: false))
+                    {
+                        InspectorWidgets.Checkbox("Enable Collision", ref cam.EnableCollision, entityId, "EnableCollision",
+                            tooltip: "Prevent camera from clipping through geometry");
+
+                        if (cam.EnableCollision)
+                        {
+                            InspectorWidgets.SliderFloat("Collision Margin", ref cam.CollisionMargin, 0.05f, 1f, "%.2f",
+                                entityId, "CollisionMargin");
+
+                            InspectorWidgets.IntField("Collision LayerMask", ref cam.CollisionLayerMask, entityId, "CollisionLayerMask");
+                        }
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === FIRST PERSON SPECIFIC ===
+                if (cam.Mode == CameraComponent.ControlMode.FirstPerson)
+                {
+                    if (InspectorWidgets.Section("First Person Settings", defaultOpen: false))
+                    {
+                        var eyeOff = cam.FPSEyeOffset;
+                        InspectorWidgets.Vector3FieldOTK("Eye Offset", ref eyeOff, 0.01f, entityId, "FPSEyeOffset");
+                        cam.FPSEyeOffset = eyeOff;
+
+                        InspectorWidgets.Checkbox("Enable WASD Move", ref cam.FPSEnableMove, entityId, "FPSEnableMove");
+
+                        if (cam.FPSEnableMove)
+                        {
+                            InspectorWidgets.SliderFloat("Move Speed", ref cam.FPSMoveSpeed, 0.5f, 30f, "%.1f",
+                                entityId, "FPSMoveSpeed");
+
+                            InspectorWidgets.SliderFloat("Sprint Multiplier", ref cam.FPSSprintMultiplier, 1f, 4f, "%.2f",
+                                entityId, "FPSSprintMultiplier");
+                        }
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === TOP DOWN SPECIFIC ===
+                if (cam.Mode == CameraComponent.ControlMode.TopDown)
+                {
+                    if (InspectorWidgets.Section("Top Down Settings", defaultOpen: false))
+                    {
+                        InspectorWidgets.SliderFloat("View Angle", ref cam.TopDownAngle, 0f, 90f, "%.1f°",
+                            entityId, "TopDownAngle",
+                            tooltip: "0=straight down, 45=typical, 90=side view");
+
+                        InspectorWidgets.Checkbox("Allow Rotation", ref cam.TopDownAllowRotation, entityId, "TopDownAllowRotation");
+
+                        if (cam.TopDownAllowRotation)
+                        {
+                            InspectorWidgets.SliderFloat("Rotation Speed", ref cam.TopDownRotationSpeed, 0.1f, 5f, "%.2f",
+                                entityId, "TopDownRotationSpeed");
+                        }
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === ISOMETRIC SPECIFIC ===
+                if (cam.Mode == CameraComponent.ControlMode.Isometric)
+                {
+                    if (InspectorWidgets.Section("Isometric Settings", defaultOpen: false))
+                    {
+                        InspectorWidgets.SliderFloat("Isometric Angle", ref cam.IsometricAngle, 0f, 60f, "%.1f°",
+                            entityId, "IsometricAngle",
+                            tooltip: "Standard isometric is ~30°");
+
+                        InspectorWidgets.SliderFloat("Isometric Yaw", ref cam.IsometricYaw, 0f, 360f, "%.1f°",
+                            entityId, "IsometricYaw",
+                            tooltip: "Horizontal rotation (45° for classic isometric)");
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === 2D SIDE SCROLLER SPECIFIC ===
+                if (cam.Mode == CameraComponent.ControlMode.SideScroller2D)
+                {
+                    if (InspectorWidgets.Section("Side Scroller Settings", defaultOpen: false))
+                    {
+                        var axis = cam.SideScrollerAxis;
+                        InspectorWidgets.Vector3FieldOTK("Follow Axis", ref axis, 0.01f, entityId, "SideScrollerAxis",
+                            tooltip: "Which axis to follow (X for side, Y for vertical)");
+                        cam.SideScrollerAxis = axis;
+
+                        InspectorWidgets.SliderFloat("Look Ahead", ref cam.SideScrollerLookAhead, 0f, 10f, "%.2f",
+                            entityId, "SideScrollerLookAhead");
+
+                        InspectorWidgets.SliderFloat("Dead Zone", ref cam.SideScrollerDeadZone, 0f, 5f, "%.2f",
+                            entityId, "SideScrollerDeadZone");
+
+                        InspectorWidgets.EndSection();
+                    }
                 }
             }
         }

@@ -49,6 +49,11 @@ uniform float u_HeightScale;
 
 uniform uint  u_ObjectId;
 
+// Triplanar mapping settings
+uniform int u_UseTriplanar; // 0 = off, 1 = on
+uniform float u_TriplanarScale; // Scale factor for world-space UVs
+uniform float u_TriplanarBlendSharpness; // Controls blend sharpness between projections
+
 // Stylization parameters
 uniform float u_Saturation;
 uniform float u_Brightness;
@@ -100,22 +105,217 @@ vec3 adjustHue(vec3 color, float hue) {
     return hsv2rgb(hsv);
 }
 
+// Triplanar texture sampling with proper normal blending
+struct TriplanarSample {
+    vec3 albedo;
+    vec3 normal;
+};
+
+TriplanarSample SampleTriplanar(vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
+{
+    // Calculate blend weights based on surface normal
+    vec3 blendWeights = abs(worldNormal);
+
+    // Apply sharpness to blend (higher = sharper transitions)
+    blendWeights = pow(blendWeights, vec3(blendSharpness));
+
+    // Normalize blend weights so they sum to 1
+    blendWeights /= (blendWeights.x + blendWeights.y + blendWeights.z);
+
+    // Calculate UVs for each projection plane
+    vec2 uvX = worldPos.yz * scale; // Side projection (X-axis)
+    vec2 uvY = worldPos.xz * scale; // Top/Bottom projection (Y-axis)
+    vec2 uvZ = worldPos.xy * scale; // Front/Back projection (Z-axis)
+
+    // Sample albedo from all three projections
+    vec3 albedoX = texture(u_AlbedoTex, uvX).rgb;
+    vec3 albedoY = texture(u_AlbedoTex, uvY).rgb;
+    vec3 albedoZ = texture(u_AlbedoTex, uvZ).rgb;
+
+    // Blend albedo
+    vec3 albedo = albedoX * blendWeights.x +
+                  albedoY * blendWeights.y +
+                  albedoZ * blendWeights.z;
+
+    // Sample normal maps from all three projections
+    vec3 normalX = texture(u_NormalTex, uvX).xyz * 2.0 - 1.0;
+    vec3 normalY = texture(u_NormalTex, uvY).xyz * 2.0 - 1.0;
+    vec3 normalZ = texture(u_NormalTex, uvZ).xyz * 2.0 - 1.0;
+
+    // Flip Y channel for OpenGL normal maps
+    normalX.y = -normalX.y;
+    normalY.y = -normalY.y;
+    normalZ.y = -normalZ.y;
+
+    // Transform tangent-space normals to world space for each projection
+    // X-axis projection (YZ plane): tangent=Y, bitangent=Z, normal=X
+    vec3 worldNormalX = vec3(normalX.z, normalX.x, normalX.y);
+    // Y-axis projection (XZ plane): tangent=X, bitangent=Z, normal=Y
+    vec3 worldNormalY = vec3(normalY.x, normalY.z, normalY.y);
+    // Z-axis projection (XY plane): tangent=X, bitangent=Y, normal=Z
+    vec3 worldNormalZ = vec3(normalZ.x, normalZ.y, normalZ.z);
+
+    // Flip X-projection to match world-space orientation
+    worldNormalX.x = -worldNormalX.x;
+
+    // Blend world-space normals
+    vec3 blendedNormal = worldNormalX * blendWeights.x +
+                         worldNormalY * blendWeights.y +
+                         worldNormalZ * blendWeights.z;
+
+    TriplanarSample result;
+    result.albedo = albedo;
+    result.normal = blendedNormal;
+    return result;
+}
+
+// General-purpose triplanar helpers for colors, grayscale and normals
+void ComputeTriplanarUVs(vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness,
+                         out vec3 blendWeights, out vec2 uvX, out vec2 uvY, out vec2 uvZ)
+{
+    blendWeights = abs(worldNormal);
+    blendWeights = pow(blendWeights, vec3(blendSharpness));
+    blendWeights /= (blendWeights.x + blendWeights.y + blendWeights.z + 1e-6);
+
+    uvX = worldPos.yz * scale;
+    uvY = worldPos.xz * scale;
+    uvZ = worldPos.xy * scale;
+}
+
+vec3 SampleTriplanarColor(sampler2D tex, vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
+{
+    vec3 bw; vec2 ux, uy, uz;
+    ComputeTriplanarUVs(worldPos, worldNormal, scale, blendSharpness, bw, ux, uy, uz);
+    vec3 cX = texture(tex, ux).rgb;
+    vec3 cY = texture(tex, uy).rgb;
+    vec3 cZ = texture(tex, uz).rgb;
+    return cX * bw.x + cY * bw.y + cZ * bw.z;
+}
+
+float SampleTriplanarGray(sampler2D tex, vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
+{
+    vec3 bw; vec2 ux, uy, uz;
+    ComputeTriplanarUVs(worldPos, worldNormal, scale, blendSharpness, bw, ux, uy, uz);
+    float vX = texture(tex, ux).r;
+    float vY = texture(tex, uy).r;
+    float vZ = texture(tex, uz).r;
+    return vX * bw.x + vY * bw.y + vZ * bw.z;
+}
+
+vec3 SampleTriplanarNormalMap(sampler2D tex, vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
+{
+    // Similar to SampleTriplanar but handles normal map decoding and tangent->world for each projection
+    vec3 bw; vec2 ux, uy, uz;
+    ComputeTriplanarUVs(worldPos, worldNormal, scale, blendSharpness, bw, ux, uy, uz);
+
+    vec3 nX = texture(tex, ux).xyz * 2.0 - 1.0;
+    vec3 nY = texture(tex, uy).xyz * 2.0 - 1.0;
+    vec3 nZ = texture(tex, uz).xyz * 2.0 - 1.0;
+
+    nX.y = -nX.y; nY.y = -nY.y; nZ.y = -nZ.y;
+
+    // Transform per-projection tangent-space normals to world-like space (matching SampleTriplanar)
+    vec3 worldNormalX = vec3(nX.z, nX.x, nX.y);
+    vec3 worldNormalY = vec3(nY.x, nY.z, nY.y);
+    vec3 worldNormalZ = vec3(nZ.x, nZ.y, nZ.z);
+    worldNormalX.x = -worldNormalX.x;
+
+    vec3 blended = worldNormalX * bw.x + worldNormalY * bw.y + worldNormalZ * bw.z;
+    return blended;
+}
+
 void main(){
-    // Setup material properties with PBR texture support
-    // Check if we have valid PBR textures (non-white 1x1 placeholder)
-    // Note: This is a simplified check - in production you'd pass flags from C++
+    // Handle triplanar mapping if enabled
+    vec3 baseNormal = normalize(vNormal);
+    vec3 sampledAlbedo;
+    vec3 sampledNormal;
+    vec2 effectiveUV;
+
+    // Detect which optional textures are present (1x1 placeholders yield size 1x1)
     bool hasMetallicRoughnessTex = textureSize(u_MetallicRoughnessTex, 0) != ivec2(1, 1);
     bool hasMetallicTex = !hasMetallicRoughnessTex && textureSize(u_MetallicTex, 0) != ivec2(1, 1);
     bool hasRoughnessTex = !hasMetallicRoughnessTex && textureSize(u_RoughnessTex, 0) != ivec2(1, 1);
     bool hasOcclusionTex = textureSize(u_OcclusionTex, 0) != ivec2(1, 1);
-    
-    MaterialProperties material = setupMaterialPropertiesPBR(
-        u_AlbedoTex, u_NormalTex, vUV,
-        u_AlbedoColor, u_NormalStrength,
-        u_Metallic, u_Smoothness, vNormal,
-        u_MetallicTex, u_RoughnessTex, u_MetallicRoughnessTex,
-        hasMetallicTex, hasRoughnessTex, hasMetallicRoughnessTex
-    );
+    bool hasEmissiveTex = textureSize(u_EmissiveTex, 0) != ivec2(1, 1);
+    bool hasHeightTex = textureSize(u_HeightTex, 0) != ivec2(1, 1);
+    bool hasDetailMask = textureSize(u_DetailMaskTex, 0) != ivec2(1, 1);
+    bool hasDetailAlbedo = textureSize(u_DetailAlbedoTex, 0) != ivec2(1, 1);
+    bool hasDetailNormal = textureSize(u_DetailNormalTex, 0) != ivec2(1, 1);
+
+    if (u_UseTriplanar == 1)
+    {
+        // Use triplanar mapping - world-space projection for main maps
+        sampledAlbedo = SampleTriplanarColor(u_AlbedoTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness);
+        sampledNormal = SampleTriplanarNormalMap(u_NormalTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness) * u_NormalStrength;
+        effectiveUV = vUV; // kept for non-triplanar fallbacks / detail blending
+
+        // Sample PBR scalar/combined textures via triplanar when present
+        // Metallic / Roughness
+        if (hasMetallicRoughnessTex) {
+            vec3 mr = SampleTriplanarColor(u_MetallicRoughnessTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness);
+            // GLTF convention: G = roughness, B = metallic
+            // Store temporarily in user-defined variables by writing to effectiveUV.x/y? We'll set later when computing material properties.
+            // To avoid scope issues, we'll set globals via local variables below where needed.
+        }
+
+        // Occlusion and height and emissive / detail textures can also be sampled triplanar
+        // We'll sample them lazily later when used (e.g., AO applied to ambient, emissive added at end)
+    }
+    else
+    {
+        // Standard UV mapping
+        sampledAlbedo = texture(u_AlbedoTex, vUV).rgb;
+        sampledNormal = sampleNormalMap(u_NormalTex, vUV, u_NormalStrength, baseNormal);
+        effectiveUV = vUV;
+    }
+
+    // Create material properties manually to use triplanar-sampled albedo/normal
+    MaterialProperties material;
+    material.baseColor = sampledAlbedo * u_AlbedoColor.rgb;
+    material.normal = (u_UseTriplanar == 1) ? normalize(baseNormal + sampledNormal * 0.1) : sampledNormal;
+
+    // Sample metallic and roughness from textures if available (always use UV for these)
+    float metallic = u_Metallic;
+    float roughness = smoothnessToRoughness(u_Smoothness);
+    // If triplanar is enabled, prefer triplanar sampling for scalar/combined textures
+    if (textureSize(u_MetallicRoughnessTex, 0) != ivec2(1, 1)) {
+        vec3 metallicRoughness = (u_UseTriplanar == 1) ? SampleTriplanarColor(u_MetallicRoughnessTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                                           : texture(u_MetallicRoughnessTex, effectiveUV).rgb;
+        roughness = metallicRoughness.g;
+        metallic = metallicRoughness.b;
+    } else {
+        if (textureSize(u_MetallicTex, 0) != ivec2(1, 1)) {
+            metallic = (u_UseTriplanar == 1) ? SampleTriplanarGray(u_MetallicTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                             : texture(u_MetallicTex, effectiveUV).r;
+        }
+        if (textureSize(u_RoughnessTex, 0) != ivec2(1, 1)) {
+            roughness = (u_UseTriplanar == 1) ? SampleTriplanarGray(u_RoughnessTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                               : texture(u_RoughnessTex, effectiveUV).r;
+        } else {
+            roughness = smoothnessToRoughness(u_Smoothness);
+        }
+    }
+
+    // Optional detail albedo overlay (if provided)
+    if (textureSize(u_DetailMaskTex, 0) != ivec2(1,1) && textureSize(u_DetailAlbedoTex, 0) != ivec2(1,1)) {
+        float mask = (u_UseTriplanar == 1) ? SampleTriplanarGray(u_DetailMaskTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                           : texture(u_DetailMaskTex, effectiveUV).r;
+        vec3 detailCol = (u_UseTriplanar == 1) ? SampleTriplanarColor(u_DetailAlbedoTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                               : texture(u_DetailAlbedoTex, effectiveUV).rgb;
+        material.baseColor = mix(material.baseColor, detailCol, clamp(mask, 0.0, 1.0));
+    }
+
+    // Optional detail normal blending
+    if (textureSize(u_DetailNormalTex, 0) != ivec2(1,1)) {
+        vec3 detailN = (u_UseTriplanar == 1) ? SampleTriplanarNormalMap(u_DetailNormalTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                             : sampleNormalMap(u_DetailNormalTex, effectiveUV, 1.0, baseNormal);
+        // Add subtle detail normal contribution
+        material.normal = normalize(material.normal + detailN * 0.5);
+    }
+
+    material.roughness = saturate(roughness);
+    material.metallic = saturate(metallic);
+    material.F0 = mix(vec3(0.04), material.baseColor, material.metallic);
 
     // Debug overrides: let caller visualize albedo or normal sampling directly
     if (u_DebugShowAlbedo != 0) {
@@ -176,7 +376,8 @@ void main(){
 
         // Apply baked ambient occlusion texture (only if a real texture is bound, not placeholder)
         if (hasOcclusionTex) {
-            float ao = texture(u_OcclusionTex, vUV).r;
+            float ao = (u_UseTriplanar == 1) ? SampleTriplanarGray(u_OcclusionTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                              : texture(u_OcclusionTex, vUV).r;
             ambient *= mix(1.0, ao, u_OcclusionStrength);
         }
     } else {
@@ -208,7 +409,12 @@ void main(){
     color = adjustHue(color, u_Hue);
 
     // Add emissive (texture-based with color tint + emission strength)
-    vec3 emissive = texture(u_EmissiveTex, vUV).rgb * u_EmissiveColor * u_Emission;
+    vec3 emissiveTex = vec3(0.0);
+    if (textureSize(u_EmissiveTex, 0) != ivec2(1,1)) {
+        emissiveTex = (u_UseTriplanar == 1) ? SampleTriplanarColor(u_EmissiveTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness)
+                                            : texture(u_EmissiveTex, vUV).rgb;
+    }
+    vec3 emissive = emissiveTex * u_EmissiveColor * u_Emission;
     color += emissive;
 
     // Shadows now working correctly - no debug visualization needed!

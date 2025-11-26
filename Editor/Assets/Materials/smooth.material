@@ -38,6 +38,9 @@
     0,
     0
   ],
+  "UseTriplanar": 0,
+  "TriplanarScale": 1,
+  "TriplanarBlendSharpness": 4,
   "TransparencyMode": 0,
   "Opacity": 1,
   "Saturation": 1,

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using ImGuiNET;
 using Engine.Audio.Components;
@@ -12,6 +13,9 @@ namespace Editor.Inspector
     /// </summary>
     public static class AudioSourceInspector
     {
+        // Track previous playing state to avoid false clicks when buttons appear/disappear
+        private static readonly Dictionary<int, bool> _previousPlayingState = new();
+
         public static void Draw(AudioSource audioSource)
         {
             if (audioSource == null) return;
@@ -128,22 +132,54 @@ namespace Editor.Inspector
             // Section : Playback Controls
             ImGui.SeparatorText("Playback");
 
-            if (ImGui.Button(audioSource.IsPlaying ? "Stop" : "Play"))
+            // Use completely separate buttons to avoid ImGui state confusion
+            bool isCurrentlyPlaying = audioSource.IsPlaying;
+            bool isCurrentlyPaused = audioSource.IsPaused;
+
+            // Get unique ID for this audio source
+            int audioSourceId = audioSource.GetHashCode();
+
+            // Check if state changed this frame (button just appeared)
+            bool stateJustChanged = false;
+            if (_previousPlayingState.TryGetValue(audioSourceId, out bool previousPlaying))
             {
-                if (audioSource.IsPlaying)
-                    audioSource.Stop();
-                else
+                stateJustChanged = (previousPlaying != isCurrentlyPlaying);
+            }
+            _previousPlayingState[audioSourceId] = isCurrentlyPlaying;
+
+            // Show only one button at a time
+            if (!isCurrentlyPlaying)
+            {
+                if (ImGui.Button("Play"))
+                {
                     audioSource.Play(resetPosition: false); // Preview without resetting live stream
+                }
+            }
+            else
+            {
+                bool clicked = ImGui.Button("Stop");
+                // Only process click if the button didn't just appear this frame
+                if (clicked && !stateJustChanged)
+                {
+                    audioSource.Stop();
+                }
             }
 
             ImGui.SameLine();
 
-            if (ImGui.Button(audioSource.IsPaused ? "Resume" : "Pause"))
+            if (!isCurrentlyPaused)
             {
-                if (audioSource.IsPaused)
-                    audioSource.UnPause();
-                else
+                if (ImGui.Button("Pause"))
+                {
                     audioSource.Pause();
+                }
+            }
+            else
+            {
+                if (ImGui.Button("Resume"))
+                {
+                    audioSource.UnPause();
+                }
             }
 
             // Afficher le temps de lecture
@@ -379,32 +415,27 @@ namespace Editor.Inspector
                 ImGui.EndPopup();
             }
 
+            var filters = audioSource.Filters;
             ImGui.SameLine();
-            ImGui.TextDisabled($"({audioSource.Filters.Count} filter(s))");
+            ImGui.TextDisabled($"({(filters?.Count ?? 0)} filter(s))");
 
             // Display list of filters
-            if (audioSource.Filters.Count > 0)
+            if (filters != null && filters.Count > 0)
             {
                 ImGui.Spacing();
                 ImGui.TextWrapped("Note: Only one direct filter can be active at a time (OpenAL limitation)");
                 ImGui.Spacing();
 
                 Engine.Audio.Components.AudioSourceFilter? filterToRemove = null;
-
-                for (int i = 0; i < audioSource.Filters.Count; i++)
+                for (int i = 0; i < filters.Count; i++)
                 {
-                    var filter = audioSource.Filters[i];
+                    var filter = filters[i];
                     ImGui.PushID($"Filter_{i}");
 
                     // Header
                     bool isOpen = ImGui.CollapsingHeader($"{filter.Type} Filter ###{i}");
 
-                    // Remove button on the same line
-                    ImGui.SameLine(ImGui.GetContentRegionAvail().X - 60);
-                    if (ImGui.Button("Remove"))
-                    {
-                        filterToRemove = filter;
-                    }
+                    // Remove button will be shown inside the panel content so it is clickable
 
                     // Filter content (if open)
                     if (isOpen)
@@ -421,6 +452,12 @@ namespace Editor.Inspector
                         DrawFilterParameters(filter);
 
                         ImGui.Unindent();
+                        ImGui.Separator();
+                        ImGui.SameLine();
+                        if (ImGui.Button("Remove"))
+                        {
+                            filterToRemove = filter;
+                        }
                     }
 
                     ImGui.PopID();
@@ -430,7 +467,7 @@ namespace Editor.Inspector
                 if (filterToRemove != null)
                 {
                     Engine.Audio.Components.AudioSourceFilterExtensions.DestroyFilterHandle(filterToRemove);
-                    audioSource.Filters.Remove(filterToRemove);
+                    filters.Remove(filterToRemove);
                 }
             }
             else

@@ -99,10 +99,10 @@ namespace Engine.Rendering
                     GL.ShaderSource(t, tcsSrc);
                     GL.CompileShader(t);
                     GL.GetShader(t, ShaderParameter.CompileStatus, out int okt);
-                    if (okt == 0)
+                        if (okt == 0)
                     {
                         var log = GL.GetShaderInfoLog(t);
-                        Console.WriteLine("TCS compile failed: " + log);
+                        Engine.Utils.DebugLogger.Log("TCS compile failed: " + log);
                         GL.DeleteShader(t);
                     }
                     else
@@ -111,7 +111,7 @@ namespace Engine.Rendering
                         tessAttached = true;
                     }
                 }
-                catch (Exception ex) { Console.WriteLine("TCS compile error: " + ex.Message); }
+                catch (Exception ex) { Engine.Utils.DebugLogger.Log("TCS compile error: " + ex.Message); }
             }
 
             if (!string.IsNullOrEmpty(tesSrc))
@@ -125,7 +125,7 @@ namespace Engine.Rendering
                     if (okte == 0)
                     {
                         var log = GL.GetShaderInfoLog(te);
-                        Console.WriteLine("TES compile failed: " + log);
+                        Engine.Utils.DebugLogger.Log("TES compile failed: " + log);
                         GL.DeleteShader(te);
                     }
                     else
@@ -134,7 +134,7 @@ namespace Engine.Rendering
                         tessAttached = true;
                     }
                 }
-                catch (Exception ex) { Console.WriteLine("TES compile error: " + ex.Message); }
+                catch (Exception ex) { Engine.Utils.DebugLogger.Log("TES compile error: " + ex.Message); }
             }
 
             int p = GL.CreateProgram();

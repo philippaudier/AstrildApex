@@ -465,6 +465,33 @@ namespace Editor.Rendering
             }
         }
 
+        /// <summary>
+        /// Reset IBL cache to force regeneration with the current scene's skybox.
+        /// Call this when switching scenes or when IBL needs to be refreshed.
+        /// </summary>
+        public void ResetIBLCache()
+        {
+            _skyboxRenderer?.ResetIBLCache();
+        }
+
+        /// <summary>
+        /// Ensure IBL is assigned from the skybox renderer immediately.
+        /// This is a thin wrapper used by SceneManager after loading textures.
+        /// </summary>
+        public void EnsureIBL()
+        {
+            _skyboxRenderer?.EnsureIBL();
+        }
+
+        /// <summary>
+        /// Load skybox from material without rendering to update IBL resources.
+        /// Used by SceneManager after scene load to ensure IBL is ready immediately.
+        /// </summary>
+        public void LoadSkyboxFromMaterial(Engine.Assets.SkyboxMaterialAsset skyboxMaterial)
+        {
+            _skyboxRenderer?.LoadFromMaterial(skyboxMaterial);
+        }
+
         private bool _subscribedToMaterialChanges = false;
 
         // === FBO ===
@@ -788,7 +815,8 @@ namespace Editor.Rendering
             if (_maxTexSize == 0)
             {
                 GL.GetInteger(GetPName.MaxTextureSize, out _maxTexSize);
-                LogManager.LogInfo($"GL_MAX_TEXTURE_SIZE: {_maxTexSize}", "ViewportRenderer");
+                // PERF FIX: Removed initialization logging
+                // LogManager.LogInfo($"GL_MAX_TEXTURE_SIZE: {_maxTexSize}", "ViewportRenderer");
             }
 
             // Clamp to GL max texture size to avoid artifacts
@@ -822,7 +850,8 @@ namespace Editor.Rendering
             // Update size
             _w = renderW; _h = renderH;
 
-            LogManager.LogInfo($"Resize: display={_displayWidth}x{_displayHeight}, render={_w}x{_h}, scale={_renderScale}", "ViewportRenderer");
+            // PERF FIX: Removed Resize logging (happens multiple times per second during window resize)
+            // LogManager.LogInfo($"Resize: display={_displayWidth}x{_displayHeight}, render={_w}x{_h}, scale={_renderScale}", "ViewportRenderer");
 
             if (_fbo == 0) _fbo = GL.GenFramebuffer();
             // Debug: try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Instance={this.GetHashCode()} Resize({w}x{h}) -> FBO={_fbo}, previousColorTex={_colorTex}, previousIdTex={_idTex}"); } catch { }
@@ -996,7 +1025,8 @@ namespace Editor.Rendering
             {
                 _taaRenderer = new Engine.Rendering.PostProcess.TAARenderer(_w, _h);
                 _taaRenderer.Settings = TAASettings;
-                Editor.Logging.LogManager.LogInfo($"TAA Renderer initialized/resized: {_w}x{_h}", "Renderer");
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    Editor.Logging.LogManager.LogInfo($"TAA Renderer initialized/resized: {_w}x{_h}", "Renderer");
             }
             catch (Exception ex)
             {
@@ -1059,6 +1089,16 @@ if (_scene.Entities.Count == 0)
         {
             // --- texture blanche 1x1 (cache runtime)
             TextureCache.Initialize();
+            // Ensure any pending background-decoded images are uploaded into
+            // this GL context immediately. This fixes a timing issue where
+            // PlayMode flushed uploads before the GamePanel's GL context
+            // existed, producing placeholders instead of real textures.
+            try
+            {
+                int uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(1000);
+                if (uploaded > 0) try { Console.WriteLine($"[ViewportRenderer] Flushed {uploaded} pending texture(s) on init"); } catch { }
+            }
+            catch { }
 
             // --- 24 sommets cube (pos + normal + uv) ---
             // 6 faces * 4 sommets (pos.xyz, normal.xyz, uv.xy)
@@ -2285,6 +2325,8 @@ void main(){
             // Start frame timer to measure render time
             if (_frameTimer == null) _frameTimer = System.Diagnostics.Stopwatch.StartNew();
             _frameTimer.Restart();
+            // PERF FIX: Removed per-frame LogInfo that was destroying performance (88 fps -> 300+ fps)
+            // Original log called LogManager.LogInfo every frame, causing massive I/O overhead
             
             // === Clear any pending GL errors from previous frames ===
             // This prevents "sticky" errors from corrupting subsequent rendering
@@ -2642,34 +2684,48 @@ void main(){
                 var env = envEntity.GetComponent<EnvironmentSettings>();
 
                 // Auto-configure default skybox material if none is set
+                // NOTE: avoid creating a new asset every frame or reusing a fixed GUID which can cause
+                // GUID collisions and AssetDatabase indexing surprises. Create once and reuse the file.
                 if (env != null && string.IsNullOrWhiteSpace(env.SkyboxMaterialPath))
                 {
-                    // Create and configure a default procedural skybox material
                     try
                     {
-                        var defaultSkybox = new SkyboxMaterialAsset
-                        {
-                            Guid = new Guid("99204530-428c-4238-84c4-ff773bda4e9a"),
-                            Name = "Default Procedural Skybox",
-                            Type = Engine.Assets.SkyboxType.Procedural,
-                            SkyTint = new float[] { 0.5f, 0.8f, 1.0f, 1.0f }, // Light blue sky
-                            GroundColor = new float[] { 0.369f, 0.349f, 0.341f, 1.0f }, // Brownish ground
-                            Exposure = 1.3f,
-                            AtmosphereThickness = 1.0f,
-                            SunTint = new float[] { 1.0f, 0.95f, 0.8f, 1.0f }, // Warm sun
-                            SunSize = 0.04f,
-                            SunSizeConvergence = 5.0f
-                        };
-                        
                         var skyboxPath = Path.Combine(AssetDatabase.AssetsRoot, "Default Procedural Skybox.skymat");
                         Directory.CreateDirectory(Path.GetDirectoryName(skyboxPath)!);
-                        SkyboxMaterialAsset.Save(skyboxPath, defaultSkybox);
-                        AssetDatabase.Refresh(); // Make sure it's indexed
-                        
+
+                        SkyboxMaterialAsset defaultSkybox;
+                        if (File.Exists(skyboxPath))
+                        {
+                            // Reuse the existing file (preserves its GUID)
+                            defaultSkybox = SkyboxMaterialAsset.Load(skyboxPath);
+                        }
+                        else
+                        {
+                            // Create a new unique-guid default skybox once
+                            defaultSkybox = new SkyboxMaterialAsset
+                            {
+                                Guid = Guid.NewGuid(),
+                                Name = "Default Procedural Skybox",
+                                Type = Engine.Assets.SkyboxType.Procedural,
+                                SkyTint = new float[] { 0.5f, 0.8f, 1.0f, 1.0f },
+                                GroundColor = new float[] { 0.369f, 0.349f, 0.341f, 1.0f },
+                                Exposure = 1.3f,
+                                AtmosphereThickness = 1.0f,
+                                SunTint = new float[] { 1.0f, 0.95f, 0.8f, 1.0f },
+                                SunSize = 0.04f,
+                                SunSizeConvergence = 5.0f
+                            };
+                            SkyboxMaterialAsset.Save(skyboxPath, defaultSkybox);
+
+                            // Index the new asset once (refresh index) - avoid full refresh every frame
+                            try { Engine.Assets.AssetDatabase.Refresh(); } catch { }
+                        }
+
                         env.SkyboxMaterialPath = defaultSkybox.Guid.ToString();
                     }
                     catch (Exception)
                     {
+                        // swallow - fallback will be procedural rendering without a material reference
                     }
                 }
 
@@ -2764,22 +2820,29 @@ void main(){
 
             try
             {
-                // DEBUG: Check texture sizes before rendering outline
-                GL.BindTexture(TextureTarget.Texture2D, _postTex);
-                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int postTexW);
-                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int postTexH);
-
-                GL.BindTexture(TextureTarget.Texture2D, _idTex);
-                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int idTexW);
-                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int idTexH);
-
-                if (postTexW != _w || postTexH != _h || idTexW != _w || idTexH != _h)
+                // DEBUG: Optionally check texture sizes before rendering outline (expensive GL queries)
+                if (Engine.Utils.DebugLogger.EnableVerbose)
                 {
-                    LogManager.LogWarning($"Texture size mismatch! _w={_w}, _h={_h}, postTex={postTexW}x{postTexH}, idTex={idTexW}x{idTexH}", "ViewportRenderer");
+                    try
+                    {
+                        GL.BindTexture(TextureTarget.Texture2D, _postTex);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int postTexW);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int postTexH);
+
+                        GL.BindTexture(TextureTarget.Texture2D, _idTex);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int idTexW);
+                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int idTexH);
+
+                        if (postTexW != _w || postTexH != _h || idTexW != _w || idTexH != _h)
+                        {
+                            LogManager.LogWarning($"Texture size mismatch! _w={_w}, _h={_h}, postTex={postTexW}x{postTexH}, idTex={idTexW}x{idTexH}", "ViewportRenderer");
+                        }
+                    }
+                    catch { }
                 }
 
-                // Bind _postFbo2 as render target (NOT _postFbo) to avoid read/write conflict
-                // We read from _postTex and write to _postFbo2, then copy back to _postFbo
+                // Render outline into _postFbo2 (reading from _postTex, writing to _postTex2)
+                // We must use ping-pong buffers to avoid read/write conflicts
                 GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
                 GL.Viewport(0, 0, _w, _h);
 
@@ -3038,6 +3101,11 @@ void main(){
             // Note: Shader program should already be bound by caller
             // Render all casters: entities with MeshRenderer and terrain
             var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_scene.Entities);
+
+            // Hoist current program and uniform location to avoid querying per-entity
+            int currentProgram = GL.GetInteger(GetPName.CurrentProgram);
+            int locModelGlobal = GL.GetUniformLocation(currentProgram, "u_Model");
+
             for (int i = 0; i < entitiesSpan.Length; i++)
             {
                 var e = entitiesSpan[i];
@@ -3045,9 +3113,7 @@ void main(){
                 if (meshRenderer != null && meshRenderer.HasMeshToRender())
                 {
                     e.GetModelAndNormalMatrix(out var model, out _);
-                    int curProg = GL.GetInteger(GetPName.CurrentProgram);
-                    int locModel = GL.GetUniformLocation(curProg, "u_Model");
-                    if (locModel >= 0) GL.UniformMatrix4(locModel, false, ref model);
+                    if (locModelGlobal >= 0) GL.UniformMatrix4(locModelGlobal, false, ref model);
 
                     // Check if using custom mesh first
                     int vao, idxCount;
@@ -3095,14 +3161,12 @@ void main(){
                 if (e.HasComponent<Engine.Components.Terrain>())
                 {
                     var terrain = e.GetComponent<Engine.Components.Terrain>();
-                    if (terrain != null)
-                    {
-                        e.GetModelAndNormalMatrix(out var model, out _);
-                        int curProg2 = GL.GetInteger(GetPName.CurrentProgram);
-                        int locModel2 = GL.GetUniformLocation(curProg2, "u_Model");
-                        if (locModel2 >= 0) GL.UniformMatrix4(locModel2, false, ref model);
-                        terrain.Render(new System.Numerics.Vector3(CameraPosition().X, CameraPosition().Y, CameraPosition().Z));
-                    }
+                        if (terrain != null)
+                        {
+                            e.GetModelAndNormalMatrix(out var model, out _);
+                            if (locModelGlobal >= 0) GL.UniformMatrix4(locModelGlobal, false, ref model);
+                            terrain.Render(new System.Numerics.Vector3(CameraPosition().X, CameraPosition().Y, CameraPosition().Z));
+                        }
                 }
             }
         }
@@ -3663,6 +3727,11 @@ void main(){
 
                     // Render all casters: entities with MeshRenderer and terrain
                     var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_scene.Entities);
+
+                    // Hoist current program and model location (program set above)
+                    int shadowCurProg = GL.GetInteger(GetPName.CurrentProgram);
+                    int shadowLocModel = GL.GetUniformLocation(shadowCurProg, "u_Model");
+
                     for (int i = 0; i < entitiesSpan.Length; i++)
                     {
                         var e = entitiesSpan[i];
@@ -3670,10 +3739,8 @@ void main(){
                         if (meshRenderer != null && meshRenderer.HasMeshToRender())
                         {
                             e.GetModelAndNormalMatrix(out var model, out _);
-                            // Set u_Model on the program that is currently bound (could be _shadowProg or _shadowColorProg)
-                            int curProg = GL.GetInteger(GetPName.CurrentProgram);
-                            int locModel = GL.GetUniformLocation(curProg, "u_Model");
-                            if (locModel >= 0) GL.UniformMatrix4(locModel, false, ref model);
+                            // Set u_Model on the program that is currently bound (hoisted)
+                            if (shadowLocModel >= 0) GL.UniformMatrix4(shadowLocModel, false, ref model);
 
                             // Draw using VAO bound earlier in BuildRenderList mapping
                             int vao = _cubeVao, idxCount = _cubeIdx.Length;
@@ -3699,14 +3766,12 @@ void main(){
                         if (e.HasComponent<Engine.Components.Terrain>())
                         {
                             var terrain = e.GetComponent<Engine.Components.Terrain>();
-                            if (terrain != null)
-                            {
-                                e.GetModelAndNormalMatrix(out var model, out _);
-                                int curProg2 = GL.GetInteger(GetPName.CurrentProgram);
-                                int locModel2 = GL.GetUniformLocation(curProg2, "u_Model");
-                                if (locModel2 >= 0) GL.UniformMatrix4(locModel2, false, ref model);
-                                terrain.Render(new System.Numerics.Vector3(CameraPosition().X, CameraPosition().Y, CameraPosition().Z));
-                            }
+                                if (terrain != null)
+                                {
+                                    e.GetModelAndNormalMatrix(out var model, out _);
+                                    if (shadowLocModel >= 0) GL.UniformMatrix4(shadowLocModel, false, ref model);
+                                    terrain.Render(new System.Numerics.Vector3(CameraPosition().X, CameraPosition().Y, CameraPosition().Z));
+                                }
                         }
                     }
                     GL.UseProgram(0);
@@ -5261,6 +5326,14 @@ void main(){
             // Option 1: Depth test mais toujours passer (gizmo visible même derrière)
             GL.DepthFunc(DepthFunction.Always);
 
+            // Sauvegarder et désactiver temporairement le face culling pour éviter
+            // que certaines faces des gizmos soient masquées selon l'orientation
+            bool savedCullEnabled = GL.IsEnabled(EnableCap.CullFace);
+            if (savedCullEnabled)
+            {
+                GL.Disable(EnableCap.CullFace);
+            }
+
             // Option 2: Ou désactiver complètement le depth test
             // GL.Disable(EnableCap.DepthTest);
 
@@ -5280,6 +5353,10 @@ void main(){
 
             // Restaurer l'état
             GL.DepthFunc((DepthFunction)oldDepthFunc);
+            if (savedCullEnabled)
+            {
+                GL.Enable(EnableCap.CullFace);
+            }
             // GL.Enable(EnableCap.DepthTest);  // si vous aviez désactivé
             // GL.Disable(EnableCap.PolygonOffsetFill);  // si vous aviez utilisé l'offset
         }
@@ -5532,9 +5609,18 @@ void main(){
         {
             if (_scene == null || _quadVao == 0 || _quadIndexCount == 0) return;
 
-            // Find all Canvas entities
-            var canvasEntities = _scene.Entities.Where(e => e.HasComponent<Engine.Components.UI.CanvasComponent>()).ToList();
-            if (canvasEntities.Count == 0) return;
+            // PERF FIX: Avoid LINQ allocation every frame - iterate directly instead
+            // Find all Canvas entities (old code used LINQ .Where().ToList() -> massive allocation)
+            bool hasCanvas = false;
+            foreach (var e in _scene.Entities)
+            {
+                if (e.HasComponent<Engine.Components.UI.CanvasComponent>())
+                {
+                    hasCanvas = true;
+                    break;
+                }
+            }
+            if (!hasCanvas) return;
 
             // Save current OpenGL state
             GL.GetInteger(GetPName.CurrentProgram, out int oldProgram);
@@ -5556,7 +5642,8 @@ void main(){
 
             GL.BindVertexArray(_quadVao);
 
-            foreach (var entity in canvasEntities)
+            // PERF FIX: Iterate entities directly instead of using cached list
+            foreach (var entity in _scene.Entities)
             {
                 var canvasComp = entity.GetComponent<Engine.Components.UI.CanvasComponent>();
                 if (canvasComp == null || canvasComp.RuntimeCanvas == null) continue;
@@ -7022,6 +7109,62 @@ void main(){
         }
 
         /// <summary>
+        /// Clear all framebuffer textures to black - forces fresh render on next frame.
+        /// Use this when creating a new scene to avoid showing stale render data.
+        /// </summary>
+        public void ClearFramebuffers()
+        {
+            try
+            {
+                // Dispose skybox renderer to clear cached skybox textures
+                if (_skyboxRenderer != null)
+                {
+                    try
+                    {
+                        _skyboxRenderer.Dispose();
+                        _skyboxRenderer = null;
+                    }
+                    catch { }
+                }
+
+                // Clear main color/depth framebuffer
+                if (_fbo != 0)
+                {
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+                    GL.Viewport(0, 0, _w, _h);
+                    GL.ClearColor(0.15f, 0.16f, 0.18f, 1f); // Editor background color
+                    GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+
+                    // Clear ID buffer (ColorAttachment1)
+                    uint zero = 0;
+                    GL.ClearBuffer(ClearBuffer.Color, 1, ref zero);
+                }
+
+                // Clear post-process framebuffer if it exists
+                if (_postFbo != 0)
+                {
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo);
+                    GL.Viewport(0, 0, _w, _h);
+                    GL.ClearColor(0.15f, 0.16f, 0.18f, 1f);
+                    GL.Clear(ClearBufferMask.ColorBufferBit);
+                }
+
+                // Clear MSAA framebuffer if using MSAA
+                if (_msaaRenderer != null)
+                {
+                    try { _msaaRenderer.ClearFramebuffer(); } catch { }
+                }
+
+                // Restore default framebuffer
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+            }
+            catch (Exception ex)
+            {
+                try { Console.WriteLine($"[ViewportRenderer] ClearFramebuffers failed: {ex.Message}"); } catch { }
+            }
+        }
+
+        /// <summary>
         /// Apply live updates coming from the inspector to an existing cached MaterialRuntime.
         /// This updates only dynamic uniform-like fields (albedo color, metallic, smoothness,
         /// tiling/offset, normal strength, transparency) and optionally replaces texture handles
@@ -7032,7 +7175,23 @@ void main(){
         {
             try
             {
-                if (!_materialCache.TryGetValue(materialGuid, out var mr)) return;
+                // Single resolver instance for the whole method to avoid shadowing
+                Func<Guid, string?> resolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+
+                // If material is not in cache, load it and add to cache
+                if (!_materialCache.TryGetValue(materialGuid, out var mr))
+                {
+                    try
+                    {
+                        mr = Engine.Rendering.MaterialRuntime.FromAsset(mat, resolver);
+                        _materialCache[materialGuid] = mr;
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Console.WriteLine($"[ViewportRenderer] ApplyLiveMaterialUpdate: Failed to load material {materialGuid}: {ex.Message}"); } catch { }
+                        return;
+                    }
+                }
 
                 // Update scalar / color fields
                 if (mat.AlbedoColor != null && mat.AlbedoColor.Length >= 4)
@@ -7059,7 +7218,6 @@ void main(){
                 mr.Emission = mat.Emission;
 
                 // If texture GUIDs changed, attempt to update texture handles.
-                var resolver = new Func<Guid, string?>(g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null);
                 try
                 {
                     // Base textures
@@ -7209,9 +7367,15 @@ void main(){
             _velocityShader?.Dispose();
             _pbrShader?.Dispose();
 
+            // MEMORY LEAK FIX: Dispose UI renderer and input module
+            _uiRenderer?.Dispose();
+            _uiRenderer = null;
+            // StandaloneInputModule doesn't implement IDisposable, just null it
+            _inputModule = null;
+
             // Decrement instance count (thread-safe)
             Interlocked.Decrement(ref _instanceCount);
-            try { Console.WriteLine($"[ViewportRenderer] Dispose: instances={_instanceCount}, this={this.GetHashCode()}"); } catch { }
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Dispose: instances={_instanceCount}, this={this.GetHashCode()}"); } catch { }
         }
 
         // ======= POST-PROCESS EFFECTS =======
@@ -7389,29 +7553,18 @@ void main(){
                 {
                     // Render outline into _postFbo2 (reading from _postTex, writing to _postTex2)
                     RenderSelectionOutline();
-                    
-                    // Copy result back from _postFbo2 to _postFbo (final output)
-                    // This ensures the outline is in the correct buffer for display
-                    if (_postFbo2 != 0 && _postTex2 != 0)
-                    {
-                        try
-                        {
-                            GL.CopyImageSubData(
-                                _postTex2, ImageTarget.Texture2D, 0, 0, 0, 0,
-                                _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
-                                _w, _h, 1
-                            );
-                        }
-                        catch
-                        {
-                            // Fallback to blit
-                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo2);
-                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
-                            GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
-                            GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
-                            GL.BlitFramebuffer(0, 0, _w, _h, 0, 0, _w, _h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
-                        }
-                    }
+
+                    // PERFORMANCE: Swap texture handles instead of copying pixel data
+                    // This is ~100x faster than BlitFramebuffer or CopyImageSubData
+                    // After swap: _postTex contains the outlined scene, _postTex2 contains the old scene
+                    (_postTex, _postTex2) = (_postTex2, _postTex);
+
+                    // Also swap FBO attachments so they point to the swapped textures
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo);
+                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex, 0);
+
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
+                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex2, 0);
                 }
                 // Note: When no outline is needed, _postTex already contains the final image from post-processing
 

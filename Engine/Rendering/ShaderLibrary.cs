@@ -128,7 +128,7 @@ namespace Engine.Rendering
             catch (Exception ex)
             {
                 try { Engine.Utils.DebugLogger.Log($"[ShaderLibrary] FAILED to load shader {name}: {ex.Message}"); } catch { }
-                try { Console.WriteLine($"[ShaderLibrary] FAILED to load shader {name}: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[ShaderLibrary] FAILED to load shader {name}: {ex.Message}"); } catch { }
                 _cache[name] = null;
                 return null;
             }

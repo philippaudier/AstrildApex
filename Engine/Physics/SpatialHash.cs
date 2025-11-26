@@ -15,7 +15,7 @@ namespace Engine.Physics
         private readonly Dictionary<Vector3i, HashSet<Collider>> _grid;
         private readonly Dictionary<Collider, HashSet<Vector3i>> _colliderCells;
 
-        public SpatialHash(float cellSize = 10f)
+        public SpatialHash(float cellSize = 20f) // Increased to 20f for large scenes/terrains
         {
             _cellSize = cellSize;
             _grid = new Dictionary<Vector3i, HashSet<Collider>>();
@@ -41,9 +41,9 @@ namespace Engine.Physics
             int cellCountY = Math.Abs(maxCell.Y - minCell.Y) + 1;
             int cellCountZ = Math.Abs(maxCell.Z - minCell.Z) + 1;
             
-            const int MAX_CELLS_PER_DIMENSION = 100; // Safety limit
-            if (cellCountX > MAX_CELLS_PER_DIMENSION || 
-                cellCountY > MAX_CELLS_PER_DIMENSION || 
+            const int MAX_CELLS_PER_DIMENSION = 200; // Increased limit for large terrains/scenes
+            if (cellCountX > MAX_CELLS_PER_DIMENSION ||
+                cellCountY > MAX_CELLS_PER_DIMENSION ||
                 cellCountZ > MAX_CELLS_PER_DIMENSION)
             {
                 Console.WriteLine($"[SpatialHash] WARNING: Collider '{collider.Entity?.Name ?? "Unknown"}' has huge bounds ({cellCountX}x{cellCountY}x{cellCountZ} cells). Skipping spatial hash insertion.");

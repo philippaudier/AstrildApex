@@ -7,6 +7,10 @@ namespace Engine.Rendering
     // Simple PMREM generator: creates irradiance (diffuse) and prefiltered specular env maps
     public sealed class PMREMGenerator : IDisposable
     {
+        // Tunable quality settings (lower values = faster)
+        public static int IrradianceSampleCount { get; set; } = 128;
+        public static int PrefilterSampleCap { get; set; } = 512;
+
         private readonly int _cubeVao;
         private readonly int _cubeVbo;
         private ShaderProgram? _irradianceShader;
@@ -74,7 +78,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                try { Console.WriteLine($"[PMREMGenerator] Failed to compile irradiance shader: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[PMREMGenerator] Failed to compile irradiance shader: {ex.Message}"); } catch { }
                 _irradianceShader = null;
             }
 
@@ -84,7 +88,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                try { Console.WriteLine($"[PMREMGenerator] Failed to compile prefilter shader: {ex.Message}"); } catch { }
+                try { Engine.Utils.DebugLogger.Log($"[PMREMGenerator] Failed to compile prefilter shader: {ex.Message}"); } catch { }
                 _prefilterShader = null;
             }
             try
@@ -144,6 +148,8 @@ namespace Engine.Rendering
             GL.GetTexLevelParameter(TextureTarget.TextureCubeMapPositiveX, 0, GetTextureParameter.TextureWidth, out int sourceWidth);
             float sourceMaxLod = (float)Math.Floor(Math.Log(sourceWidth, 2));
 
+            Console.WriteLine($"[PMREMGen] Irradiance: sourceWidth={sourceWidth}, sourceMaxLod={sourceMaxLod}, sampleCount={Math.Max(32, IrradianceSampleCount)}");
+
 
             // Render to each face
             GL.BindVertexArray(_cubeVao);
@@ -159,9 +165,8 @@ namespace Engine.Rendering
                 _irradianceShader.SetMat4("uView", captureViews[face]);
                 // Pass max LOD to shader so it can sample the most blurred mip level
                 _irradianceShader.SetFloat("u_PrefilterMaxLod", sourceMaxLod);
-                // Use 1024 samples for ultra-smooth irradiance (eliminates white spots from sun/bright lights)
-                // Higher sample count = better convolution quality for diffuse lighting
-                _irradianceShader.SetInt("u_SampleCount", 1024);
+                // Use a reasonable default sample count for irradiance to avoid long GPU stalls
+                _irradianceShader.SetInt("u_SampleCount", Math.Max(32, IrradianceSampleCount));
                 GL.DrawArrays(PrimitiveType.Triangles, 0, 36);
             }
             GL.BindVertexArray(0);
@@ -230,9 +235,9 @@ namespace Engine.Rendering
                 GL.Viewport(0, 0, mipW, mipW);
                 float roughness = (float)mip / Math.Max(1, mipCount - 1);
                 _prefilterShader.SetFloat("u_Roughness", roughness);
-                // Increase sample count for higher mip levels (higher roughness) to reduce blockiness.
-                // Linear ramp with a cap is used to avoid runaway sample counts on many-mip environments.
-                int sampleCount = Math.Min(2048, 32 + mip * 128);
+                // Increase sample count for higher mip levels (higher roughness), but cap it
+                // to a modest value to avoid extremely long generation times.
+                int sampleCount = Math.Min(PrefilterSampleCap, 32 + mip * 32);
                 if (sampleCount < 32) sampleCount = 32;
                 _prefilterShader.SetInt("u_SampleCount", sampleCount);
 

@@ -84,13 +84,31 @@ namespace Editor.Inspector
             ImGui.Text("Skybox");
             ImGui.SameLine();
             
-            var skyboxTypeNames = new[] { "Procedural", "Cubemap", "6 Sided", "Panoramic" };
-            var currentType = (int)skyboxMat.Type;
-            
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo("##SkyboxType", ref currentType, skyboxTypeNames, skyboxTypeNames.Length))
+            // Expose all skybox techniques in the editor UI (Procedural, Cubemap, SixSided, Panoramic)
+            var skyboxTypeNames = new[] { "Procedural", "Cubemap", "6-Sided", "Panoramic" };
+
+            // Map current enum to combo index
+            int currentTypeIndex = skyboxMat.Type switch
             {
-                skyboxMat.Type = (SkyboxType)currentType;
+                SkyboxType.Procedural => 0,
+                SkyboxType.Cubemap => 1,
+                SkyboxType.SixSided => 2,
+                SkyboxType.Panoramic => 3,
+                _ => 0
+            };
+
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.Combo("##SkyboxType", ref currentTypeIndex, skyboxTypeNames, skyboxTypeNames.Length))
+            {
+                // Map selected index back to the enum values
+                skyboxMat.Type = currentTypeIndex switch
+                {
+                    0 => SkyboxType.Procedural,
+                    1 => SkyboxType.Cubemap,
+                    2 => SkyboxType.SixSided,
+                    3 => SkyboxType.Panoramic,
+                    _ => SkyboxType.Procedural
+                };
                 changed = true;
             }
             return changed;

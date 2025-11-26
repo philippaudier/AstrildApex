@@ -15,6 +15,10 @@ namespace Engine.Rendering
 {
     public static class TextureCache
     {
+        // Event fired when a texture upload has completed and a GL handle is available.
+        // Parameters: (Guid textureGuid, int glHandle)
+        public static event Action<Guid, int>? TextureUploaded;
+
         private class TextureEntry
         {
             public int GLHandle;
@@ -158,13 +162,13 @@ namespace Engine.Rendering
             // Capture values for background task
             var captureGuid = textureGuid;
             var capturePath = path;
-            try { Console.WriteLine($"[TextureCache] Scheduling background load for GUID={captureGuid} path={capturePath}"); } catch { }
+            try { Engine.Utils.DebugLogger.Log($"[TextureCache] Scheduling background load for GUID={captureGuid} path={capturePath}"); } catch { }
 
             Task.Run(() =>
             {
                 try
                 {
-                    try { Console.WriteLine($"[TextureCache] Background loader started for path={capturePath}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Background loader started for path={capturePath}"); } catch { }
                     // Load image data on background thread (no GL calls)
                     using var fs = File.OpenRead(capturePath);
                     bool isHdr = capturePath.EndsWith(".hdr", StringComparison.OrdinalIgnoreCase);
@@ -217,7 +221,7 @@ namespace Engine.Rendering
                         var size = CalculateTextureSize(image.Width, image.Height, fmt, true);
                         var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = rgba8Data, Width = image.Width, Height = image.Height, InternalFormat = fmt, SizeInBytes = size };
                         _uploadQueue.Enqueue(pl);
-                        try { Console.WriteLine($"[TextureCache] Enqueued DDS/LDR upload: {capturePath}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Enqueued DDS/LDR upload: {capturePath}"); } catch { }
                         
                         image.Dispose();
                     }
@@ -256,12 +260,12 @@ namespace Engine.Rendering
 
                             var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = ktx.IsFloatFormat, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = null, Width = ktx.Width, Height = ktx.Height, InternalFormat = ktx.InternalFormat, SizeInBytes = size, IsKtx = true, Ktx = ktx };
                             _uploadQueue.Enqueue(pl);
-                            try { Console.WriteLine($"[TextureCache] Enqueued KTX for upload: {capturePath}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] Enqueued KTX for upload: {capturePath}"); } catch { }
                         }
                         catch (Exception ex)
                         {
-                            try { Console.WriteLine($"[TextureCache] KTX parse failed ({capturePath}): {ex.Message}"); } catch { }
-                            try { Console.WriteLine(ex.ToString()); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] KTX parse failed ({capturePath}): {ex.Message}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log(ex.ToString()); } catch { }
 
                             // Failed to parse KTX; fall through to generic loader
                             try
@@ -273,12 +277,12 @@ namespace Engine.Rendering
                                 var size = CalculateTextureSize(img.Width, img.Height, fmt, true);
                                 var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = actualData, Width = img.Width, Height = img.Height, InternalFormat = fmt, SizeInBytes = size };
                                 _uploadQueue.Enqueue(pl);
-                                try { Console.WriteLine($"[TextureCache] Enqueued fallback LDR upload for: {capturePath}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] Enqueued fallback LDR upload for: {capturePath}"); } catch { }
                             }
                             catch (Exception ex2)
                             {
-                                try { Console.WriteLine($"[TextureCache] Fallback LDR load also failed for {capturePath}: {ex2.Message}"); } catch { }
-                                try { Console.WriteLine(ex2.ToString()); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] Fallback LDR load also failed for {capturePath}: {ex2.Message}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log(ex2.ToString()); } catch { }
                             }
                         }
                     }
@@ -290,7 +294,7 @@ namespace Engine.Rendering
                         var size = CalculateTextureSize(hdr.Width, hdr.Height, PixelInternalFormat.Rgba8, false);
                         var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = true, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = rgba8, Width = hdr.Width, Height = hdr.Height, InternalFormat = PixelInternalFormat.Rgba8, SizeInBytes = size };
                         _uploadQueue.Enqueue(pl);
-                        try { Console.WriteLine($"[TextureCache] Enqueued HDR->LDR upload: {capturePath}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Enqueued HDR->LDR upload: {capturePath}"); } catch { }
                     }
                     else
                     {
@@ -335,13 +339,13 @@ namespace Engine.Rendering
                         var size = CalculateTextureSize(img.Width, img.Height, fmt, true);
                         var pl = new PendingLoad { Guid = captureGuid, Path = capturePath, IsHdr = false, IsNormalMap = metaIsNormal, FlipGreen = metaFlipGreen, PixelData = actualData, Width = img.Width, Height = img.Height, InternalFormat = fmt, SizeInBytes = size };
                         _uploadQueue.Enqueue(pl);
-                        try { Console.WriteLine($"[TextureCache] Enqueued LDR upload: {capturePath}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Enqueued LDR upload: {capturePath}"); } catch { }
                     }
                 }
                 catch (Exception ex)
                 {
-                    try { Console.WriteLine($"[TextureCache] Background loader exception for {capturePath}: {ex.Message}"); } catch { }
-                    try { Console.WriteLine(ex.ToString()); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Background loader exception for {capturePath}: {ex.Message}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log(ex.ToString()); } catch { }
                 }
             });
 
@@ -380,18 +384,18 @@ namespace Engine.Rendering
                     if (pl.IsKtx && pl.Ktx != null)
                     {
                         var k = pl.Ktx;
-                        try { Console.WriteLine($"[TextureCache] Starting KTX upload: {pl.Path}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Starting KTX upload: {pl.Path}"); } catch { }
 
                         // Validate that this is a cubemap (6 faces)
                         if (k.NumFaces != 6)
                         {
-                            try { Console.WriteLine($"[TextureCache] ERROR: KTX file is not a cubemap! NumFaces={k.NumFaces}, expected 6. Path={pl.Path}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] ERROR: KTX file is not a cubemap! NumFaces={k.NumFaces}, expected 6. Path={pl.Path}"); } catch { }
                             // Fallback to white texture
                             handle = White1x1;
                         }
                         else if (k.MipFaces.Count == 0)
                         {
-                            try { Console.WriteLine($"[TextureCache] ERROR: KTX has no mipmap data! Path={pl.Path}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] ERROR: KTX has no mipmap data! Path={pl.Path}"); } catch { }
                             handle = White1x1;
                         }
                         else
@@ -407,7 +411,7 @@ namespace Engine.Rendering
                             GL.PixelStore(PixelStoreParameter.UnpackSkipPixels, 0);
                             GL.PixelStore(PixelStoreParameter.UnpackSkipRows, 0);
 
-                            try { Console.WriteLine($"[TextureCache] Loading KTX cubemap: {k.Width}x{k.Height}, {k.MipLevels} mips, format={k.InternalFormat}, type={k.Type}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] Loading KTX cubemap: {k.Width}x{k.Height}, {k.MipLevels} mips, format={k.InternalFormat}, type={k.Type}"); } catch { }
 
                             bool uploadFailed = false;
                             try
@@ -419,19 +423,19 @@ namespace Engine.Rendering
 
                                     if (mip >= k.MipFaces.Count)
                                     {
-                                        try { Console.WriteLine($"[TextureCache] WARNING: Missing mip level {mip}, stopping at {mip} mips. Path={pl.Path}"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] WARNING: Missing mip level {mip}, stopping at {mip} mips. Path={pl.Path}"); } catch { }
                                         break;
                                     }
 
                                     var faceList = k.MipFaces[mip];
                                     if (faceList == null || faceList.Length != 6)
                                     {
-                                        try { Console.WriteLine($"[TextureCache] ERROR: Mip {mip} has invalid face count {faceList?.Length ?? 0}. Path={pl.Path}"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] ERROR: Mip {mip} has invalid face count {faceList?.Length ?? 0}. Path={pl.Path}"); } catch { }
                                         uploadFailed = true;
                                         break;
                                     }
 
-                                    try { Console.WriteLine($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
+                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
 
                                     for (int f = 0; f < 6; f++)
                                     {
@@ -440,12 +444,12 @@ namespace Engine.Rendering
 
                                         if (data.Length == 0)
                                         {
-                                            try { Console.WriteLine($"[TextureCache] ERROR: Face {f} mip {mip} has no data. Path={pl.Path}"); } catch { }
+                                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] ERROR: Face {f} mip {mip} has no data. Path={pl.Path}"); } catch { }
                                             uploadFailed = true;
                                             break;
                                         }
 
-                                        try { Console.WriteLine($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
 
                                         // Upload face data
                                         if (k.IsCompressed)
@@ -463,14 +467,14 @@ namespace Engine.Rendering
                             }
                             catch (Exception ex)
                             {
-                                try { Console.WriteLine($"[TextureCache] EXCEPTION during KTX upload: {ex.Message}"); } catch { }
-                                try { Console.WriteLine(ex.ToString()); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] EXCEPTION during KTX upload: {ex.Message}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log(ex.ToString()); } catch { }
                                 uploadFailed = true;
                             }
 
                             if (uploadFailed)
                             {
-                                try { Console.WriteLine($"[TextureCache] KTX upload failed, using fallback. Path={pl.Path}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] KTX upload failed, using fallback. Path={pl.Path}"); } catch { }
                                 try { GL.DeleteTexture(handle); } catch { }
                                 handle = White1x1;
                             }
@@ -479,7 +483,7 @@ namespace Engine.Rendering
                                 // Only set filtering parameters if upload succeeded
                                 try
                                 {
-                                        try { Console.WriteLine($"[TextureCache] KTX upload SUCCESS"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] KTX upload SUCCESS"); } catch { }
 
                                         // If KTX has only a single mip level and is not compressed, generate mipmaps
                                         // on the GPU so that diffuse IBL sampling can use high LODs to blur
@@ -492,11 +496,11 @@ namespace Engine.Rendering
                                                 int maxDim = Math.Max(k.Width, k.Height);
                                                 int mipCount = (int)Math.Floor(Math.Log(maxDim, 2)) + 1;
                                                 k.MipLevels = Math.Max(1, mipCount);
-                                                try { Console.WriteLine($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
+                                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
                                             }
                                             catch (Exception ex)
                                             {
-                                                try { Console.WriteLine($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
+                                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
                                             }
                                         }
 
@@ -521,7 +525,7 @@ namespace Engine.Rendering
                                 }
                                 catch (Exception ex)
                                 {
-                                    try { Console.WriteLine($"[TextureCache] Failed to set texture parameters: {ex.Message}"); } catch { }
+                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Failed to set texture parameters: {ex.Message}"); } catch { }
                                 }
                             }
 
@@ -535,7 +539,7 @@ namespace Engine.Rendering
                             try { GL.BindTexture(TextureTarget.TextureCubeMap, 0); } catch { }
                         }
 
-                        try { Console.WriteLine($"[TextureCache] Uploaded KTX cubemap: {pl.Path} -> handle={handle}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Uploaded KTX cubemap: {pl.Path} -> handle={handle}"); } catch { }
                     }
                     else
                     {
@@ -579,7 +583,7 @@ namespace Engine.Rendering
                         IsResident = true
                     };
 
-                    try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
 
                     var node = new LRUNode { Key = pl.Guid, Value = entry };
                     _textureNodes[pl.Guid] = node;
@@ -587,11 +591,18 @@ namespace Engine.Rendering
                     AddToHead(node);
                     _totalMemoryUsed += entry.SizeInBytes;
 
+                    // Notify listeners that this GUID has been uploaded and a GL handle is available
+                    try
+                    {
+                        TextureUploaded?.Invoke(pl.Guid, entry.GLHandle);
+                    }
+                    catch { }
+
                     _pendingLoads.Remove(pl.Guid);
                 }
                 catch (Exception ex)
                 {
-                    try { Console.WriteLine($"[TextureCache] Failed to finalize upload: {ex.Message}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Failed to finalize upload: {ex.Message}"); } catch { }
                     _pendingLoads.Remove(pl.Guid);
                 }
 
@@ -621,7 +632,7 @@ namespace Engine.Rendering
                         existing.Value.LastUsedFrame = _currentFrame;
                         _pendingLoads.Remove(pl.Guid);
                         processed++;
-                        try { Console.WriteLine($"[TextureCache] Skipped duplicate upload for {pl.Path}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Skipped duplicate upload for {pl.Path}"); } catch { }
                         continue;
                     }
                     
@@ -633,7 +644,7 @@ namespace Engine.Rendering
                         existing.Value.LastUsedFrame = _currentFrame;
                         _pendingLoads.Remove(pl.Guid);
                         processed++;
-                        try { Console.WriteLine($"[TextureCache] Skipped duplicate GUID upload for {pl.Path}"); } catch { }
+                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Skipped duplicate GUID upload for {pl.Path}"); } catch { }
                         continue;
                     }
 
@@ -644,20 +655,20 @@ namespace Engine.Rendering
                         if (pl.IsKtx && pl.Ktx != null)
                         {
                             var k = pl.Ktx;
-                            try { Console.WriteLine($"[TextureCache] ProcessPending KTX: {k.Width}x{k.Height}, {k.MipLevels} mips, {k.NumFaces} faces, format={k.InternalFormat}, type={k.Type}, compressed={k.IsCompressed}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] ProcessPending KTX: {k.Width}x{k.Height}, {k.MipLevels} mips, {k.NumFaces} faces, format={k.InternalFormat}, type={k.Type}, compressed={k.IsCompressed}"); } catch { }
 
                             // Validate cubemap
                             if (k.NumFaces != 6 || k.MipFaces.Count == 0)
                             {
-                                try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Invalid KTX (faces={k.NumFaces}, mipCount={k.MipFaces.Count}). Path={pl.Path}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] ProcessPending ERROR: Invalid KTX (faces={k.NumFaces}, mipCount={k.MipFaces.Count}). Path={pl.Path}"); } catch { }
                                 handle = White1x1;
                             }
                             // Check if this is a compressed format we don't support
                             else if (k.IsCompressed && k.InternalFormat == PixelInternalFormat.R11fG11fB10f)
                             {
-                                try { Console.WriteLine($"[TextureCache] ERROR: KTX claims to be compressed but format R11F_G11F_B10F is not a valid compressed format! (glInternalFormat=0x{k.GlInternalFormat:X})"); } catch { }
-                                try { Console.WriteLine($"[TextureCache] This may be caused by cmgen producing a KTX with an incorrect header or a compression we do not support. Path={pl.Path}"); } catch { }
-                                try { Console.WriteLine($"[TextureCache] Suggestion: Re-export using the Editor's PMREM generation or provide a source HDR/EXR file."); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] ERROR: KTX claims to be compressed but format R11F_G11F_B10F is not a valid compressed format! (glInternalFormat=0x{k.GlInternalFormat:X})"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] This may be caused by cmgen producing a KTX with an incorrect header or a compression we do not support. Path={pl.Path}"); } catch { }
+                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] Suggestion: Re-export using the Editor's PMREM generation or provide a source HDR/EXR file."); } catch { }
                                 handle = White1x1;
                             }
                             else
@@ -686,12 +697,12 @@ namespace Engine.Rendering
 
                                         if (faceList == null || faceList.Length != 6)
                                         {
-                                            try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Mip {mip} invalid face count {faceList?.Length ?? 0}"); } catch { }
+                                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] ProcessPending ERROR: Mip {mip} invalid face count {faceList?.Length ?? 0}"); } catch { }
                                             uploadFailed = true;
                                             break;
                                         }
 
-                                        try { Console.WriteLine($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
+                                        try { Engine.Utils.DebugLogger.Log($"[TextureCache] Uploading mip {mip}: {mipW}x{mipH}"); } catch { }
 
                                         // KTX stores faces in order: +X, -X, +Y, -Y, +Z, -Z
                                         // OpenGL expects: GL_TEXTURE_CUBE_MAP_POSITIVE_X (+X), NEGATIVE_X (-X),
@@ -704,12 +715,12 @@ namespace Engine.Rendering
 
                                             if (data.Length == 0)
                                             {
-                                                try { Console.WriteLine($"[TextureCache] ProcessPending ERROR: Face {f} mip {mip} has no data"); } catch { }
+                                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] ProcessPending ERROR: Face {f} mip {mip} has no data"); } catch { }
                                                 uploadFailed = true;
                                                 break;
                                             }
 
-                                            try { Console.WriteLine($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
+                                            try { Engine.Utils.DebugLogger.Log($"[TextureCache]   Face {f} ({GetFaceName(f)}): {data.Length} bytes{(k.IsCompressed ? " (compressed)" : "")}"); } catch { }
 
                                             try
                                             {
@@ -727,14 +738,14 @@ namespace Engine.Rendering
                                                 var error = GL.GetError();
                                                 if (error != OpenTK.Graphics.OpenGL4.ErrorCode.NoError)
                                                 {
-                                                    try { Console.WriteLine($"[TextureCache] GL ERROR uploading face {f} mip {mip}: {error}"); } catch { }
+                                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] GL ERROR uploading face {f} mip {mip}: {error}"); } catch { }
                                                     uploadFailed = true;
                                                     break;
                                                 }
                                             }
                                             catch (Exception ex)
                                             {
-                                                try { Console.WriteLine($"[TextureCache] Exception uploading face {f}: {ex.Message}"); } catch { }
+                                                try { Engine.Utils.DebugLogger.Log($"[TextureCache] Exception uploading face {f}: {ex.Message}"); } catch { }
                                                 uploadFailed = true;
                                                 break;
                                             }
@@ -743,7 +754,7 @@ namespace Engine.Rendering
                                 }
                                 catch (Exception ex)
                                 {
-                                    try { Console.WriteLine($"[TextureCache] ProcessPending EXCEPTION: {ex.Message}"); } catch { }
+                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] ProcessPending EXCEPTION: {ex.Message}"); } catch { }
                                     uploadFailed = true;
                                 }
 
@@ -751,11 +762,11 @@ namespace Engine.Rendering
                                 {
                                     try { GL.DeleteTexture(handle); } catch { }
                                     handle = White1x1;
-                                    try { Console.WriteLine($"[TextureCache] KTX upload FAILED, using white placeholder"); } catch { }
+                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] KTX upload FAILED, using white placeholder"); } catch { }
                                 }
                                 else
                                 {
-                                    try { Console.WriteLine($"[TextureCache] KTX upload SUCCESS"); } catch { }
+                                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] KTX upload SUCCESS"); } catch { }
                                     // If KTX has only one mip level and is not compressed, generate mipmaps
                                     // on the GPU so that diffuse IBL sampling can use high LODs to blur
                                     // the cubemap and remove visible face geometry in reflections.
@@ -767,11 +778,11 @@ namespace Engine.Rendering
                                             int maxDim = Math.Max(k.Width, k.Height);
                                             int mipCount = (int)Math.Floor(Math.Log(maxDim, 2)) + 1;
                                             k.MipLevels = Math.Max(1, mipCount);
-                                            try { Console.WriteLine($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
+                                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] Generated {k.MipLevels} mip levels for cubemap: {pl.Path}"); } catch { }
                                         }
                                         catch (Exception ex)
                                         {
-                                            try { Console.WriteLine($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
+                                            try { Engine.Utils.DebugLogger.Log($"[TextureCache] GenerateMipmap failed: {ex.Message}"); } catch { }
                                         }
                                     }
 
@@ -845,7 +856,7 @@ namespace Engine.Rendering
                         IsResident = true
                     };
 
-                    try { Console.WriteLine($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Uploaded texture: path={pl.Path}, guid={pl.Guid}, handle={handle}, size={pl.Width}x{pl.Height}"); } catch { }
 
                     var node = new LRUNode { Key = pl.Guid, Value = entry };
                     _textureNodes[pl.Guid] = node;
@@ -853,12 +864,19 @@ namespace Engine.Rendering
                     AddToHead(node);
                     _totalMemoryUsed += entry.SizeInBytes;
 
+                    // Notify listeners that this GUID has been uploaded and a GL handle is available
+                    try
+                    {
+                        TextureUploaded?.Invoke(pl.Guid, entry.GLHandle);
+                    }
+                    catch { }
+
                     _pendingLoads.Remove(pl.Guid);
                 }
                 catch (Exception ex)
                 {
-                    try { Console.WriteLine($"[TextureCache] Failed to finalize upload for {pl.Path}: {ex.Message}"); } catch { }
-                    try { Console.WriteLine(ex.ToString()); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TextureCache] Failed to finalize upload for {pl.Path}: {ex.Message}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log(ex.ToString()); } catch { }
                     _pendingLoads.Remove(pl.Guid);
                 }
 

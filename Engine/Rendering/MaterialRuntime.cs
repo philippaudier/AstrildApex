@@ -30,7 +30,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MaterialRuntime] ✗ Error in OnMaterialSaved: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] ✗ Error in OnMaterialSaved: {ex.Message}"); } catch { }
             }
         }
 
@@ -49,7 +49,7 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MaterialRuntime] ✗ Error clearing global cache: {ex.Message}");
+                try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] ✗ Error clearing global cache: {ex.Message}"); } catch { }
             }
         }
 
@@ -86,7 +86,12 @@ namespace Engine.Rendering
         // Texture tiling and offset
         public float[] TextureTiling = new float[] { 1f, 1f };
         public float[] TextureOffset = new float[] { 0f, 0f };
-        
+
+        // Triplanar mapping parameters
+        public int UseTriplanar = 0; // 0 = off, 1 = on
+        public float TriplanarScale = 1.0f; // World-space scale factor
+        public float TriplanarBlendSharpness = 4.0f; // Controls blend sharpness (1-10, default 4)
+
         public int TransparencyMode = 0; // 0 = Opaque, 1 = Transparent
         
         // Stylization parameters
@@ -148,25 +153,13 @@ namespace Engine.Rendering
         public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
         {
             TextureCache.Initialize();
-            try
-            {
-                Engine.Utils.DebugLogger.Log($"[MaterialRuntime] FromAsset: Creating runtime for material {a.Guid} (assetName={a.Name})");
-            }
-            catch { }
             // Return cached runtime if available
             if (a != null && a.Guid != Guid.Empty)
             {
                 if (_globalCache.TryGetValue(a.Guid, out var cached))
                 {
-                    // PERFORMANCE: Disabled per-frame cache logs
-                    // Console.WriteLine($"[MaterialRuntime] Cache HIT for {a.Name ?? a.Guid.ToString()} - AlbedoTex={cached.AlbedoTex}, NormalTex={cached.NormalTex}");
                     return cached;
                 }
-                // PERFORMANCE: Disabled per-frame cache logs
-                // else
-                // {
-                //     Console.WriteLine($"[MaterialRuntime] Cache MISS for {a.Name ?? a.Guid.ToString()} - loading textures...");
-                // }
             }
             var albedoPath = a?.AlbedoTexture.HasValue == true ? resolvePath(a.AlbedoTexture.Value) : null;
             var normalPath = a?.NormalTexture.HasValue == true ? resolvePath(a.NormalTexture.Value) : null;
@@ -206,7 +199,12 @@ namespace Engine.Rendering
                 
                 TextureTiling = a?.TextureTiling ?? new[] { 1f, 1f },
                 TextureOffset = a?.TextureOffset ?? new[] { 0f, 0f },
-                
+
+                // Triplanar mapping parameters
+                UseTriplanar = a?.UseTriplanar ?? 0,
+                TriplanarScale = a?.TriplanarScale ?? 1.0f,
+                TriplanarBlendSharpness = a?.TriplanarBlendSharpness ?? 4.0f,
+
                 // Stylization parameters - use asset values directly, fallback to defaults only if asset is null
                 Saturation = a?.Saturation ?? 1.0f,
                 Brightness = a?.Brightness ?? 1.0f,
@@ -553,6 +551,12 @@ namespace Engine.Rendering
             // Texture tiling and offset
             sh.SetVec2("u_TextureTiling", new OpenTK.Mathematics.Vector2(TextureTiling[0], TextureTiling[1]));
             sh.SetVec2("u_TextureOffset", new OpenTK.Mathematics.Vector2(TextureOffset[0], TextureOffset[1]));
+
+            // Triplanar mapping parameters
+            sh.SetInt("u_UseTriplanar", UseTriplanar);
+            sh.SetFloat("u_TriplanarScale", TriplanarScale);
+            sh.SetFloat("u_TriplanarBlendSharpness", TriplanarBlendSharpness);
+
             sh.SetInt("u_TransparencyMode", TransparencyMode);
             
             // Stylization parameters
@@ -607,7 +611,7 @@ namespace Engine.Rendering
                         try
                         {
                             if (Engine.Utils.DebugLogger.EnableVerbose)
-                                Console.WriteLine($"[MaterialRuntime] Layer {i} UNDERWATER: waterLevel={LayerUnderwaterParams[i, 0]}, blend={LayerUnderwaterParams[i, 1]}, slopeMin={LayerUnderwaterParams[i, 2]}, slopeMax={LayerUnderwaterParams[i, 3]}");
+                                Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Layer {i} UNDERWATER: waterLevel={LayerUnderwaterParams[i, 0]}, blend={LayerUnderwaterParams[i, 1]}, slopeMin={LayerUnderwaterParams[i, 2]}, slopeMax={LayerUnderwaterParams[i, 3]}");
                         }
                         catch { }
                     }
@@ -695,7 +699,7 @@ namespace Engine.Rendering
                         try
                         {
                             if (Engine.Utils.DebugLogger.EnableVerbose)
-                                Console.WriteLine($"[MaterialRuntime] Binding reflection texture: ID={ReflectionTexture}, Strength={ReflectionStrength}");
+                                Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding reflection texture: ID={ReflectionTexture}, Strength={ReflectionStrength}");
                         }
                         catch { }
 
@@ -806,8 +810,17 @@ namespace Engine.Rendering
 
                 sh.SetInt("u_HasIBL", hasIbl);
                 try {
-                    if (Engine.Utils.DebugLogger.EnableVerbose == true) Console.WriteLine($"[MaterialRuntime] IBL bound: hasIbl={hasIbl}, irr={irr}, pref={pref}, maxLod={SkyboxRenderer.PrefilterMaxLod}");
+                    if (Engine.Utils.DebugLogger.EnableVerbose == true) try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] IBL bound: hasIbl={hasIbl}, irr={irr}, pref={pref}, maxLod={SkyboxRenderer.PrefilterMaxLod}"); } catch { }
                 } catch { }
+                // Additional diagnostic: warn if prefiltered env map exists but PrefilterMaxLod not set yet
+                try
+                {
+                    if (pref != 0 && SkyboxRenderer.PrefilterMaxLod <= 0)
+                    {
+                        try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] WARNING: PrefilteredEnvMap bound (handle={pref}) but PrefilterMaxLod={SkyboxRenderer.PrefilterMaxLod}"); } catch { }
+                    }
+                }
+                catch { }
                 // If PrefilterMaxLod looks invalid (race or not yet set), compute it from the bound cubemap
                 try
                 {
@@ -837,7 +850,7 @@ namespace Engine.Rendering
                         if (computed >= 0)
                         {
                             SkyboxRenderer.PrefilterMaxLod = computed;
-                            try { Console.WriteLine($"[MaterialRuntime] Computed PrefilterMaxLod={computed} from texture handle={(int)pref}"); } catch { }
+                            try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Computed PrefilterMaxLod={computed} from texture handle={(int)pref}"); } catch { }
                         }
                     }
                 }

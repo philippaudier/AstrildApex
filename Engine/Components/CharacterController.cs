@@ -103,7 +103,7 @@ namespace Engine.Components
         {
             if (Entity?.Transform == null) return;
 
-            if (DebugPhysics) Console.WriteLine($"[CharacterController] AddVerticalImpulse called: {impulse:F3}");
+            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CharacterController] AddVerticalImpulse called: {impulse:F3}");
 
 
             _velocity.Y += impulse;
@@ -124,9 +124,9 @@ namespace Engine.Components
             // Vérifier le sol en échantillonnant plusieurs points pour lisser les transitions
             bool groundHit = SampleGroundAverage(currentPos, out float groundY, out Vector3 groundNormal);
 
-            if (DebugPhysics)
+            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose)
             {
-                Console.WriteLine($"[CC] Update - Pos: {currentPos.Y:F2}, VelY: {_velocity.Y:F2}, GroundHit: {groundHit}, GroundY: {groundY:F2}, IsGrounded: {IsGrounded}");
+                Engine.Utils.DebugLogger.Log($"[CC] Update - Pos: {currentPos.Y:F2}, VelY: {_velocity.Y:F2}, GroundHit: {groundHit}, GroundY: {groundY:F2}, IsGrounded: {IsGrounded}");
             }
             
             if (groundHit)
@@ -298,7 +298,11 @@ namespace Engine.Components
             // Do NOT project the horizontal input for motion — preserve original horizontal direction
             // so the player moves straight in world-space (prevents curving on spheres).
             var finalMotion = ComputeSafeMovement(startPos, horizontalMotion, dt);
-            
+
+            // Check if motion was blocked (sliding along wall)
+            // Use stricter threshold - only consider truly blocked if motion reduced by >50%
+            bool wasBlocked = finalMotion.LengthSquared < horizontalMotion.LengthSquared * 0.5f;
+
             // Apply the motion (only X and Z, Y will be adjusted to follow ground)
             var newPosXZ = startPos + new Vector3(finalMotion.X, 0, finalMotion.Z);
             var pos = Entity.Transform.Position;
@@ -307,7 +311,8 @@ namespace Engine.Components
             // After horizontal move, decide whether to adjust Y/rotation to follow surface.
             // If snapping is suppressed (recent jump) or we have a significant vertical velocity,
             // do not modify Y or rotation here so vertical movement from gravity/jump is preserved.
-            if (_suppressSnapFrames > 0 || MathF.Abs(_velocity.Y) > 0.05f)
+            // ALSO: If we were blocked/sliding, don't adjust Y here - let Update() handle it to avoid stuttering
+            if (_suppressSnapFrames > 0 || MathF.Abs(_velocity.Y) > 0.05f || wasBlocked)
             {
                 // Keep horizontal position applied; leave Y/rotation for vertical update step.
                 return;
@@ -629,7 +634,7 @@ namespace Engine.Components
                     // Calculate how much of the hit normal is pointing upward
                     float upDot = Vector3.Dot(hit.Normal, Vector3.UnitY);
 
-                    Console.WriteLine($"[CC] Iter {iteration} Hit {hit.ColliderComponent?.GetType().Name} Dist={hit.Distance:F4} Normal={hit.Normal:F3} UpDot={upDot:F2} RemDist={remainingDistance:F4}");
+                    if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] Iter {iteration} Hit {hit.ColliderComponent?.GetType().Name} Dist={hit.Distance:F4} Normal={hit.Normal:F3} UpDot={upDot:F2} RemDist={remainingDistance:F4}");
 
                     // STEP-UP: if the collider is close and the contact has an upward component,
                     // try to step up by `StepOffset` and continue movement if the path is clear.
@@ -646,7 +651,7 @@ namespace Engine.Components
                             // recompute capsule positions and continue loop
                             capsuleBottom += Vector3.UnitY * StepOffset;
                             capsuleTop += Vector3.UnitY * StepOffset;
-                            if (DebugPhysics) Console.WriteLine($"[CC][DBG] Stepped up {StepOffset:F3} to bypass small obstacle");
+                            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Stepped up {StepOffset:F3} to bypass small obstacle");
                             continue;
                         }
                     }
@@ -682,7 +687,7 @@ namespace Engine.Components
                     bool isCurvedCollider = hit.ColliderComponent is SphereCollider || hit.ColliderComponent is CapsuleCollider;
                     bool isStuckInContact = hit.Distance <= 0.001f; // Essentially touching
 
-                    Console.WriteLine($"[CC] SlideLen={slideLength:F4} IsCurved={isCurvedCollider} Stuck={isStuckInContact} HitDist={hit.Distance:F4}");
+                    if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] SlideLen={slideLength:F4} IsCurved={isCurvedCollider} Stuck={isStuckInContact} HitDist={hit.Distance:F4}");
 
                     // For curved colliders where we're stuck in contact, use nudge instead of slide
                     if (isCurvedCollider && isStuckInContact)
@@ -691,18 +696,39 @@ namespace Engine.Components
                         float nudgeDistance = MathF.Min(0.05f, remainingDistance);
                         totalMotion += currentDirection * nudgeDistance;
                         remainingDistance -= nudgeDistance;
-                        Console.WriteLine($"[CC] >>> CURVED NUDGE: {nudgeDistance:F4}, remaining: {remainingDistance:F4}");
+                        if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] >>> CURVED NUDGE: {nudgeDistance:F4}, remaining: {remainingDistance:F4}");
 
                         if (remainingDistance > 0.001f)
                             continue; // Try next iteration
                         break;
                     }
 
-                    // If slide direction is too small, we're blocked by a flat surface
-                    if (slideLength < 0.001f)
+                    // If slide direction is too small, we're blocked
+                    // EXCEPTION: For flat surfaces (boxes, walls), allow even tiny slides to enable smooth wall sliding
+                    bool isFlatCollider = hit.ColliderComponent is BoxCollider || hit.ColliderComponent is MeshCollider;
+                    if (slideLength < 0.001f && !isFlatCollider)
                     {
-                        Console.WriteLine($"[CC] >>> BLOCKED: Slide vector too small ({slideLength:F6})");
+                        if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] >>> BLOCKED: Slide vector too small ({slideLength:F6})");
                         break;
+                    }
+
+                    // For very small slide lengths on flat surfaces, use the horizontal component of the original motion
+                    if (slideLength < 0.001f && isFlatCollider)
+                    {
+                        // Project the remaining motion onto the horizontal plane parallel to the wall
+                        var horizontalRemaining = new Vector3(remainingMotion.X, 0f, remainingMotion.Z);
+                        if (horizontalRemaining.LengthSquared > 0.0001f)
+                        {
+                            slideDirection = ProjectMotionOnPlane(horizontalRemaining, hit.Normal);
+                            slideLength = slideDirection.Length;
+                            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] Flat surface: using horizontal slide, len={slideLength:F4}");
+                        }
+
+                        if (slideLength < 0.0001f)
+                        {
+                            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] >>> BLOCKED: No horizontal slide possible");
+                            break;
+                        }
                     }
 
                     currentDirection = slideDirection.Normalized();
@@ -710,7 +736,7 @@ namespace Engine.Components
 
                     if (DebugPhysics)
                     {
-                        Console.WriteLine($"[CC] Iteration {iteration}: Hit {hit.ColliderComponent?.GetType().Name}, sliding along normal {hit.Normal:F2}, remaining: {remainingDistance:F3}");
+                        if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC] Iteration {iteration}: Hit {hit.ColliderComponent?.GetType().Name}, sliding along normal {hit.Normal:F2}, remaining: {remainingDistance:F3}");
                     }
                 }
                 else
@@ -747,7 +773,7 @@ namespace Engine.Components
                     if (overlap.Entity == Entity) continue;
                     if (DebugPhysics && (overlap is SphereCollider || overlap is CapsuleCollider))
                     {
-                        Console.WriteLine($"[CC][DBG] Overlap with {overlap.GetType().Name} at AABB {overlap.WorldAABB.Center} extents {overlap.WorldAABB.Extents}");
+                        if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Overlap with {overlap.GetType().Name} at AABB {overlap.WorldAABB.Center} extents {overlap.WorldAABB.Extents}");
                     }
                     if (depenetrationCount >= maxDepenetrations) break;
 
@@ -831,7 +857,7 @@ namespace Engine.Components
                     {
                         if (DebugPhysics && (overlap is SphereCollider || overlap is CapsuleCollider))
                         {
-                            Console.WriteLine($"[CC][DBG] Depenetrate Contact: {overlap.GetType().Name} pen={penetration:F4} normal={normal:F3} contactPt={contactPoint:F3}");
+                            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Depenetrate Contact: {overlap.GetType().Name} pen={penetration:F4} normal={normal:F3} contactPt={contactPoint:F3}");
                         }
 
                         // Check if this is a ground-like contact (normal pointing mostly upward)
@@ -859,7 +885,7 @@ namespace Engine.Components
 
                                 if (DebugPhysics)
                                 {
-                                    Console.WriteLine($"[CC][DBG] Ground-like blended push (upDot={normalUpDot:F2}) horiz={horizStrength:F4} vert={verticalPush:F4}");
+                                    if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Ground-like blended push (upDot={normalUpDot:F2}) horiz={horizStrength:F4} vert={verticalPush:F4}");
                                 }
                             }
                             else
@@ -867,7 +893,7 @@ namespace Engine.Components
                                 offset = Vector3.UnitY * verticalPush;
                                 if (DebugPhysics)
                                 {
-                                    Console.WriteLine($"[CC][DBG] Ground-like contact (upDot={normalUpDot:F2}), vertical push only: {verticalPush:F4}");
+                                    if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Ground-like contact (upDot={normalUpDot:F2}), vertical push only: {verticalPush:F4}");
                                 }
                             }
                         }
@@ -900,7 +926,7 @@ namespace Engine.Components
 
                         if (DebugPhysics)
                         {
-                            Console.WriteLine($"[CC][DBG] Depenetration offset applied: {offset:F3}");
+                            if (DebugPhysics || Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[CC][DBG] Depenetration offset applied: {offset:F3}");
                         }
                     }
                 }

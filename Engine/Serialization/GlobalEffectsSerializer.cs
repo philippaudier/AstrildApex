@@ -88,6 +88,26 @@ namespace Engine.Serialization
                         effectData["mipradius2"] = gtao.MipRadius2;
                         effectData["mipradius3"] = gtao.MipRadius3;
                         break;
+
+                    case DepthOfFieldEffect dof:
+                        effectData["focusdistance"] = dof.FocusDistance;
+                        effectData["focusrange"] = dof.FocusRange;
+                        effectData["focallength"] = dof.FocalLength;
+                        effectData["aperture"] = dof.Aperture;
+                        effectData["maxcoc"] = dof.MaxCoC;
+                        effectData["samplecount"] = dof.SampleCount;
+                        effectData["bokehradius"] = dof.BokehRadius;
+                        effectData["enableadaptive"] = dof.EnableAdaptiveDOF;
+                        effectData["adaptivespeed"] = dof.AdaptiveSpeed;
+                        effectData["adaptivecenterbias"] = dof.AdaptiveCenterBias;
+                        effectData["adaptivemindistance"] = dof.AdaptiveMinDistance;
+                        effectData["adaptivemaxdistance"] = dof.AdaptiveMaxDistance;
+                        break;
+
+                    case MotionBlurEffect motionBlur:
+                        effectData["samplecount"] = motionBlur.SampleCount;
+                        effectData["maxblurradius"] = motionBlur.MaxBlurRadius;
+                        break;
                 }
                 
                 effectsData.Add(effectData);
@@ -127,6 +147,8 @@ namespace Engine.Serialization
                         "Engine.Rendering.ChromaticAberrationEffect" or "ChromaticAberrationEffect" => new ChromaticAberrationEffect(),
                         "Engine.Rendering.SSAOEffect" or "SSAOEffect" => new SSAOEffect(),
                         "Engine.Rendering.GTAOEffect" or "GTAOEffect" => new GTAOEffect(),
+                        "Engine.Rendering.DepthOfFieldEffect" or "DepthOfFieldEffect" => new DepthOfFieldEffect(),
+                        "Engine.Rendering.MotionBlurEffect" or "MotionBlurEffect" => new MotionBlurEffect(),
                         _ => null
                     };
                     
@@ -241,6 +263,40 @@ namespace Engine.Serialization
                         case FXAAEffect fxaa:
                             if (effectObj.TryGetValue("quality", out var qualElement))
                                 fxaa.Quality = qualElement.GetSingle();
+                            break;
+
+                        case DepthOfFieldEffect dof:
+                            if (effectObj.TryGetValue("focusdistance", out var focusDistanceElement))
+                                dof.FocusDistance = focusDistanceElement.GetSingle();
+                            if (effectObj.TryGetValue("focusrange", out var focusRangeElement))
+                                dof.FocusRange = focusRangeElement.GetSingle();
+                            if (effectObj.TryGetValue("focallength", out var focalLengthElement))
+                                dof.FocalLength = focalLengthElement.GetSingle();
+                            if (effectObj.TryGetValue("aperture", out var apertureElement))
+                                dof.Aperture = apertureElement.GetSingle();
+                            if (effectObj.TryGetValue("maxcoc", out var maxCoCElement))
+                                dof.MaxCoC = maxCoCElement.GetSingle();
+                            if (effectObj.TryGetValue("samplecount", out var dofSampleCountElement))
+                                dof.SampleCount = dofSampleCountElement.GetInt32();
+                            if (effectObj.TryGetValue("bokehradius", out var bokehRadiusElement))
+                                dof.BokehRadius = bokehRadiusElement.GetSingle();
+                            if (effectObj.TryGetValue("enableadaptive", out var enableAdaptiveElement))
+                                dof.EnableAdaptiveDOF = enableAdaptiveElement.GetBoolean();
+                            if (effectObj.TryGetValue("adaptivespeed", out var adaptiveSpeedElement))
+                                dof.AdaptiveSpeed = adaptiveSpeedElement.GetSingle();
+                            if (effectObj.TryGetValue("adaptivecenterbias", out var adaptiveCenterBiasElement))
+                                dof.AdaptiveCenterBias = adaptiveCenterBiasElement.GetSingle();
+                            if (effectObj.TryGetValue("adaptivemindistance", out var adaptiveMinDistanceElement))
+                                dof.AdaptiveMinDistance = adaptiveMinDistanceElement.GetSingle();
+                            if (effectObj.TryGetValue("adaptivemaxdistance", out var adaptiveMaxDistanceElement))
+                                dof.AdaptiveMaxDistance = adaptiveMaxDistanceElement.GetSingle();
+                            break;
+
+                        case MotionBlurEffect motionBlur:
+                            if (effectObj.TryGetValue("samplecount", out var mbSampleCountElement))
+                                motionBlur.SampleCount = mbSampleCountElement.GetInt32();
+                            if (effectObj.TryGetValue("maxblurradius", out var maxBlurRadiusElement))
+                                motionBlur.MaxBlurRadius = maxBlurRadiusElement.GetSingle();
                             break;
                     }
                     
