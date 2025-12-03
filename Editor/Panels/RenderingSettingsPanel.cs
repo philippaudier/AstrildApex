@@ -17,7 +17,12 @@ namespace Editor.Panels
 
         public static void Draw()
         {
-            ImGui.Begin("Rendering Settings", ImGuiWindowFlags.None);
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Rendering Settings", ImGuiWindowFlags.None))
+            {
+                ImGui.End();
+                return;
+            }
             // Apply default wrapping for long labels and descriptions inside this window
             Editor.UI.UIHelpers.BeginWindowDefaults();
 

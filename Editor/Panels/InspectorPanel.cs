@@ -104,8 +104,13 @@ namespace Editor.Panels
         public static void Draw()
         {
             // Inspector window with lock button in title bar
-            ImGui.Begin("Inspector");
-            
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Inspector"))
+            {
+                ImGui.End();
+                return;
+            }
+
             // Draw lock icon in title bar area
             DrawLockInTitleBar();
 

@@ -19,8 +19,13 @@ namespace Editor.Panels
         
         public static void Draw()
         {
-            ImGui.Begin("Environment", ImGuiWindowFlags.None);
-            
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Environment", ImGuiWindowFlags.None))
+            {
+                ImGui.End();
+                return;
+            }
+
             var scene = EditorUI.MainViewport.Renderer?.Scene;
             if (scene == null)
             {

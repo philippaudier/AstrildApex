@@ -176,7 +176,13 @@ namespace Editor.Panels
                 _isDirty = true;  // Mark for redraw after import
             }
 
-            ImGui.Begin("Assets");
+            // CRITICAL PERFORMANCE FIX: Check if window is visible before drawing content
+            // ImGui.Begin() returns false when window is collapsed/hidden - skip all expensive operations!
+            if (!ImGui.Begin("Assets"))
+            {
+                ImGui.End();
+                return;
+            }
 
             DrawRenamePopup();
             DrawToolbar();

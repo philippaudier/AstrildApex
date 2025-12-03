@@ -62,7 +62,12 @@ namespace Editor.Panels
                 _lastSearchForConsole = _search;
             }
 
-            ImGui.Begin("Console");
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Console"))
+            {
+                ImGui.End();
+                return;
+            }
             DrawToolbar();
             DrawFilters();
             DrawLogList();
