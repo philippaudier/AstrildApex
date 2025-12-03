@@ -42,7 +42,12 @@ namespace Editor.Panels
 
             ImGui.Separator();
 
-            // === SECTION 3: CAMERA ===
+            // === SECTION 3: PLANAR REFLECTIONS ===
+            // Planar reflections feature removed
+
+            ImGui.Separator();
+
+            // === SECTION 4: CAMERA ===
             // Note: SSAO is now configured via GlobalEffects component, not here
             // Old DrawSSAOSettings() call removed - SSAO is now a post-processing effect
             DrawCameraSettings(renderer);
@@ -573,6 +578,8 @@ namespace Editor.Panels
                 }
             }
         }
+
+        // Planar reflection settings removed
 
         private static void DrawAntiAliasingSettings(Editor.Rendering.ViewportRenderer renderer)
         {

@@ -81,6 +81,17 @@ namespace Editor.Panels
         private static int _framesSinceLastCheck = 0;  // Throttle FS checks
         private const int FS_CHECK_INTERVAL = 30;  // Check filesystem every 30 frames (~0.5s at 60fps)
 
+        // ====== PERF: cached asset snapshot & material color cache ======
+        private static List<AssetRecord>? _cachedAllAssets = null;
+        private static string _lastSearchForAssets = string.Empty;
+        private static string _lastCurrentDir = string.Empty;
+        private static SortMode _lastSort = SortMode.NameAsc;
+        private static ViewMode _lastViewMode = ViewMode.Grid;
+
+        // Cache small preview data (albedo color) to avoid loading materials each frame
+        private static readonly Dictionary<Guid, System.Numerics.Vector4> _materialColorCache = new();
+        private static bool _materialColorCacheEventsInit = false;
+
         // ============= PUBLIC =============
         public static void Draw()
         {
@@ -89,6 +100,24 @@ namespace Editor.Panels
             {
                 EnsureWatcher();
                 _watcherInitialized = true;
+            }
+
+            // PERF: subscribe to material-saved events once to invalidate material color cache
+            if (!_materialColorCacheEventsInit)
+            {
+                try
+                {
+                    Engine.Assets.AssetDatabase.MaterialSaved += guid =>
+                    {
+                        lock (_materialColorCache)
+                        {
+                            _materialColorCache.Remove(guid);
+                        }
+                        _isDirty = true;
+                    };
+                }
+                catch { }
+                _materialColorCacheEventsInit = true;
             }
 
             // PERF FIX: Throttle filesystem refresh checks to every 30 frames instead of every frame
@@ -553,21 +582,35 @@ namespace Editor.Panels
         // ============= Content (droite) =============
         private static void DrawContent()
         {
-            // Build dataset with thread-safe snapshot
+            // Build dataset with thread-safe snapshot.
+            // PERF: reuse a cached snapshot of all assets when nothing changed to avoid enumerating the DB every frame.
             var childDirs = ListChildDirsFs(_currentDir); // dossiers directs
-            
-            // Create a snapshot to avoid race conditions during import
+
+            bool needRebuildAll = _isDirty || _lastSearchForAssets != _search || _lastCurrentDir != _currentDir || _lastSort != _sort || _lastViewMode != _viewMode;
             List<AssetRecord> allAssets;
-            try
+            if (needRebuildAll)
             {
-                allAssets = AssetDatabase.All().ToList();
+                try
+                {
+                    allAssets = AssetDatabase.All().ToList();
+                    _cachedAllAssets = allAssets;
+                    _isDirty = false;
+                    _lastSearchForAssets = _search;
+                    _lastCurrentDir = _currentDir;
+                    _lastSort = _sort;
+                    _lastViewMode = _viewMode;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Collection was modified during enumeration - skip this frame
+                    return;
+                }
             }
-            catch (InvalidOperationException)
+            else
             {
-                // Collection was modified during enumeration - skip this frame
-                return;
+                allAssets = _cachedAllAssets ?? new List<AssetRecord>();
             }
-            
+
             var filesInDir = FilterByDirectory(allAssets, _currentDir);
             var filtered = ApplySearch(filesInDir, _search);
             filtered = SortAssets(filtered.ToList(), _sort);
@@ -858,21 +901,47 @@ namespace Editor.Panels
                     ImGui.GetWindowDrawList().AddRectFilled(iconTL, iconBR, 0xFF444444, 6);
 
                 // (Optionnel) petite pastille avec la couleur d’albedo si dispo
-                var col = new System.Numerics.Vector4(0.35f, 0.35f, 0.35f, 1f);
-                try
+                var defaultCol = new System.Numerics.Vector4(0.35f, 0.35f, 0.35f, 1f);
+                System.Numerics.Vector4 col;
+                // Avoid loading the material every frame: try cached color first
+                lock (_materialColorCache)
                 {
-                    var mat = AssetDatabase.LoadMaterial(a.Guid);
-                    if (mat?.AlbedoColor is { Length: >= 3 })
-                        col = new(mat.AlbedoColor[0], mat.AlbedoColor[1], mat.AlbedoColor[2], 1f);
+                    if (_materialColorCache.TryGetValue(a.Guid, out var cached))
+                    {
+                        col = cached;
+                    }
+                    else
+                    {
+                        col = defaultCol;
+                    }
                 }
-                catch { }
+
+                bool isVisible = IsRectVisible(tl, br);
+                if ((col.Equals(defaultCol)) && (isVisible || selected))
+                {
+                    // Only load material when visible/selected and then cache a small preview value
+                    try
+                    {
+                        var mat = AssetDatabase.LoadMaterial(a.Guid);
+                        if (mat?.AlbedoColor is { Length: >= 3 })
+                            col = new(mat.AlbedoColor[0], mat.AlbedoColor[1], mat.AlbedoColor[2], 1f);
+                    }
+                    catch { col = defaultCol; }
+
+                    try
+                    {
+                        lock (_materialColorCache)
+                        {
+                            _materialColorCache[a.Guid] = col;
+                        }
+                    }
+                    catch { }
+                }
 
                 var chip = new SysVec2(16, 16);
                 var chipTL = new SysVec2(iconBR.X - chip.X - 4, iconBR.Y - chip.Y - 4);
                 var chipBR = new SysVec2(iconBR.X - 4, iconBR.Y - 4);
                 uint abgr = ImGui.ColorConvertFloat4ToU32(col);
-                //ImGui.GetWindowDrawList().AddRectFilled(chipTL, chipBR, abgr, 4);
-                //ImGui.GetWindowDrawList().AddRect(chipTL, chipBR, 0xAA000000, 4);
             }
             else if (a.Type.Equals("MeshAsset", StringComparison.OrdinalIgnoreCase) ||
                      a.Type.StartsWith("Model", StringComparison.OrdinalIgnoreCase))

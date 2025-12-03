@@ -27,6 +27,10 @@ namespace Engine.Components
         {
             base.OnAttached();
             UpdateWorldBounds();
+
+            // DEBUG: Log registration status
+            Terrain? tg = TerrainRef ?? (Entity != null ? Entity.GetComponent<Terrain>() : null);
+            Console.WriteLine($"[HeightfieldCollider] OnAttached on entity '{Entity?.Name}', TerrainRef={(TerrainRef != null ? "SET" : "NULL")}, GetComponent<Terrain>={(tg != null ? "FOUND" : "NOT FOUND")}");
         }
 
         public override void Update(float deltaTime)
@@ -112,7 +116,19 @@ namespace Engine.Components
             hit = default;
             // Resolve Terrain reference
             Terrain? tg = TerrainRef ?? (Entity != null ? Entity.GetComponent<Terrain>() : null);
-            if (tg == null) return false;
+            if (tg == null)
+            {
+                // DEBUG: Log why raycast failed
+                if (TerrainRef == null && Entity != null)
+                {
+                    Console.WriteLine($"[HeightfieldCollider] RAYCAST FAILED: TerrainRef is null and Entity '{Entity.Name}' has no Terrain component");
+                }
+                else if (Entity == null)
+                {
+                    Console.WriteLine($"[HeightfieldCollider] RAYCAST FAILED: Entity is null");
+                }
+                return false;
+            }
 
             // Ray-march: find t where ray.y crosses terrain height at ray.xz
             float t = 0f;

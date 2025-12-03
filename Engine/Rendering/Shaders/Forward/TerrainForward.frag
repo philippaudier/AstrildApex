@@ -19,6 +19,11 @@ uniform uint u_ObjectId;
 uniform sampler2D u_LayerAlbedo[MAX_LAYERS];
 uniform sampler2D u_LayerNormal[MAX_LAYERS];
 uniform vec4 u_LayerTilingOffset[MAX_LAYERS]; // tx,ty,ox,oy
+uniform int u_LayerUseTriplanar[MAX_LAYERS]; // 0 = use UV, 1 = material triplanar
+uniform float u_LayerTriplanarScale[MAX_LAYERS];
+uniform float u_LayerTriplanarBlend[MAX_LAYERS];
+uniform vec4 u_LayerStylize[MAX_LAYERS]; // saturation, brightness, contrast, hue
+uniform float u_LayerEmission[MAX_LAYERS];
 uniform vec4 u_LayerHeightSlope[MAX_LAYERS]; // hmin,hmax,smin,smax (slope normalized 0..1)
 uniform float u_LayerStrength[MAX_LAYERS];
 uniform int u_LayerIsUnderwater[MAX_LAYERS]; // 0 = normal, 1 = underwater
@@ -86,7 +91,7 @@ void main()
 {
     // Clipping plane for water reflections
     // Do this FIRST before any other processing
-    if (uClipPlaneEnabled == 1) {
+    if (uClipPlaneEnabled > 0.5) {
         // Calculate distance from fragment to clip plane
         // Plane equation: dot(normal, point) + d = 0
         float distance = dot(uClipPlane.xyz, v_WorldPos) + uClipPlane.w;
@@ -209,15 +214,7 @@ void main()
     }
     for (int i = 0; i < u_LayerCount; i++) weights[i] /= total;
 
-    // Triplanar mapping: project texture from 3 axes and blend based on surface normal
-    // This prevents stretching on steep slopes (cliffs, etc.)
-    vec3 blendWeights = abs(normalize(v_Normal));
-    blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
-    
-    // Sharpness factor: higher = sharper transitions between axes
-    float triplanarSharpness = 4.0;
-    blendWeights = pow(blendWeights, vec3(triplanarSharpness));
-    blendWeights = blendWeights / (blendWeights.x + blendWeights.y + blendWeights.z);
+    // Per-layer mapping will either use UV tiling/offset (material preferred) or material triplanar settings.
 
     for (int i = 0; i < u_LayerCount; i++)
     {
@@ -226,11 +223,41 @@ void main()
         
         vec2 tilingOffset = u_LayerTilingOffset[i].xy;
         vec2 offset = u_LayerTilingOffset[i].zw;
-        
-        // Triplanar UVs: project world position onto 3 planes
-        vec2 uvX = v_WorldPos.yz * tilingOffset + offset; // Side X
-        vec2 uvY = v_WorldPos.xz * tilingOffset + offset; // Top/Bottom Y
-        vec2 uvZ = v_WorldPos.xy * tilingOffset + offset; // Side Z
+        int useTriplanar = u_LayerUseTriplanar[i];
+        float triScale = u_LayerTriplanarScale[i];
+        float triBlend = u_LayerTriplanarBlend[i];
+
+        vec2 uvX;
+        vec2 uvY;
+        vec2 uvZ;
+        vec3 localBlendWeights;
+
+        if (useTriplanar == 1)
+        {
+            // Use material triplanar scale/offset
+            uvX = v_WorldPos.yz * triScale + offset;
+            uvY = v_WorldPos.xz * triScale + offset;
+            uvZ = v_WorldPos.xy * triScale + offset;
+
+            localBlendWeights = abs(normalize(v_Normal));
+            localBlendWeights = localBlendWeights / (localBlendWeights.x + localBlendWeights.y + localBlendWeights.z);
+            localBlendWeights = pow(localBlendWeights, vec3(triBlend));
+            localBlendWeights = localBlendWeights / (localBlendWeights.x + localBlendWeights.y + localBlendWeights.z);
+        }
+        else
+        {
+            // Use UV tiling/offset (from material or layer)
+            uvX = v_WorldPos.yz * tilingOffset + offset; // Side X
+            uvY = v_WorldPos.xz * tilingOffset + offset; // Top/Bottom Y
+            uvZ = v_WorldPos.xy * tilingOffset + offset; // Side Z
+
+            localBlendWeights = abs(normalize(v_Normal));
+            localBlendWeights = localBlendWeights / (localBlendWeights.x + localBlendWeights.y + localBlendWeights.z);
+            // Use a reasonable default sharpness
+            float defaultSharp = 4.0;
+            localBlendWeights = pow(localBlendWeights, vec3(defaultSharp));
+            localBlendWeights = localBlendWeights / (localBlendWeights.x + localBlendWeights.y + localBlendWeights.z);
+        }
         
         // Sample albedo from all 3 projections
         vec3 albedoX = texture(u_LayerAlbedo[i], uvX).rgb;
@@ -238,13 +265,66 @@ void main()
         vec3 albedoZ = texture(u_LayerAlbedo[i], uvZ).rgb;
         
         // Blend albedo based on surface normal direction
-        vec3 al = albedoX * blendWeights.x + 
-                  albedoY * blendWeights.y + 
-                  albedoZ * blendWeights.z;
+        vec3 al = albedoX * localBlendWeights.x + 
+              albedoY * localBlendWeights.y + 
+              albedoZ * localBlendWeights.z;
         
         // Apply albedo color tint
         al *= u_LayerAlbedoColor[i].rgb;
         float layerAlpha = u_LayerAlbedoColor[i].a;
+
+        // Apply material stylization (sat, brightness, contrast, hue)
+        vec4 styl = u_LayerStylize[i];
+        float sat = styl.x;
+        float bright = styl.y;
+        float contrast = styl.z;
+        float hue = styl.w;
+
+        // Saturation: blend towards luminance
+        float lum = dot(al, vec3(0.3, 0.59, 0.11));
+        al = mix(vec3(lum), al, sat);
+
+        // Brightness
+        al *= bright;
+
+        // Contrast
+        al = (al - 0.5) * contrast + 0.5;
+
+        // Hue shift (approx via RGB->HSV and back)
+        if (abs(hue) > 1e-6)
+        {
+            // RGB to HSV
+            vec3 c = al;
+            float cmax = max(c.r, max(c.g, c.b));
+            float cmin = min(c.r, min(c.g, c.b));
+            float delta = cmax - cmin;
+            float H = 0.0;
+            if (delta > 1e-6)
+            {
+                if (cmax == c.r) H = mod(((c.g - c.b) / delta), 6.0);
+                else if (cmax == c.g) H = ((c.b - c.r) / delta) + 2.0;
+                else H = ((c.r - c.g) / delta) + 4.0;
+                H /= 6.0;
+                if (H < 0.0) H += 1.0;
+            }
+            float S = (cmax < 1e-6) ? 0.0 : delta / cmax;
+            float V = cmax;
+
+            H = fract(H + hue);
+
+            // HSV to RGB
+            float C = V * S;
+            float X = C * (1.0 - abs(mod(H * 6.0, 2.0) - 1.0));
+            float m = V - C;
+            vec3 rgb1;
+            if (0.0 <= H && H < 1.0/6.0) rgb1 = vec3(C, X, 0);
+            else if (H < 2.0/6.0) rgb1 = vec3(X, C, 0);
+            else if (H < 3.0/6.0) rgb1 = vec3(0, C, X);
+            else if (H < 4.0/6.0) rgb1 = vec3(0, X, C);
+            else if (H < 5.0/6.0) rgb1 = vec3(X, 0, C);
+            else rgb1 = vec3(C, 0, X);
+            al = rgb1 + vec3(m);
+        }
         
         // Sample normal maps from all 3 projections
         vec3 normalX = texture(u_LayerNormal[i], uvX).xyz * 2.0 - 1.0;
@@ -263,9 +343,9 @@ void main()
         worldNormalX.x = -worldNormalX.x;
         
         // Blend world-space normals based on surface orientation
-        vec3 blendedNormal = worldNormalX * blendWeights.x + 
-                             worldNormalY * blendWeights.y + 
-                             worldNormalZ * blendWeights.z;
+        vec3 blendedNormal = worldNormalX * localBlendWeights.x + 
+                     worldNormalY * localBlendWeights.y + 
+                     worldNormalZ * localBlendWeights.z;
 
         // Apply normal strength (lerp between flat and full normal)
         float strength = u_LayerNormalStrength[i];

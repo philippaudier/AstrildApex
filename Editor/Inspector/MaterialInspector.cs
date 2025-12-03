@@ -113,7 +113,7 @@ namespace Editor.Inspector
                 EnsureUniqueMaterialForEntity(scene, e);
                 mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                 mat.Shader = availableShaders[currentIndex];
-                AssetDatabase.SaveMaterial(mat);
+                try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
             }
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Select the rendering shader for this material");
 
@@ -134,7 +134,7 @@ namespace Editor.Inspector
                         EnsureUniqueMaterialForEntity(scene, e);
                         mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                         mat.AlbedoTexture = dropped;
-                        AssetDatabase.SaveMaterial(mat);
+                        try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
                     }
                 }
                 ImGui.EndDragDropTarget();
@@ -148,8 +148,8 @@ namespace Editor.Inspector
                 {
                     EnsureUniqueMaterialForEntity(scene, e);
                     mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
-                    mat.AlbedoTexture = null;
-                    AssetDatabase.SaveMaterial(mat);
+                        mat.AlbedoTexture = null;
+                        try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
                 }
                 if (ImGui.IsItemHovered())
                 {
@@ -164,7 +164,7 @@ namespace Editor.Inspector
                 EnsureUniqueMaterialForEntity(scene, e);
                 mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                 mat.AlbedoColor = new[] { col.X, col.Y, col.Z, col.W };
-                AssetDatabase.SaveMaterial(mat);
+                try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
             }
 
             // Normal Texture
@@ -187,7 +187,7 @@ namespace Editor.Inspector
                         EnsureUniqueMaterialForEntity(scene, e);
                         mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                         mat.NormalTexture = dropped;
-                        AssetDatabase.SaveMaterial(mat);
+                        try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
                     }
                 }
                 ImGui.EndDragDropTarget();
@@ -202,7 +202,7 @@ namespace Editor.Inspector
                     EnsureUniqueMaterialForEntity(scene, e);
                     mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                     mat.NormalTexture = null;
-                    AssetDatabase.SaveMaterial(mat);
+                    try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
                 }
                 if (ImGui.IsItemHovered())
                 {
@@ -219,7 +219,7 @@ namespace Editor.Inspector
                     EnsureUniqueMaterialForEntity(scene, e);
                     mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                     mat.NormalStrength = strength;
-                    AssetDatabase.SaveMaterial(mat);
+                    try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
                 }
                 if (ImGui.IsItemHovered())
                 {
@@ -233,14 +233,14 @@ namespace Editor.Inspector
                 EnsureUniqueMaterialForEntity(scene, e);
                 mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                 mat.Metallic = m;
-                AssetDatabase.SaveMaterial(mat);
+                try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
             }
             if (ImGui.SliderFloat("Roughness", ref r, 0, 1))
             {
                 EnsureUniqueMaterialForEntity(scene, e);
                 mat = AssetDatabase.LoadMaterial(e.MaterialGuid.Value);
                 mat.Roughness = r;
-                AssetDatabase.SaveMaterial(mat);
+                try { AssetDatabase.SaveMaterialAsync(mat); } catch { }
             }
 
             ImGui.EndGroup();

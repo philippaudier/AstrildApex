@@ -32,6 +32,7 @@ namespace Engine.Audio.Components
         private StreamingAudioClip? _streamingClip;
         private bool _isPlaying;
         private bool _isPaused;
+        private bool _deferredPlayOnAwake = false; // Flag to defer PlayOnAwake to Update()
         private readonly List<int> _effectSlots = new(); // OpenAL effect slots
 
         /// <summary>
@@ -291,6 +292,31 @@ namespace Engine.Audio.Components
         {
             base.OnAttached();
 
+            // CRITICAL: Reset all cached values after cloning to ensure properties are applied
+            ResetPropertyCaches();
+
+            // Load clip from GUID if available but clip is null (happens after deserialization)
+            if (_clip == null && ClipGuid.HasValue && ClipGuid.Value != Guid.Empty)
+            {
+                LoadClipFromGuid();
+            }
+
+            // CRITICAL FIX: If this is a StreamingAudioClip that's already streaming (happens during
+            // scene cloning when Edit Mode sources share clips with Play Mode), force stop it to
+            // ensure decoder is in clean state. This prevents the "looping first 2 seconds" bug.
+            if (_clip is StreamingAudioClip streamingClip && streamingClip.IsStreamingActive)
+            {
+                try
+                {
+                    streamingClip.StopStreaming();
+                    Log.Information($"[AudioSource] Force-stopped streaming clip during OnAttached: {_clip.Name}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[AudioSource] Failed to stop streaming clip during OnAttached");
+                }
+            }
+
             if (!AudioEngine.Instance.IsInitialized)
             {
                 Log.Warning("[AudioSource] AudioEngine not initialized");
@@ -299,6 +325,36 @@ namespace Engine.Audio.Components
 
             // Générer une source OpenAL
             _sourceId = AL.GenSource();
+
+            // CRITICAL FIX: Ensure the newly created OpenAL source is in a clean state
+            // OpenAL can reuse source IDs and they might have residual queued buffers
+            // This prevents the "looping first 2 seconds" bug on first play mode entry
+            try
+            {
+                // Stop the source in case it was reused and still playing
+                if (AL.IsSource(_sourceId))
+                {
+                    AL.SourceStop(_sourceId);
+
+                    // Clear any queued buffers from previous usage
+                    AL.GetSource(_sourceId, ALGetSourcei.BuffersQueued, out int queuedCount);
+                    if (queuedCount > 0)
+                    {
+                        int[] bufferIds = new int[queuedCount];
+                        AL.SourceUnqueueBuffers(_sourceId, queuedCount, bufferIds);
+                        Log.Information($"[AudioSource] Cleared {queuedCount} residual buffers from reused OpenAL source on entity: {Entity?.Name}");
+                    }
+
+                    // Reset source to initial state
+                    AL.Source(_sourceId, ALSourcef.SecOffset, 0f);
+                    AL.Source(_sourceId, ALSourcei.Buffer, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[AudioSource] Failed to clean newly created OpenAL source");
+            }
+
             UpdateSourceProperties();
         }
 
@@ -306,21 +362,22 @@ namespace Engine.Audio.Components
         {
             base.OnEnable();
 
+            // Load clip from GUID if it's still null after OnAttached (safety fallback)
+            if (_clip == null && ClipGuid.HasValue && ClipGuid.Value != Guid.Empty)
+            {
+                LoadClipFromGuid();
+            }
+
+            // CRITICAL: Defer PlayOnAwake to avoid freezing during scene initialization
             // Do not auto-play on enable when running in the Editor - PlayOnAwake
             // should only apply when actually running the game/player. The Editor
             // may load scenes while the user is browsing and should not trigger
             // immediate playback which can cause underruns or spurious restarts.
-            try
+            if (PlayOnAwake && _clip != null && (!Engine.Core.RuntimeEnvironment.IsEditor || Engine.Core.RuntimeEnvironment.IsPlayMode))
             {
-                // Allow PlayOnAwake if not running in Editor, or if the Editor is currently
-                // in Play Mode. This preserves the expected behavior: PlayOnAwake should
-                // run when the game is actually playing, but not when simply opening a scene.
-                if (PlayOnAwake && _clip != null && (!Engine.Core.RuntimeEnvironment.IsEditor || Engine.Core.RuntimeEnvironment.IsPlayMode))
-                {
-                    Play();
-                }
+                // Defer playback to next Update() to avoid calling OpenAL during component initialization
+                _deferredPlayOnAwake = true;
             }
-            catch { }
         }
 
         public override void OnDisable()
@@ -363,6 +420,21 @@ namespace Engine.Audio.Components
         public override void Update(float dt)
         {
             base.Update(dt);
+
+            // Handle deferred PlayOnAwake (called after scene initialization is complete)
+            if (_deferredPlayOnAwake)
+            {
+                _deferredPlayOnAwake = false;
+                try
+                {
+                    Play();
+                    Log.Information($"[AudioSource] Deferred PlayOnAwake executed for entity: {Entity?.Name}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[AudioSource] Deferred PlayOnAwake failed");
+                }
+            }
 
             // Try to initialize source if it wasn't created yet (e.g., AudioEngine was initialized after OnAttached)
             if (_sourceId == -1 && AudioEngine.Instance.IsInitialized)
@@ -430,24 +502,30 @@ namespace Engine.Audio.Components
             // Ensure we have a valid OpenAL source. Try late-initialization if possible.
             if (_sourceId == -1)
             {
-                if (AudioEngine.Instance.IsInitialized)
+                if (!AudioEngine.Instance.IsInitialized)
                 {
-                    try
-                    {
-                        _sourceId = AL.GenSource();
-                        UpdateSourceProperties();
-                        Log.Information($"[AudioSource] Late initialization of OpenAL source for entity: {Entity?.Name}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warning(ex, "[AudioSource] Failed to generate OpenAL source during Play()");
-                    }
+                    Log.Warning("[AudioSource] Cannot play - AudioEngine not initialized");
+                    return;
+                }
+
+                try
+                {
+                    _sourceId = AL.GenSource();
+                    // Reset caches after late initialization
+                    ResetPropertyCaches();
+                    UpdateSourceProperties();
+                    Log.Information($"[AudioSource] Late initialization of OpenAL source for entity: {Entity?.Name}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[AudioSource] Failed to generate OpenAL source during Play()");
+                    return;
                 }
             }
 
             if (_sourceId == -1 || _clip == null || !_clip.IsLoaded)
             {
-                Log.Warning("[AudioSource] Cannot play - no clip or source not initialized");
+                Log.Warning($"[AudioSource] Cannot play - sourceId={_sourceId}, clip={((_clip == null) ? "null" : (_clip.IsLoaded ? "loaded" : "not loaded"))} on entity: {Entity?.Name}");
                 return;
             }
 
@@ -479,6 +557,33 @@ namespace Engine.Audio.Components
             if (IsPlaying)
             {
                 AL.SourceStop(_sourceId);
+
+                // CRITICAL FIX: For streaming clips, ensure all queued buffers are removed
+                // when stopping before restarting. This prevents residual buffers from
+                // causing the "looping first 2 seconds" bug.
+                if (_streamingClip != null && _streamingClip.IsStreamingActive)
+                {
+                    _streamingClip.StopStreaming();
+                }
+                else
+                {
+                    // For non-streaming clips or if streaming is not active, manually clear any queued buffers
+                    try
+                    {
+                        AL.GetSource(_sourceId, ALGetSourcei.BuffersQueued, out int queued);
+                        if (queued > 0)
+                        {
+                            // After SourceStop, all buffers can be unqueued
+                            int[] bufferIds = new int[queued];
+                            AL.SourceUnqueueBuffers(_sourceId, queued, bufferIds);
+                            Log.Information($"[AudioSource] Cleared {queued} residual buffers before Play()");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "[AudioSource] Failed to clear residual buffers before Play()");
+                    }
+                }
             }
 
             // Reset playback position to beginning only if requested
@@ -723,6 +828,7 @@ namespace Engine.Audio.Components
             // Vérifier que la source est toujours valide
             if (!AL.IsSource(_sourceId))
             {
+                Log.Warning($"[AudioSource] Source {_sourceId} is no longer valid on entity: {Entity?.Name}");
                 _sourceId = -1;
                 return;
             }
@@ -731,15 +837,16 @@ namespace Engine.Audio.Components
             {
                 float effectiveVolume = Mute ? 0f : Volume * GetCategoryVolume();
 
-                // Only update if changed
-                if (Math.Abs(effectiveVolume - _lastGain) > 0.001f)
+                // Only update if changed (or if cache was reset with -1)
+                if (_lastGain < 0f || Math.Abs(effectiveVolume - _lastGain) > 0.001f)
                 {
                     AL.Source(_sourceId, ALSourcef.Gain, effectiveVolume);
                     _lastGain = effectiveVolume;
                 }
 
                 float clampedPitch = Math.Clamp(Pitch, 0.5f, 2.0f);
-                if (Math.Abs(clampedPitch - _lastPitch) > 0.001f)
+                // CRITICAL: Also update if _lastPitch is negative (cache was reset)
+                if (_lastPitch < 0f || Math.Abs(clampedPitch - _lastPitch) > 0.001f)
                 {
                     AL.Source(_sourceId, ALSourcef.Pitch, clampedPitch);
                     _lastPitch = clampedPitch;
@@ -923,6 +1030,67 @@ namespace Engine.Audio.Components
                 AudioSourceFilterExtensions.DestroyFilterHandle(filter);
             }
             Filters.Clear();
+        }
+
+        /// <summary>
+        /// Loads the audio clip from ClipGuid if it's set
+        /// This is called after deserialization to restore the clip reference
+        /// </summary>
+        private void LoadClipFromGuid()
+        {
+            if (!ClipGuid.HasValue || ClipGuid.Value == Guid.Empty)
+                return;
+
+            try
+            {
+                // Try to get the clip from AudioImporter cache
+                var clip = Engine.Audio.Assets.AudioImporter.GetClipByGuid(ClipGuid.Value);
+                if (clip != null)
+                {
+                    _clip = clip;
+                    _streamingClip = clip as StreamingAudioClip;
+                    Log.Information($"[AudioSource] Loaded clip from GUID: {clip.Name} on entity: {Entity?.Name}");
+                }
+                else
+                {
+                    // Try to load from AssetDatabase if it's registered
+                    if (Engine.Assets.AssetDatabase.TryGet(ClipGuid.Value, out var record))
+                    {
+                        clip = Engine.Audio.Assets.AudioImporter.LoadClip(record.Path);
+                        if (clip != null)
+                        {
+                            _clip = clip;
+                            _streamingClip = clip as StreamingAudioClip;
+                            Log.Information($"[AudioSource] Loaded clip from AssetDatabase: {clip.Name} on entity: {Entity?.Name}");
+                        }
+                        else
+                        {
+                            Log.Warning($"[AudioSource] Failed to load clip from path: {record.Path}");
+                        }
+                    }
+                    else
+                    {
+                        Log.Warning($"[AudioSource] Clip GUID not found in AudioImporter or AssetDatabase: {ClipGuid.Value}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, $"[AudioSource] Failed to load clip from GUID: {ClipGuid?.ToString() ?? "null"}");
+            }
+        }
+
+        /// <summary>
+        /// Resets all cached property values to force OpenAL updates on next refresh
+        /// CRITICAL: Must be called after scene cloning to ensure all properties are applied
+        /// </summary>
+        private void ResetPropertyCaches()
+        {
+            _lastGain = -1f;
+            _lastPitch = -1f;
+            _lastLoop = false;
+            _lastRolloff = -1f;
+            _lastSpatialMode = false;
         }
     }
 }

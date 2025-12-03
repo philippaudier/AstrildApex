@@ -46,13 +46,40 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\Water.frag</Link>
     </None>
-    <None Update="Rendering\Shaders\Forward\WaterSimple.vert">
+    <!-- AAA Water tessellation stages -->
+    <None Update="Rendering\Shaders\Forward\Water.tesc">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\WaterSimple.vert</Link>
+      <Link>Engine\Rendering\Shaders\Forward\Water.tesc</Link>
     </None>
-    <None Update="Rendering\Shaders\Forward\WaterSimple.frag">
+    <None Update="Rendering\Shaders\Forward\Water.tese">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\WaterSimple.frag</Link>
+      <Link>Engine\Rendering\Shaders\Forward\Water.tese</Link>
+    </None>
+    <!-- Removed legacy WaterSimple shader (replaced by WaterForward/Water PBR shaders) -->
+    <None Update="Rendering\Shaders\Forward\WaterForward.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterForward.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterForward.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterForward.frag</Link>
+    </None>
+    <!-- Maintain backward compatibility: also provide 'Water' shader name by duplicating files -->
+    <None Update="Rendering\Shaders\Forward\Water.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Water.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\Water.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Water.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\Glass.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Glass.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\Glass.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\Glass.frag</Link>
     </None>
     <!-- Shader Includes -->
     <None Update="Rendering\Shaders\Includes\Common.glsl">

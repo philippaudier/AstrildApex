@@ -3,6 +3,7 @@ using System.Numerics;
 using ImGuiNET;
 using Engine.Components;
 using Engine.Assets;
+using Editor.Logging;
 
 namespace Editor.Inspector
 {
@@ -11,96 +12,99 @@ namespace Editor.Inspector
     /// </summary>
     public static class TerrainLayersUI
     {
+        // GUID of the material currently being edited via the Terrain Layers UI (persist across frames)
+        private static Guid? _editingMaterial = null;
+
         public static void DrawTerrainLayers(Terrain terrain)
         {
             if (!ImGui.CollapsingHeader("Terrain Layers", ImGuiTreeNodeFlags.DefaultOpen))
                 return;
 
-            ImGui.TextDisabled("Materials will be blended based on height and slope");
+            ImGui.TextDisabled("Materials will be blended based on height and slope (layers live on the Terrain component)");
             ImGui.Spacing();
 
-            // Get terrain material to access layers (using AssetDatabase for cache consistency)
-            MaterialAsset? terrainMat = null;
-            if (terrain.TerrainMaterialGuid.HasValue)
-            {
-                try
-                {
-                    terrainMat = AssetDatabase.LoadMaterial(terrain.TerrainMaterialGuid.Value);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[TerrainLayersUI] Failed to load terrain material: {ex.Message}");
-                }
-            }
+            // Ensure TerrainLayers exist on the Terrain component
+            terrain.TerrainLayers ??= Array.Empty<TerrainLayer>();
 
-            if (terrainMat == null)
+            // Add layer button (max 8)
+            if (ImGui.Button("Add Layer") && terrain.TerrainLayers.Length < 8)
             {
-                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.7f, 0.3f, 1f), 
-                    "Assign a TerrainForward material to configure layers");
-                return;
-            }
-
-            // Ensure TerrainLayers array exists
-            if (terrainMat.TerrainLayers == null)
-            {
-                terrainMat.TerrainLayers = Array.Empty<TerrainLayer>();
-            }
-
-            // Add layer button
-            if (ImGui.Button("Add Layer") && terrainMat.TerrainLayers.Length < 8)
-            {
-                var newLayers = new TerrainLayer[terrainMat.TerrainLayers.Length + 1];
-                Array.Copy(terrainMat.TerrainLayers, newLayers, terrainMat.TerrainLayers.Length);
-                newLayers[terrainMat.TerrainLayers.Length] = new TerrainLayer
+                var newLayers = new TerrainLayer[terrain.TerrainLayers.Length + 1];
+                Array.Copy(terrain.TerrainLayers, newLayers, terrain.TerrainLayers.Length);
+                newLayers[terrain.TerrainLayers.Length] = new TerrainLayer
                 {
-                    Name = $"Layer {terrainMat.TerrainLayers.Length}",
-                    Priority = terrainMat.TerrainLayers.Length,
+                    Name = $"Layer {terrain.TerrainLayers.Length}",
+                    Priority = terrain.TerrainLayers.Length,
                     Strength = 1.0f
                 };
-                terrainMat.TerrainLayers = newLayers;
-                
-                // Save the material
-                SaveMaterial(terrain, terrainMat);
+                terrain.TerrainLayers = newLayers;
             }
 
             ImGui.SameLine();
-            ImGui.TextDisabled($"({terrainMat.TerrainLayers.Length}/8 layers)");
+            ImGui.TextDisabled($"({terrain.TerrainLayers.Length}/8 layers)");
+
+            ImGui.SameLine();
+            var terrainMatGuid = terrain.TerrainMaterialGuid;
+            if (ImGui.Button("Import From Material") && terrainMatGuid.HasValue)
+            {
+                // Material-side terrain layers are deprecated; treat them as a legacy import source.
+                // Silence the obsolete-member warning for an explicit, localized migration/import.
+#pragma warning disable CS0618
+                try
+                {
+                    var matGuid = terrainMatGuid.Value;
+                    var mat = AssetDatabase.LoadMaterial(matGuid);
+                    if (mat != null && mat.TerrainLayers != null)
+                    {
+                        // Copy layers into the component (clamped to 8)
+                        int copyCount = Math.Min(mat.TerrainLayers.Length, 8);
+                        var newLayers = new TerrainLayer[copyCount];
+                        for (int i = 0; i < copyCount; i++)
+                        {
+                            newLayers[i] = mat.TerrainLayers[i];
+                        }
+                        terrain.TerrainLayers = newLayers;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogWarning($"[TerrainLayersUI] Failed to import layers from material: {ex.Message}");
+                }
+#pragma warning restore CS0618
+            }
 
             ImGui.Spacing();
 
-            // Draw each layer
-            for (int i = 0; i < terrainMat.TerrainLayers.Length; i++)
+            // Draw each layer from the Terrain component
+            for (int i = 0; i < terrain.TerrainLayers.Length; i++)
             {
                 ImGui.PushID(i);
-                var layer = terrainMat.TerrainLayers[i];
+                var layer = terrain.TerrainLayers[i];
                 bool changed = false;
 
-                // Layer header with delete button
                 bool nodeOpen = ImGui.TreeNodeEx($"{layer.Name}##layer{i}", ImGuiTreeNodeFlags.DefaultOpen);
-                
+
                 ImGui.SameLine();
-                ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X - 60);
+                ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X - 100);
                 if (ImGui.SmallButton("Delete"))
                 {
-                    var newLayers = new TerrainLayer[terrainMat.TerrainLayers.Length - 1];
+                    var newLayers = new TerrainLayer[terrain.TerrainLayers.Length - 1];
                     int destIndex = 0;
-                    for (int j = 0; j < terrainMat.TerrainLayers.Length; j++)
+                    for (int j = 0; j < terrain.TerrainLayers.Length; j++)
                     {
                         if (j != i)
                         {
-                            newLayers[destIndex++] = terrainMat.TerrainLayers[j];
+                            newLayers[destIndex++] = terrain.TerrainLayers[j];
                         }
                     }
-                    terrainMat.TerrainLayers = newLayers;
-                    SaveMaterial(terrain, terrainMat);
-                    
+                    terrain.TerrainLayers = newLayers;
                     ImGui.PopID();
                     break;
                 }
 
                 if (nodeOpen)
                 {
-                    // Layer name
+                    // Name
                     string name = layer.Name ?? "";
                     if (ImGui.InputText("Name", ref name, 256))
                     {
@@ -108,21 +112,19 @@ namespace Editor.Inspector
                         changed = true;
                     }
 
-                    // Material selection
+                    // Material selection + Edit button
                     ImGui.Text("Material");
-                    if (layer.Material.HasValue)
+                    ImGui.SameLine();
+                    var layerMat = layer.Material;
+                    if (layerMat.HasValue && AssetDatabase.TryGet(layerMat.Value, out var matRec))
                     {
-                        if (AssetDatabase.TryGet(layer.Material.Value, out var matRec))
+                        ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), $"✓ {System.IO.Path.GetFileName(matRec.Path)}");
+                        ImGui.SameLine();
+                        if (ImGui.SmallButton("Edit Material"))
                         {
-                            ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), 
-                                $"✓ {System.IO.Path.GetFileName(matRec.Path)}");
+                            _editingMaterial = layerMat.Value;
                         }
-                        else
-                        {
-                            ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), 
-                                "Material not found!");
-                        }
-                        
+                        ImGui.SameLine();
                         if (ImGui.SmallButton("Clear##material"))
                         {
                             layer.Material = null;
@@ -134,8 +136,7 @@ namespace Editor.Inspector
                         ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.2f, 0.3f, 1f));
                         ImGui.Button("Drag Material Here", new System.Numerics.Vector2(-1, 30));
                         ImGui.PopStyleColor();
-                        
-                        // Drag-drop for material
+
                         if (ImGui.BeginDragDropTarget())
                         {
                             unsafe
@@ -157,23 +158,10 @@ namespace Editor.Inspector
                         }
                     }
 
-                    // UV Tiling
-                    var tiling = layer.Tiling ?? new float[] { 1f, 1f };
-                    var tilingVec = new Vector2(tiling[0], tiling[1]);
-                    if (ImGui.DragFloat2("Tiling", ref tilingVec, 0.1f, 0.1f, 100f))
-                    {
-                        layer.Tiling = new float[] { tilingVec.X, tilingVec.Y };
-                        changed = true;
-                    }
-
-                    // UV Offset
-                    var offset = layer.Offset ?? new float[] { 0f, 0f };
-                    var offsetVec = new Vector2(offset[0], offset[1]);
-                    if (ImGui.DragFloat2("Offset", ref offsetVec, 0.01f))
-                    {
-                        layer.Offset = new float[] { offsetVec.X, offsetVec.Y };
-                        changed = true;
-                    }
+                    // NOTE: UV tiling/offset are handled by the MaterialAsset now.
+                    // The terrain layer should not expose tiling/offset to avoid
+                    // duplication of responsibility. If you need layer-specific
+                    // UV adjustments in future, add a dedicated override flag.
 
                     ImGui.Spacing();
                     ImGui.Separator();
@@ -296,31 +284,40 @@ namespace Editor.Inspector
                     ImGui.TreePop();
                 }
 
-                // Save if changed
+                // Save if changed (write back to terrain array)
                 if (changed)
                 {
-                    SaveMaterial(terrain, terrainMat);
+                    var copy = terrain.TerrainLayers;
+                    copy[i] = layer;
+                    terrain.TerrainLayers = copy;
                 }
 
                 ImGui.PopID();
             }
-        }
 
-        private static void SaveMaterial(Terrain terrain, MaterialAsset material)
-        {
-            if (terrain.TerrainMaterialGuid.HasValue)
+            // If a material is being edited, render its full material inspector below
+            if (_editingMaterial.HasValue)
             {
+                var editingMat = _editingMaterial.Value;
+                ImGui.Separator();
+                ImGui.Text($"Editing material: {editingMat}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Close Material Editor"))
+                {
+                    _editingMaterial = null;
+                }
+
                 try
                 {
-                    // Use AssetDatabase.SaveMaterial to trigger MaterialSaved event for cache invalidation
-                    AssetDatabase.SaveMaterial(material);
-                    Console.WriteLine($"[TerrainLayersUI] Saved material with layers - cache will be invalidated");
+                    Editor.Inspector.MaterialAssetInspector.Draw(editingMat);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[TerrainLayersUI] Failed to save material: {ex.Message}");
+                    LogManager.LogWarning($"[TerrainLayersUI] Failed to draw material inspector: {ex.Message}");
                 }
             }
         }
+
+        // Note: layer management now lives on the Terrain component; material-side layers are deprecated.
     }
 }

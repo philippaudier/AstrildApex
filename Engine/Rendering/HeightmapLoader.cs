@@ -84,16 +84,19 @@ namespace Engine.Rendering
                 var heightData = new float[width, height];
 
                 // Process pixel data - L16 stores 16-bit grayscale values
+                // ImageSharp provides rows from top-to-bottom. Our terrain UV convention
+                // expects v=0 at bottom, so flip the Y axis when storing into heightData
                 image.ProcessPixelRows(accessor =>
                 {
                     for (int y = 0; y < height; y++)
                     {
                         Span<L16> pixelRow = accessor.GetRowSpan(y);
+                        int flippedY = (height - 1) - y;
                         for (int x = 0; x < width; x++)
                         {
                             // L16.PackedValue is a ushort (0-65535)
                             ushort value = pixelRow[x].PackedValue;
-                            heightData[x, y] = value / 65535.0f;
+                            heightData[x, flippedY] = value / 65535.0f;
                         }
                     }
                 });
@@ -122,16 +125,18 @@ namespace Engine.Rendering
 
                     var heightData = new float[width, height];
 
+                    // Flip Y so image top becomes terrain v=1 (top) and bottom becomes v=0
                     image.ProcessPixelRows(accessor =>
                     {
                         for (int y = 0; y < height; y++)
                         {
                             Span<L8> pixelRow = accessor.GetRowSpan(y);
+                            int flippedY = (height - 1) - y;
                             for (int x = 0; x < width; x++)
                             {
                                 // L8.PackedValue is a byte (0-255)
                                 byte value = pixelRow[x].PackedValue;
-                                heightData[x, y] = value / 255.0f;
+                                heightData[x, flippedY] = value / 255.0f;
                             }
                         }
                     });
@@ -165,8 +170,11 @@ namespace Engine.Rendering
                 var heightData = new float[width, height];
                 byte[] buffer = new byte[2];
 
+                // RAW files are typically written top-to-bottom; flip Y so that the
+                // resulting heightData uses v=0 at bottom to match mesh UVs.
                 for (int y = 0; y < height; y++)
                 {
+                    int flippedY = (height - 1) - y;
                     for (int x = 0; x < width; x++)
                     {
                         if (stream.Read(buffer, 0, 2) != 2)
@@ -174,7 +182,7 @@ namespace Engine.Rendering
 
                         // Convert 16-bit value to float (0.0 to 1.0)
                         ushort value = (ushort)(buffer[0] | (buffer[1] << 8));
-                        heightData[x, y] = value / 65535.0f;
+                        heightData[x, flippedY] = value / 65535.0f;
                     }
                 }
 

@@ -113,7 +113,7 @@ namespace Engine.Rendering
             GL.BindVertexArray(0);
 
             _initialized = true;
-            try { Engine.Utils.DebugLogger.Log("[SelectionOutlineRenderer] Initialized successfully"); } catch { }
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[SelectionOutlineRenderer] Initialized successfully"); } catch { }
         }
 
         /// <summary>

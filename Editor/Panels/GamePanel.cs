@@ -387,13 +387,16 @@ namespace Editor.Panels
                 // Forcer l'utilisation des matrices de la caméra de jeu
                 _gameRenderer.SetCameraMatrices(viewMat, projMat);
 
-                // PERF FIX: Only render if window is visible, focused, or in Play Mode
-                // This prevents expensive render calls when GamePanel is collapsed/hidden/not visible
-                bool shouldRender = ImGui.IsWindowAppearing() ||
+                // PERF FIX: Only render when necessary. Avoid unconditionally rendering
+                // based on available size alone because docked/hidden tabs report a
+                // positive content region even when not visible. Render when in Play
+                // Mode, when the window is appearing/hovered/focused, or explicitly
+                // when the user requested it (focus). This prevents expensive render
+                // calls when the GamePanel is docked but not the active tab.
+                bool shouldRender = PlayMode.IsInPlayMode ||
+                                   ImGui.IsWindowAppearing() ||
                                    _isWindowFocused ||
-                                   ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows) ||
-                                   PlayMode.IsInPlayMode ||
-                                   (w > 8 && h > 8);
+                                   ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows);
 
                 // Rendu de la scène (only when necessary)
                 if (shouldRender)
@@ -587,20 +590,28 @@ namespace Editor.Panels
                     foreach (var comp in entity.GetAllComponents())
                     {
                         var typeName = comp.GetType().FullName;
-                        if (typeName == "Editor.Assets.Scripts.RPGHudController")
+                        if (typeName == "Editor.Assets.Scripts.RPGHudController" || 
+                            typeName == "Editor.Assets.Scripts.FPSHudController")
                         {
                             // Found it! Cast to dynamic to call methods without type reference
                             dynamic hud = comp;
                             hudCount++;
                             hud.SetViewportBounds(gameImageMin, hudViewportSize);
                             
-                            // Pass camera matrices for 3D world-to-screen conversion
+                            // Pass camera matrices for 3D world-to-screen conversion (optional for some HUDs)
                             if (camera != null)
                             {
-                                float aspect = (float)w / (float)h;
-                                var viewMatrix = camera.ViewMatrix;
-                                var projMatrix = camera.ProjectionMatrix(aspect);
-                                hud.SetCameraMatrices(viewMatrix, projMatrix);
+                                try
+                                {
+                                    float aspect = (float)w / (float)h;
+                                    var viewMatrix = camera.ViewMatrix;
+                                    var projMatrix = camera.ProjectionMatrix(aspect);
+                                    hud.SetCameraMatrices(viewMatrix, projMatrix);
+                                }
+                                catch
+                                {
+                                    // Some HUDs may not need camera matrices
+                                }
                             }
                             
                             hud.RenderHUDOverlay();
@@ -611,7 +622,7 @@ namespace Editor.Panels
                 
                 if (hudCount == 0)
                 {
-                    LogManager.LogWarning("No RPGHudController found in scene!", "GamePanel");
+                    LogManager.LogVerbose("No HUD controller found in scene.", "GamePanel");
                 }
             }
         }

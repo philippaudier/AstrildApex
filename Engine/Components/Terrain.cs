@@ -31,6 +31,10 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("terrainMaterialGuid")]
         public Guid? TerrainMaterialGuid { get; set; } = null;
 
+        // Terrain layers (moved from MaterialAsset for better workflow)
+        [Engine.Serialization.SerializableAttribute("terrainLayers")]
+        public Engine.Assets.TerrainLayer[]? TerrainLayers { get; set; } = null;
+
         // Water properties
         [Engine.Serialization.SerializableAttribute("enableWater")]
         public bool EnableWater { get; set; } = false;
@@ -819,6 +823,10 @@ namespace Engine.Components
         /// </summary>
         public void Render(System.Numerics.Vector3 viewPos)
         {
+            // Don't render if component is disabled
+            if (!Enabled)
+                return;
+
             // Don't render if mesh hasn't been generated
             if (!_meshGenerated || _vao == 0 || _indexCount == 0)
             {

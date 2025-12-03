@@ -33,7 +33,7 @@ layout(std140, binding=0) uniform Global {
     vec3 uFogColor; float uFogStart;
     float uFogEnd; vec3 _pad16;
 
-    int uClipPlaneEnabled; float _pad17; float _pad18; float _pad19;
+    float uClipPlaneEnabled; float _pad17; float _pad18; float _pad19;
     vec4 uClipPlane; // plane equation: normal.xyz, d
 };
 

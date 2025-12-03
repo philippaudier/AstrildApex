@@ -583,22 +583,6 @@ namespace Engine.Scene
             return e;
         }
 
-        public Entity CreateWater(string name, Vector3 position, float width = 100f, float length = 100f, int resolution = 32)
-        {
-            var e = new Entity { Id = _nextId++, Name = name };
-            e.Transform.Position = position;
-
-            // Add WaterComponent
-            var waterComponent = e.AddComponent<WaterComponent>();
-            waterComponent.WaterWidth = width;
-            waterComponent.WaterLength = length;
-            waterComponent.Resolution = resolution;
-
-            // Water material will be assigned automatically in WaterComponent.OnAttached()
-
-            Entities.Add(e);
-            return e;
-        }
 
         public Entity? GetById(uint id) => Entities.FirstOrDefault(x => x.Id == id);
 

@@ -197,42 +197,6 @@ namespace Editor.Inspector
                 }
                 
                 ImGui.Text($"Time: {FormatTime(time)} / {FormatTime(length)}");
-
-                // Progress bar
-                float progress = length > 0 ? time / length : 0f;
-                var cursorPos = ImGui.GetCursorScreenPos();
-                var availWidth = ImGui.GetContentRegionAvail().X;
-                var barHeight = 20f;
-                
-                // Draw custom progress bar
-                var drawList = ImGui.GetWindowDrawList();
-                var barMin = cursorPos;
-                var barMax = new Vector2(cursorPos.X + availWidth, cursorPos.Y + barHeight);
-                
-                // Background
-                drawList.AddRectFilled(barMin, barMax, ImGui.GetColorU32(new Vector4(0.2f, 0.2f, 0.2f, 1f)));
-                
-                // Progress fill
-                if (progress > 0)
-                {
-                    var fillMax = new Vector2(barMin.X + availWidth * progress, barMax.Y);
-                    drawList.AddRectFilled(barMin, fillMax, ImGui.GetColorU32(new Vector4(0.3f, 0.6f, 0.9f, 1f)));
-                }
-                
-                // Border
-                drawList.AddRect(barMin, barMax, ImGui.GetColorU32(new Vector4(0.5f, 0.5f, 0.5f, 1f)), 0f, 0, 1.5f);
-                
-                // Time indicator text on top
-                var textSize = ImGui.CalcTextSize($"{(progress * 100):F1}%");
-                var textPos = new Vector2(
-                    barMin.X + (availWidth - textSize.X) / 2,
-                    barMin.Y + (barHeight - textSize.Y) / 2
-                );
-                drawList.AddText(textPos, ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 1f)), $"{(progress * 100):F1}%");
-                
-                // Make it a dummy to take up space
-                ImGui.SetCursorScreenPos(barMin);
-                ImGui.Dummy(new Vector2(availWidth, barHeight));
             }
 
             ImGui.Spacing();

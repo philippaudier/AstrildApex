@@ -34,6 +34,14 @@
       <Link>Engine/Rendering/Shaders/Forward/TerrainForward.frag</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="..\Engine\Rendering\Shaders\Forward\Glass.vert">
+      <Link>Engine/Rendering/Shaders/Forward/Glass.vert</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Engine\Rendering\Shaders\Forward\Glass.frag">
+      <Link>Engine/Rendering/Shaders/Forward/Glass.frag</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <!-- Shader Includes -->
     <None Include="..\Engine\Rendering\Shaders\Includes\Common.glsl">
       <Link>Engine/Rendering/Shaders/Includes/Common.glsl</Link>

@@ -871,8 +871,11 @@ namespace Engine.Rendering
             GL.DepthMask(true);
             GL.DepthFunc(DepthFunction.Less);
 
-            // CRITICAL: Update IBL after rendering skybox
-            UpdateIBLFromCurrentCubemap();
+            // CRITICAL: Procedural skybox has no real IBL data, reset to 0
+            // This ensures materials don't use stale IBL from a previous cubemap skybox
+            IrradianceMap = 0;
+            PrefilteredEnvMap = 0;
+            PrefilterMaxLod = 0.0f;
             }
             catch (Exception)
             {

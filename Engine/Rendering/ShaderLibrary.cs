@@ -24,8 +24,14 @@ namespace Engine.Rendering
             try
             {
                 var root = Path.Combine("Engine", "Rendering", "Shaders");
-                if (!Directory.Exists(root)) return;
+                var fullPath = Path.GetFullPath(root);
+                if (!Directory.Exists(root))
+                {
+                    // Shader directory not found - silently ignore in non-verbose mode
+                    return;
+                }
                 var verts = Directory.GetFiles(root, "*.vert", SearchOption.AllDirectories);
+                
                 foreach (var v in verts)
                 {
                         try
@@ -54,6 +60,7 @@ namespace Engine.Rendering
                         }
                     catch { }
                 }
+                // Initialization complete (verbose logging removed)
             }
             catch { }
         }
@@ -73,27 +80,25 @@ namespace Engine.Rendering
         {
             EnsureInitialized();
             if (string.IsNullOrEmpty(name)) return;
-            
-            // Remove from cache to force recompilation (don't try to dispose invalid shaders)
-            if (_cache.ContainsKey(name))
+            // Remove from cache to force recompilation
+            try
             {
-                try
+                if (_cache.TryGetValue(name, out var oldShader) && oldShader != null)
                 {
-                    var oldShader = _cache[name];
-                    // Only dispose if shader exists and has a valid handle (> 0)
-                    if (oldShader != null && oldShader.Handle > 0 && GL.IsProgram(oldShader.Handle))
+                    try
                     {
-                        oldShader.Dispose();
+                        if (oldShader.Handle > 0 && GL.IsProgram(oldShader.Handle))
+                        {
+                            try { GL.DeleteProgram(oldShader.Handle); } catch { }
+                        }
                     }
-                }
-                catch
-                {
-                    // Ignore disposal errors - we're reloading anyway
+                    catch { }
                 }
                 _cache.Remove(name);
             }
-            
-            // Reload
+            catch { }
+
+            // Trigger reload (GetShaderByName will compile and cache)
             GetShaderByName(name);
         }
 
@@ -102,18 +107,18 @@ namespace Engine.Rendering
             EnsureInitialized();
             if (string.IsNullOrEmpty(name)) return null;
             if (_cache.TryGetValue(name, out var prog)) return prog;
-            if (!_pairs.TryGetValue(name, out var paths)) return null;
+            if (!_pairs.TryGetValue(name, out var paths))
+            {
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] NOT FOUND in _pairs! Available: {string.Join(", ", _pairs.Keys)}"); } catch { }
+                return null;
+            }
             try
             {
-                try
-                {
-                    string tescInfo = paths.tesc != null ? $" + tesc" : "";
-                    string teseInfo = paths.tese != null ? $" + tese" : "";
-                    Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Loading shader {name} from {paths.vert} and {paths.frag}{tescInfo}{teseInfo}");
-                }
-                catch { }
+                string tescInfo = paths.tesc != null ? $" + tesc" : "";
+                string teseInfo = paths.tese != null ? $" + tese" : "";
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Loading shader {name} from {paths.vert} and {paths.frag}{tescInfo}{teseInfo}"); } catch { }
                 var p = ShaderProgram.FromFiles(paths.vert, paths.frag, paths.tesc, paths.tese);
-                try { Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Successfully compiled shader {name}"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Successfully compiled shader {name}"); } catch { }
                 // Bind global uniform block if present
                 try
                 {
@@ -127,8 +132,12 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                try { Engine.Utils.DebugLogger.Log($"[ShaderLibrary] FAILED to load shader {name}: {ex.Message}"); } catch { }
-                try { Engine.Utils.DebugLogger.Log($"[ShaderLibrary] FAILED to load shader {name}: {ex.Message}"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ FAILED to load shader {name}: {ex.Message}"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ Stack trace: {ex.StackTrace}"); } catch { }
+                if (ex.InnerException != null)
+                {
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ Inner exception: {ex.InnerException.Message}"); } catch { }
+                }
                 _cache[name] = null;
                 return null;
             }

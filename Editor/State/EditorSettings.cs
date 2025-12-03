@@ -34,6 +34,8 @@ namespace Editor.State
             // VSync (vertical synchronization) - persisted editor preference
             public bool VSync { get; set; } = true;
 
+            
+
             public CameraStateData ViewportCamera { get; set; } = CameraStateData.CreateDefault();
 
             // NOTE: SSAO Rendering Settings removed - SSAO is now configured via GlobalEffects component
@@ -479,6 +481,8 @@ namespace Editor.State
                 }
             }
         }
+
+        
 
         public static OrbitCameraState ViewportCameraState
         {

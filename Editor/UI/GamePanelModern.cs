@@ -128,7 +128,20 @@ public class GamePanelModern
                 var projMat = camera.ProjectionMatrix(aspect);
                 
                 _gameRenderer.SetCameraMatrices(viewMat, projMat);
-                _gameRenderer.RenderScene();
+
+                // PERF FIX: Only render when necessary. Avoid unconditionally rendering
+                // because docked/hidden tabs can report a positive content region even
+                // when not visible. Render when in Play Mode, when the window is appearing,
+                // hovered, or focused. This mirrors the guard used in GamePanel.cs.
+                bool shouldRender = PlayMode.IsInPlayMode ||
+                                    ImGui.IsWindowAppearing() ||
+                                    ImGui.IsWindowFocused(ImGuiNET.ImGuiFocusedFlags.RootAndChildWindows) ||
+                                    ImGui.IsWindowHovered(ImGuiNET.ImGuiHoveredFlags.RootAndChildWindows);
+
+                if (shouldRender)
+                {
+                    _gameRenderer.RenderScene();
+                }
             }
 
             // Display rendered texture

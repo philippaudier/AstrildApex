@@ -56,8 +56,10 @@ namespace Editor.Icons
     private static IconSet? _iconSet;
     // Optional alias map to force a specific filename for a given icon key
     private static readonly Dictionary<string, string> _aliasMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Dictionary<string, IconTexture> _textureCache = [];
-        private static readonly Dictionary<string, nint> _imguiTextureCache = [];
+        private static readonly Dictionary<string, IconTexture> _textureCache = new Dictionary<string, IconTexture>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, nint> _imguiTextureCache = new Dictionary<string, nint>(StringComparer.OrdinalIgnoreCase);
+        // Cache resolved filesystem paths for icon keys to avoid repeated Directory/IO lookups each frame
+        private static readonly Dictionary<string, string?> _iconPathCache = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         private static bool _isInitialized = false;
         
         // Configuration par défaut
@@ -224,81 +226,109 @@ namespace Editor.Icons
         // Try several heuristics to find an existing icon file (.png or .svg) for the given key
         private static string? FindIconFile(string iconKey, string[] searchDirs)
         {
-            // If an alias mapping exists, try it first
-            if (!string.IsNullOrWhiteSpace(iconKey) && _aliasMap.TryGetValue(iconKey, out var alias))
+            if (string.IsNullOrWhiteSpace(iconKey)) return null;
+
+            // Fast path: cached resolution
+            if (_iconPathCache.TryGetValue(iconKey, out var cached))
             {
-                // If alias is absolute path and exists, return it
+                return cached;
+            }
+
+            string? result = null;
+
+            // If an alias mapping exists, try it first
+            if (_aliasMap.TryGetValue(iconKey, out var alias) && !string.IsNullOrWhiteSpace(alias))
+            {
                 try
                 {
-                    if (Path.IsPathRooted(alias) && File.Exists(alias)) return alias;
+                    if (Path.IsPathRooted(alias) && File.Exists(alias))
+                    {
+                        result = alias;
+                    }
                 }
                 catch { }
 
-                // Otherwise try the alias name in each search dir (with common extensions)
+                if (result == null)
+                {
+                    foreach (var dir in searchDirs)
+                    {
+                        if (string.IsNullOrEmpty(dir)) continue;
+                        var aliasCandidates = new[] { alias, alias + ".png", alias + ".svg" };
+                        foreach (var c in aliasCandidates)
+                        {
+                            var p = Path.Combine(dir, c);
+                            if (File.Exists(p)) { result = p; break; }
+                        }
+                        if (result != null) break;
+                    }
+                }
+            }
+
+            if (result == null)
+            {
+                // Candidate filename patterns to try, in order
+                var candidates = new List<string>
+                {
+                    "{0}.png",
+                    "{0}_active.png",
+                    "{0}_disabled.png",
+                    "{0}.svg",
+                    "{0}_active.svg",
+                    "{0}_disabled.svg"
+                };
+
+                // Normal forms to try
+                var forms = new List<string> { iconKey, iconKey.ToLowerInvariant(), iconKey.Replace('-', '_'), iconKey.Replace('_', '-') };
+
                 foreach (var dir in searchDirs)
                 {
-                    if (string.IsNullOrEmpty(dir)) continue;
-                    var aliasCandidates = new[] { alias, alias + ".png", alias + ".svg" };
-                    foreach (var c in aliasCandidates)
+                    foreach (var form in forms)
                     {
-                        var p = Path.Combine(dir, c);
-                        if (File.Exists(p)) return p;
-                    }
-                }
-            }
-            // Candidate filename patterns to try, in order
-            var candidates = new List<string>
-            {
-                "{0}.png",
-                "{0}_active.png",
-                "{0}_disabled.png",
-                "{0}.svg",
-                "{0}_active.svg",
-                "{0}_disabled.svg"
-            };
-
-            // Normal forms to try
-            var forms = new List<string> { iconKey, iconKey.ToLowerInvariant(), iconKey.Replace('-', '_'), iconKey.Replace('_', '-') };
-
-            foreach (var dir in searchDirs)
-            {
-                foreach (var form in forms)
-                {
-                    foreach (var pattern in candidates)
-                    {
-                        var fname = string.Format(pattern, form);
-                        var p = Path.Combine(dir, fname);
-                        if (File.Exists(p)) return p;
-                    }
-                }
-
-                // If still not found, attempt substring matching against filenames in dir
-                try
-                {
-                    if (Directory.Exists(dir))
-                    {
-                        var files = Directory.EnumerateFiles(dir).ToList();
-                        // exact token match
-                        foreach (var f in files)
+                        foreach (var pattern in candidates)
                         {
-                            var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
-                            if (n == iconKey.ToLowerInvariant() || n.Contains(iconKey.ToLowerInvariant())) return f;
+                            var fname = string.Format(pattern, form);
+                            var p = Path.Combine(dir, fname);
+                            if (File.Exists(p)) { result = p; break; }
                         }
-                        // tokened partial match
-                        var tokens = iconKey.ToLowerInvariant().Split(new[] { '_', '-' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var f in files)
+                        if (result != null) break;
+                    }
+                    if (result != null) break;
+
+                    // If still not found, attempt substring matching against filenames in dir
+                    try
+                    {
+                        if (Directory.Exists(dir))
                         {
-                            var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
-                            bool all = true;
-                            foreach (var t in tokens) if (!n.Contains(t)) { all = false; break; }
-                            if (all) return f;
+                            var files = Directory.EnumerateFiles(dir).ToList();
+                            // exact token match
+                            foreach (var f in files)
+                            {
+                                var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
+                                if (n == iconKey.ToLowerInvariant() || n.Contains(iconKey.ToLowerInvariant())) { result = f; break; }
+                            }
+                            // tokened partial match
+                            if (result == null)
+                            {
+                                var tokens = iconKey.ToLowerInvariant().Split(new[] { '_', '-' }, StringSplitOptions.RemoveEmptyEntries);
+                                foreach (var f in files)
+                                {
+                                    var n = Path.GetFileNameWithoutExtension(f).ToLowerInvariant();
+                                    bool all = true;
+                                    foreach (var t in tokens) if (!n.Contains(t)) { all = false; break; }
+                                    if (all) { result = f; break; }
+                                }
+                            }
                         }
                     }
+                    catch { }
+
+                    if (result != null) break;
                 }
-                catch { }
             }
 
-            return null;
+            // Remember resolution (even null) to avoid repeated work
+            try { _iconPathCache[iconKey] = result; } catch { }
+            return result;
         }
         
         /// <summary>

@@ -8,10 +8,13 @@ namespace Engine.Assets
     {
         public Guid Guid { get; set; }
         public string? Name { get; set; }
-        public string? Shader { get; set; } = "ForwardBase"; // Shader name (e.g., "ForwardBase", "TerrainForward", etc.)
-        // Terrain-specific layers (used when Shader == "TerrainForward")
+        public string? Shader { get; set; } // Shader name (e.g., "ForwardBase", "TerrainForward", "Water", etc.)
+
+        // NOTE: TerrainLayers moved to Terrain component for better workflow
+        // Kept here as [Obsolete] for backward compatibility during migration
+        [Obsolete("TerrainLayers are now stored in Terrain component, not in MaterialAsset")]
         public Engine.Assets.TerrainLayer[]? TerrainLayers { get; set; }
-        
+
         // === PBR TEXTURES (Unity-compatible) ===
         public Guid? AlbedoTexture { get; set; }
         public float[] AlbedoColor { get; set; } = new float[] {1,1,1,1};
@@ -62,8 +65,8 @@ namespace Engine.Assets
         public float Hue { get; set; } = 0.0f;          // -1.0 to 1.0, shifts hue (color wheel rotation)
         public float Emission { get; set; } = 0.0f;     // 0.0 = no emission, >0.0 = emissive/glow strength
 
-        // Water-specific properties (used when Shader == "Water")
-        public WaterMaterialProperties? WaterProperties { get; set; }
+        // Glass-specific properties (used when Shader == "Glass")
+        public GlassMaterialProperties? GlassProperties { get; set; }
 
         public static MaterialAsset Load(string file)
         {

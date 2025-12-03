@@ -51,7 +51,6 @@ namespace Editor.Inspector
                     case BoxCollider box: BoxColliderInspector.Draw(box); break;
                     case HeightfieldCollider heightfield: HeightfieldColliderInspector.Draw(heightfield); break;
                     case Engine.Components.Terrain terrain: TerrainInspector.Draw(entity, terrain); break;
-                    case Engine.Components.WaterComponent water: WaterComponentInspector.Draw(entity, water); break;
                     default:
                         ImGui.TextDisabled("No custom inspector for this component type.");
                         break;

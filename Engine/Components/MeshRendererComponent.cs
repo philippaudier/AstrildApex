@@ -79,11 +79,11 @@ namespace Engine.Components
         }
         
         /// <summary>
-        /// Check if this mesh renderer has a valid mesh to render
+        /// Check if this mesh renderer has a valid mesh to render AND is enabled
         /// </summary>
         public bool HasMeshToRender()
         {
-            return CustomMeshGuid.HasValue || Mesh != MeshKind.None;
+            return Enabled && (CustomMeshGuid.HasValue || Mesh != MeshKind.None);
         }
 
         /// <summary>

@@ -117,6 +117,11 @@ namespace Engine.Audio.Assets
         }
 
         /// <summary>
+        /// Alias for GetClip - retrieves a clip by its GUID
+        /// </summary>
+        public static IAudioClip? GetClipByGuid(Guid guid) => GetClip(guid);
+
+        /// <summary>
         /// Récupère tous les clips chargés
         /// </summary>
         public static IEnumerable<IAudioClip> GetAllClips()

@@ -27,14 +27,22 @@ namespace Editor.State
 
         public void Undo(Scene scene)
         {
-            AssetDatabase.SaveMaterial(_before);
-            UndoRedo.RaiseAfterChange(); // rafraîchir l’UI/viewport
+            try
+            {
+                var t = AssetDatabase.SaveMaterialAsync(_before, overwriteShader: true);
+                t.ContinueWith(_ => Engine.Utils.MainThreadInvoker.Enqueue(() => { try { UndoRedo.RaiseAfterChange(); } catch { } }));
+            }
+            catch { }
         }
 
         public void Redo(Scene scene)
         {
-            AssetDatabase.SaveMaterial(_after);
-            UndoRedo.RaiseAfterChange();
+            try
+            {
+                var t = AssetDatabase.SaveMaterialAsync(_after, overwriteShader: true);
+                t.ContinueWith(_ => Engine.Utils.MainThreadInvoker.Enqueue(() => { try { UndoRedo.RaiseAfterChange(); } catch { } }));
+            }
+            catch { }
         }
         
         public bool CanMergeWith(IEditorAction other)

@@ -260,19 +260,57 @@ namespace Engine.Rendering.Terrain
                 _shader.SetInt("u_SSAOTexture", 16);
             }
 
-            // IBL - Bind dummy cubemaps to avoid InvalidOperation
-            // Terrain doesn't use IBL yet, but shader includes IBL.glsl so uniforms must be bound
-            _shader.SetInt("u_HasIBL", 0); // Disable IBL for terrain
-            GL.ActiveTexture(TextureUnit.Texture20);
-            GL.BindTexture(TextureTarget.TextureCubeMap, 0); // Bind null cubemap (or use a dummy if needed)
-            _shader.SetInt("u_IrradianceMap", 20);
-            GL.ActiveTexture(TextureUnit.Texture21);
-            GL.BindTexture(TextureTarget.TextureCubeMap, 0);
-            _shader.SetInt("u_PrefilteredEnvMap", 21);
-            GL.ActiveTexture(TextureUnit.Texture22);
-            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
-            _shader.SetInt("u_BRDFLUT", 22);
-            _shader.SetFloat("u_PrefilterMaxLod", 6.0f);
+            // IBL - Bind environment maps if available (use SkyboxRenderer static handles)
+            try
+            {
+                // Default to disabled
+                _shader.SetInt("u_HasIBL", 0);
+
+                // Use higher texture units to avoid collision with layer/splatmap bindings (which start at Texture0..)
+                const TextureUnit irrUnit = TextureUnit.Texture23;
+                const TextureUnit prefUnit = TextureUnit.Texture24;
+                const TextureUnit brdfUnit = TextureUnit.Texture25;
+
+                var irrHandle = Engine.Rendering.SkyboxRenderer.IrradianceMap;
+                var prefHandle = Engine.Rendering.SkyboxRenderer.PrefilteredEnvMap;
+                var brdfHandle = Engine.Rendering.SkyboxRenderer.BRDFLUTTexture;
+
+                if (irrHandle != 0 && prefHandle != 0 && brdfHandle != 0)
+                {
+                    _shader.SetInt("u_HasIBL", 1);
+
+                    GL.ActiveTexture(irrUnit);
+                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)irrHandle);
+                    _shader.SetInt("u_IrradianceMap", (int)(irrUnit - TextureUnit.Texture0));
+
+                    GL.ActiveTexture(prefUnit);
+                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)prefHandle);
+                    _shader.SetInt("u_PrefilteredEnvMap", (int)(prefUnit - TextureUnit.Texture0));
+
+                    GL.ActiveTexture(brdfUnit);
+                    GL.BindTexture(TextureTarget.Texture2D, (int)brdfHandle);
+                    _shader.SetInt("u_BRDFLUT", (int)(brdfUnit - TextureUnit.Texture0));
+
+                    // Prefilter max LOD is provided by SkyboxRenderer
+                    _shader.SetFloat("u_PrefilterMaxLod", Engine.Rendering.SkyboxRenderer.PrefilterMaxLod);
+                }
+                else
+                {
+                    // Bind safe defaults (disable IBL path in shader)
+                    _shader.SetInt("u_HasIBL", 0);
+                    GL.ActiveTexture(irrUnit);
+                    GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                    _shader.SetInt("u_IrradianceMap", (int)(irrUnit - TextureUnit.Texture0));
+                    GL.ActiveTexture(prefUnit);
+                    GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                    _shader.SetInt("u_PrefilteredEnvMap", (int)(prefUnit - TextureUnit.Texture0));
+                    GL.ActiveTexture(brdfUnit);
+                    GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+                    _shader.SetInt("u_BRDFLUT", (int)(brdfUnit - TextureUnit.Texture0));
+                    _shader.SetFloat("u_PrefilterMaxLod", Engine.Rendering.SkyboxRenderer.PrefilterMaxLod);
+                }
+            }
+            catch { /* Non-fatal: fall back to disabled IBL */ }
 
             // Shadows - CRITICAL: Always bind a texture to u_ShadowMap to avoid InvalidOperation
             GL.ActiveTexture(TextureUnit.Texture17);
@@ -333,18 +371,20 @@ namespace Engine.Rendering.Terrain
                     if (material != null)
                     {
                         if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Using material {material.Guid} (name={material.Name}) for terrain");
-                        if (material.TerrainLayers == null)
+
+                        // NEW: Layers are now in Terrain component, not in MaterialAsset
+                        if (terrain.TerrainLayers == null)
                         {
-                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[TerrainRenderer] Material has no TerrainLayers (null)");
+                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[TerrainRenderer] Terrain has no TerrainLayers (null)");
                         }
                         else
                         {
-                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Material TerrainLayers length={material.TerrainLayers.Length}");
+                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Terrain TerrainLayers length={terrain.TerrainLayers.Length}");
                         }
                         // Configure terrain layers if they exist
-                        if (material.TerrainLayers != null && material.TerrainLayers.Length > 0)
+                        if (terrain.TerrainLayers != null && terrain.TerrainLayers.Length > 0)
                         {
-                            int layerCount = Math.Min(material.TerrainLayers.Length, 8); // MAX_LAYERS = 8
+                            int layerCount = Math.Min(terrain.TerrainLayers.Length, 8); // MAX_LAYERS = 8
                             _shader.SetInt("u_LayerCount", layerCount);
                             _shader.SetInt("u_UseSplatmap", 0); // No splatmap support yet
                             _shader.SetInt("u_DebugFaceColor", debugFaceColor ? 1 : 0); // Enable debug face coloring if requested
@@ -365,7 +405,7 @@ namespace Engine.Rendering.Terrain
                             {
                                 if (i < layerCount)
                                 {
-                                    var layer = material.TerrainLayers[i];
+                                    var layer = terrain.TerrainLayers[i];
 
                                     // Load Material for this layer (NEW SYSTEM with caching)
                                     MaterialAsset? layerMaterial = null;
@@ -437,9 +477,49 @@ namespace Engine.Rendering.Terrain
                                         try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Bound Layer {i} Normal -> unit={i*2+1}, handleBound={(GL.GetInteger(GetPName.TextureBinding2D))}"); } catch { }
 
                                     // Set layer parameters (UV transform comes from layer, not material)
+                                    // Prefer tiling/offset from the referenced material when available
+                                    float tilingX = layer.Tiling[0];
+                                    float tilingY = layer.Tiling[1];
+                                    float offsetX = layer.Offset[0];
+                                    float offsetY = layer.Offset[1];
+                                    int useTriplanar = 0;
+                                    float triplanarScale = 1.0f;
+                                    float triplanarBlend = 4.0f;
+                                    Vector4 stylize = new Vector4(1f, 1f, 1f, 0f); // sat,bright,contrast,hue
+                                    float emission = 0f;
+
+                                    if (layerMaterial != null)
+                                    {
+                                        try
+                                        {
+                                            if (layerMaterial.TextureTiling != null && layerMaterial.TextureTiling.Length >= 2)
+                                            {
+                                                tilingX = layerMaterial.TextureTiling[0];
+                                                tilingY = layerMaterial.TextureTiling[1];
+                                            }
+                                            if (layerMaterial.TextureOffset != null && layerMaterial.TextureOffset.Length >= 2)
+                                            {
+                                                offsetX = layerMaterial.TextureOffset[0];
+                                                offsetY = layerMaterial.TextureOffset[1];
+                                            }
+                                            useTriplanar = layerMaterial.UseTriplanar == 1 ? 1 : 0;
+                                            triplanarScale = layerMaterial.TriplanarScale > 0f ? layerMaterial.TriplanarScale : 1.0f;
+                                            triplanarBlend = layerMaterial.TriplanarBlendSharpness > 0f ? layerMaterial.TriplanarBlendSharpness : 4.0f;
+                                            stylize = new Vector4(layerMaterial.Saturation, layerMaterial.Brightness, layerMaterial.Contrast, layerMaterial.Hue);
+                                            emission = layerMaterial.Emission;
+                                        }
+                                        catch { }
+                                    }
+
                                     _shader.SetVec4($"u_LayerTilingOffset[{i}]", new Vector4(
-                                        layer.Tiling[0], layer.Tiling[1],
-                                        layer.Offset[0], layer.Offset[1]));
+                                        tilingX, tilingY,
+                                        offsetX, offsetY));
+
+                                    _shader.SetInt($"u_LayerUseTriplanar[{i}]", useTriplanar);
+                                    _shader.SetFloat($"u_LayerTriplanarScale[{i}]", triplanarScale);
+                                    _shader.SetFloat($"u_LayerTriplanarBlend[{i}]", triplanarBlend);
+                                    _shader.SetVec4($"u_LayerStylize[{i}]", stylize);
+                                    _shader.SetFloat($"u_LayerEmission[{i}]", emission);
 
                                     _shader.SetVec4($"u_LayerHeightSlope[{i}]", new Vector4(
                                         layer.HeightMin, layer.HeightMax,
@@ -509,6 +589,11 @@ namespace Engine.Rendering.Terrain
                                         GL.Uniform1(normalLoc, i * 2 + 1);
 
                                     _shader.SetVec4($"u_LayerTilingOffset[{i}]", new Vector4(1f, 1f, 0f, 0f));
+                                    _shader.SetInt($"u_LayerUseTriplanar[{i}]", 0);
+                                    _shader.SetFloat($"u_LayerTriplanarScale[{i}]", 1.0f);
+                                    _shader.SetFloat($"u_LayerTriplanarBlend[{i}]", 4.0f);
+                                    _shader.SetVec4($"u_LayerStylize[{i}]", new Vector4(1f,1f,1f,0f));
+                                    _shader.SetFloat($"u_LayerEmission[{i}]", 0f);
                                     _shader.SetVec4($"u_LayerHeightSlope[{i}]", new Vector4(0f, 0f, 0f, 0f));
                                     _shader.SetFloat($"u_LayerStrength[{i}]", 0f);
                                     _shader.SetInt($"u_LayerIsUnderwater[{i}]", 0);

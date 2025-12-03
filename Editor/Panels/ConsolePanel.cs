@@ -12,6 +12,15 @@ namespace Editor.Panels
 {
     public static class ConsolePanel
     {
+        static ConsolePanel()
+        {
+            try { Editor.Logging.LogManager.OnLogChanged += () => _isDirtyLogs = true; } catch { }
+        }
+        // PERF: cache filtered entries and counts, only rebuild when logs or filters/search change
+        private static bool _isDirtyLogs = true;
+        private static List<LogEntry>? _cachedFilteredEntries = null;
+        private static string _lastSearchForConsole = string.Empty;
+        private static readonly Dictionary<LogLevel, int> _cachedCounts = new();
         private static int _selectedIndex = -1;
         private static string _search = string.Empty;
         private static bool _autoScroll = true;
@@ -32,6 +41,27 @@ namespace Editor.Panels
 
         public static void Draw()
         {
+            // Ensure we refresh cached view when logs change
+            if (_lastSearchForConsole != _search) _isDirtyLogs = true;
+
+            // Rebuild caches only when needed
+            if (_isDirtyLogs)
+            {
+                // Recompute counts (over all entries) and the filtered list (for current filters/search)
+                _cachedCounts.Clear();
+                foreach (LogLevel lv in Enum.GetValues(typeof(LogLevel))) _cachedCounts[lv] = 0;
+                var all = LogManager.Entries;
+                foreach (var e in all) _cachedCounts[e.Level]++;
+
+                _cachedFilteredEntries = all
+                    .Where(e => _levelFilters[e.Level])
+                    .Where(e => string.IsNullOrWhiteSpace(_search) || e.Message.Contains(_search, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                _isDirtyLogs = false;
+                _lastSearchForConsole = _search;
+            }
+
             ImGui.Begin("Console");
             DrawToolbar();
             DrawFilters();
@@ -63,21 +93,21 @@ namespace Editor.Panels
             foreach (var level in _filterLevels)
             {
                 ImGui.SameLine();
-                var count = LogManager.Entries.Count(e => e.Level == level);
+                _cachedCounts.TryGetValue(level, out var count);
                 var label = $"{level} ({count})";
                 bool enabled = _levelFilters[level];
                 if (ImGuiToggleButtonExtension.ToggleButton(label, ref enabled))
+                {
                     _levelFilters[level] = enabled;
+                    _isDirtyLogs = true; // filter change -> recompute filtered list
+                }
             }
         }
 
         private static void DrawLogList()
         {
             ImGui.BeginChild("##loglist", new Vector2(0, -120), ImGuiChildFlags.Borders);
-            var entries = LogManager.Entries
-                .Where(e => _levelFilters[e.Level])
-                .Where(e => string.IsNullOrWhiteSpace(_search) || e.Message.Contains(_search, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var entries = _cachedFilteredEntries ?? new List<LogEntry>();
             int idx = 0;
             foreach (var entry in entries)
             {
@@ -107,10 +137,7 @@ namespace Editor.Panels
         private static void DrawDetailsPanel()
         {
             ImGui.BeginChild("##logdetails", new Vector2(0, 100), ImGuiChildFlags.Borders);
-            var entries = LogManager.Entries
-                .Where(e => _levelFilters[e.Level])
-                .Where(e => string.IsNullOrWhiteSpace(_search) || e.Message.Contains(_search, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var entries = _cachedFilteredEntries ?? new List<LogEntry>();
             if (_selectedIndex >= 0 && _selectedIndex < entries.Count)
             {
                 var entry = entries[_selectedIndex];

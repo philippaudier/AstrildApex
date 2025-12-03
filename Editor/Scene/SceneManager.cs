@@ -384,17 +384,24 @@ namespace Editor.SceneManagement
                         if (envEntity != null)
                         {
                             var env = envEntity.GetComponent<Engine.Components.EnvironmentSettings>();
-                            try { Engine.Utils.DebugLogger.Log($"[SceneManager] EnvironmentSettings.SkyboxMaterialPath = '{env.SkyboxMaterialPath}'"); } catch { }
-                            if (!string.IsNullOrEmpty(env.SkyboxMaterialPath))
+                            if (env != null)
                             {
-                                if (Engine.Assets.AssetDatabase.TryGetByPath(env.SkyboxMaterialPath, out var rec))
+                                try { Engine.Utils.DebugLogger.Log($"[SceneManager] EnvironmentSettings.SkyboxMaterialPath = '{env.SkyboxMaterialPath}'"); } catch { }
+                                if (!string.IsNullOrEmpty(env.SkyboxMaterialPath))
                                 {
-                                    try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase resolved skybox -> GUID={rec.Guid} Path={rec.Path} Type={rec.Type}"); } catch { }
+                                    if (Engine.Assets.AssetDatabase.TryGetByPath(env.SkyboxMaterialPath, out var rec))
+                                    {
+                                        try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase resolved skybox -> GUID={rec.Guid} Path={rec.Path} Type={rec.Type}"); } catch { }
+                                    }
+                                    else
+                                    {
+                                        try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase could NOT resolve skybox path: {env.SkyboxMaterialPath}"); } catch { }
+                                    }
                                 }
-                                else
-                                {
-                                    try { Engine.Utils.DebugLogger.Log($"[SceneManager] AssetDatabase could NOT resolve skybox path: {env.SkyboxMaterialPath}"); } catch { }
-                                }
+                            }
+                            else
+                            {
+                                try { Engine.Utils.DebugLogger.Log("[SceneManager] EnvironmentSettings component was null on entity"); } catch { }
                             }
                         }
                         else

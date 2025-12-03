@@ -4,6 +4,7 @@ using OpenTK.Windowing.Desktop;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Serilog;
+using System.Runtime.InteropServices;
 using Editor.Logging;
 using Engine.Core;
 using Engine.UI;
@@ -86,15 +87,11 @@ public static class Program
             }
             catch { }*/
             
-            // Also write a short startup message to the engine log
-            DebugLogger.Log($"[Program] Set working directory to: {exeDir}");
-            // Enable verbose debug logging for this diagnostic run
-            try
-            {
-                DebugLogger.EnableVerbose = true;
-                DebugLogger.Log("[Program] DebugLogger.EnableVerbose = true (diagnostic)");
-            }
-            catch { }
+            // Also write a short startup message to the engine log (non-verbose)
+            try { DebugLogger.Log($"[Program] Set working directory to: {exeDir}"); } catch { }
+            // By default, disable verbose debug logging to avoid per-frame I/O overhead.
+            // Enable only when explicitly requested (e.g., via a --verbose flag).
+            try { DebugLogger.EnableVerbose = false; } catch { }
         }
 
         // Configure Serilog: route events to both the terminal and the in-editor Console panel.
@@ -124,8 +121,197 @@ public static class Program
             StartVisible = true
         };
 
+        // Try to create a multi-resolution .ico from the provided PNG and set it on the native window settings (best compatibility on Windows)
+        try
+        {
+            var iconRel = System.IO.Path.Combine("Editor", "Assets", "Icons", "Logos", "editor_logo_1024.png");
+            var iconPath = System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, iconRel);
+            if (!System.IO.File.Exists(iconPath))
+            {
+                var alt = System.IO.Path.Combine(Environment.CurrentDirectory, iconRel);
+                if (System.IO.File.Exists(alt)) iconPath = alt;
+            }
+
+            if (System.IO.File.Exists(iconPath))
+            {
+                try
+                {
+                    var logosDir = System.IO.Path.GetDirectoryName(iconPath) ?? System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, "Editor", "Assets", "Icons", "Logos");
+                    var icoPath = System.IO.Path.Combine(logosDir, "editor_logo.ico");
+
+                    // Build ICO with PNG-encoded entries (Windows supports PNG inside ICO)
+                    var sizes = new int[] { 256, 48, 32, 16 };
+                    var pngBytes = new System.Collections.Generic.List<byte[]>();
+
+                    using (var srcBmp = new System.Drawing.Bitmap(iconPath))
+                    {
+                        foreach (var s in sizes)
+                        {
+                            using var bmp = new System.Drawing.Bitmap(srcBmp, new System.Drawing.Size(s, s));
+                            using var ms = new System.IO.MemoryStream();
+                            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                            pngBytes.Add(ms.ToArray());
+                        }
+                    }
+
+                    using (var fs = new System.IO.FileStream(icoPath, System.IO.FileMode.Create, System.IO.FileAccess.Write))
+                    using (var bw = new System.IO.BinaryWriter(fs))
+                    {
+                        // ICONDIR header
+                        bw.Write((ushort)0); // reserved
+                        bw.Write((ushort)1); // type = 1 for icons
+                        bw.Write((ushort)pngBytes.Count);
+
+                        int imageDataOffset = 6 + 16 * pngBytes.Count;
+
+                        for (int i = 0; i < pngBytes.Count; i++)
+                        {
+                            var data = pngBytes[i];
+                            int size = sizes[i];
+                            bw.Write((byte)(size == 256 ? 0 : size)); // width (0 == 256)
+                            bw.Write((byte)(size == 256 ? 0 : size)); // height
+                            bw.Write((byte)0); // color palette
+                            bw.Write((byte)0); // reserved
+                            bw.Write((ushort)0); // color planes (for PNG entries set 0)
+                            bw.Write((ushort)32); // bit count (32)
+                            bw.Write((uint)data.Length); // bytes in resource
+                            bw.Write((uint)imageDataOffset); // offset
+                            imageDataOffset += data.Length;
+                        }
+
+                        // write image data
+                        foreach (var d in pngBytes) bw.Write(d);
+                    }
+
+                    // Load generated .ico and assign to NativeWindowSettings if supported
+                    if (System.IO.File.Exists(icoPath))
+                    {
+                        Log.Information("Editor icon: generated ico at {IcoPath}", icoPath);
+                        Console.WriteLine($"[Program] Editor icon: generated ico at {icoPath}");
+                        try
+                        {
+                            var sysIcon = new System.Drawing.Icon(icoPath);
+                            var iconProp = typeof(NativeWindowSettings).GetProperty("Icon");
+                            if (iconProp != null && iconProp.PropertyType.IsAssignableFrom(typeof(System.Drawing.Icon)))
+                            {
+                                try { iconProp.SetValue(native, sysIcon); Log.Information("Editor icon: assigned NativeWindowSettings.Icon"); Console.WriteLine("[Program] Editor icon: assigned NativeWindowSettings.Icon"); }
+                                catch { Log.Warning("Editor icon: failed to assign NativeWindowSettings.Icon"); Console.WriteLine("[Program] Editor icon: failed to assign NativeWindowSettings.Icon"); }
+                            }
+                            else
+                            {
+                                Log.Information("Editor icon: NativeWindowSettings.Icon property not available, trying WindowIcon fallback");
+                                Console.WriteLine("[Program] Editor icon: NativeWindowSettings.Icon property not available, trying WindowIcon fallback");
+                                // Fallback: try OpenTK WindowIcon creation via reflection using the original PNG bitmap
+                                var windowIconType = Type.GetType("OpenTK.Windowing.Common.WindowIcon, OpenTK")
+                                                     ?? Type.GetType("OpenTK.Windowing.Common.WindowIcon")
+                                                     ?? Type.GetType("OpenTK.Windowing.Common.WindowIcon, OpenTK.Windowing.Common");
+                                if (windowIconType != null)
+                                {
+                                    using var bmp = new System.Drawing.Bitmap(iconPath);
+                                    var loadMethod = windowIconType.GetMethod("Load", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                                                  ?? windowIconType.GetMethod("FromBitmap", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                                                  ?? windowIconType.GetMethod("LoadFromFile", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                                    object? winIcon = null;
+                                    if (loadMethod != null)
+                                    {
+                                        try { winIcon = loadMethod.Invoke(null, new object[] { bmp }); } catch { winIcon = null; }
+                                    }
+                                    if (winIcon == null)
+                                    {
+                                        var ctor = windowIconType.GetConstructor(new Type[] { typeof(System.Drawing.Bitmap) });
+                                        if (ctor != null) try { winIcon = ctor.Invoke(new object[] { bmp }); } catch { winIcon = null; }
+                                    }
+                                    if (winIcon != null)
+                                    {
+                                        var prop = typeof(NativeWindowSettings).GetProperty("WindowIcon");
+                                        if (prop != null && prop.PropertyType.IsAssignableFrom(windowIconType))
+                                        {
+                                            try { prop.SetValue(native, winIcon); Log.Information("Editor icon: assigned NativeWindowSettings.WindowIcon via reflection"); Console.WriteLine("[Program] Editor icon: assigned NativeWindowSettings.WindowIcon via reflection"); } catch { Log.Warning("Editor icon: failed to assign WindowIcon via reflection"); Console.WriteLine("[Program] Editor icon: failed to assign WindowIcon via reflection"); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex) { Log.Warning(ex, "Editor icon: exception while assigning icon"); Console.WriteLine("[Program] Editor icon: exception while assigning icon: " + ex.Message); }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+
         using var game = new GameWindow(GameWindowSettings.Default, native);
         _gameWindow = game;
+        // Also attempt to set the icon on the created GameWindow instance (some OpenTK builds require runtime assignment)
+        try
+        {
+            var iconRel2 = System.IO.Path.Combine("Editor", "Assets", "Icons", "Logos", "editor_logo_1024.png");
+            var iconPath2 = System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, iconRel2);
+            if (!System.IO.File.Exists(iconPath2))
+            {
+                var alt2 = System.IO.Path.Combine(Environment.CurrentDirectory, iconRel2);
+                if (System.IO.File.Exists(alt2)) iconPath2 = alt2;
+            }
+            var logosDir2 = System.IO.Path.GetDirectoryName(iconPath2) ?? System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, "Editor", "Assets", "Icons", "Logos");
+            var icoPath2 = System.IO.Path.Combine(logosDir2, "editor_logo.ico");
+            if (System.IO.File.Exists(icoPath2))
+            {
+                try
+                {
+                    var icon = new System.Drawing.Icon(icoPath2);
+                    var prop = game.GetType().GetProperty("Icon");
+                    if (prop != null && prop.PropertyType.IsAssignableFrom(typeof(System.Drawing.Icon)))
+                    {
+                        try { prop.SetValue(game, icon); Log.Information("Editor icon: assigned GameWindow.Icon property"); Console.WriteLine("[Program] Editor icon: assigned GameWindow.Icon property"); }
+                        catch { Log.Warning("Editor icon: failed to assign GameWindow.Icon"); Console.WriteLine("[Program] Editor icon: failed to assign GameWindow.Icon"); }
+                    }
+                }
+                catch (Exception ex) { Log.Warning(ex, "Editor icon: failed to set GameWindow icon"); Console.WriteLine("[Program] Editor icon: failed to set GameWindow icon: " + ex.Message); }
+            }
+        }
+        catch { }
+        // Windows-specific fallback: send WM_SETICON to the native window handle
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                var logosDir2 = System.IO.Path.GetDirectoryName(System.IO.Path.Combine(Editor.State.ProjectPaths.ProjectRoot, "Editor", "Assets", "Icons", "Logos")) ?? Editor.State.ProjectPaths.ProjectRoot;
+                var icoPath3 = System.IO.Path.Combine(logosDir2, "editor_logo.ico");
+                if (System.IO.File.Exists(icoPath3))
+                {
+                    var hWnd = GetWindowHandle(game);
+                    if (hWnd != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            using var icon = new System.Drawing.Icon(icoPath3);
+                            var hIcon = icon.Handle;
+                            const uint WM_SETICON = 0x0080;
+                            const int ICON_SMALL = 0;
+                            const int ICON_BIG = 1;
+                            SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_SMALL, hIcon);
+                            SendMessage(hWnd, WM_SETICON, (IntPtr)ICON_BIG, hIcon);
+                            Log.Information("Editor icon: WM_SETICON posted to native window");
+                            Console.WriteLine("[Program] Editor icon: WM_SETICON posted to native window");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Warning(ex, "Editor icon: WM_SETICON failed");
+                            Console.WriteLine("[Program] Editor icon: WM_SETICON failed: " + ex.Message);
+                        }
+                    }
+                    else
+                    {
+                        Log.Warning("Editor icon: could not locate native window handle for WM_SETICON");
+                        Console.WriteLine("[Program] Editor icon: could not locate native window handle for WM_SETICON");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { Log.Warning(ex, "Editor icon: windows fallback raised"); } catch { }
+        }
         // Apply persisted VSync preference immediately on the created window
         try
         {
@@ -352,6 +538,15 @@ public static class Program
             {
                 Log.Error(ex, "DeferredActions.ProcessAll failed");
             }
+            // Process any engine main-thread actions enqueued by background tasks
+            try
+            {
+                Engine.Utils.MainThreadInvoker.ProcessPending();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "MainThreadInvoker.ProcessPending failed");
+            }
         };
 
         game.Run();
@@ -372,5 +567,51 @@ public static class Program
         {
             try { Log.Warning(ex, "Failed to sanitize ini {Path}", path); } catch { }
         }
+    }
+
+    // P/Invoke for Windows fallback to force window icon
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    private static IntPtr GetWindowHandle(GameWindow game)
+    {
+        try
+        {
+            if (game == null) return IntPtr.Zero;
+            var t = game.GetType();
+            // Try GameWindow.NativeWindow
+            var prop = t.GetProperty("NativeWindow");
+            object? native = null;
+            if (prop != null) native = prop.GetValue(game);
+            if (native == null)
+            {
+                // Try WindowInfo
+                prop = t.GetProperty("WindowInfo");
+                if (prop != null) native = prop.GetValue(game);
+            }
+            if (native == null) return IntPtr.Zero;
+
+            // Try common Handle property names
+            var nh = native.GetType().GetProperty("Handle") ?? native.GetType().GetProperty("WindowHandle") ?? native.GetType().GetProperty("NativeWindowHandle");
+            if (nh != null)
+            {
+                var val = nh.GetValue(native);
+                if (val is IntPtr ip) return ip;
+                if (val is long l) return new IntPtr(l);
+                if (val is int i) return new IntPtr(i);
+            }
+
+            // Try a method that returns the handle
+            var mi = native.GetType().GetMethod("GetWindowHandle") ?? native.GetType().GetMethod("GetHandle");
+            if (mi != null)
+            {
+                var val = mi.Invoke(native, null);
+                if (val is IntPtr ip2) return ip2;
+                if (val is long l2) return new IntPtr(l2);
+                if (val is int i2) return new IntPtr(i2);
+            }
+        }
+        catch { }
+        return IntPtr.Zero;
     }
 }

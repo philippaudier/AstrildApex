@@ -21,7 +21,10 @@ vec3 sampleIrradiance(vec3 N)
     // CRITICAL FIX: Irradiance map is pre-convolved 32x32 cubemap with NO mipmaps
     // Sample at LOD 0 directly using texture() or textureLod(..., 0.0)
     // The irradiance map is already blurred/convolved for diffuse lighting
-    vec3 irr = texture(u_IrradianceMap, N).rgb;
+
+    // FIX: Flip X coordinate to match skybox orientation with scene lighting
+    vec3 correctedN = vec3(-N.x, N.y, N.z);
+    vec3 irr = texture(u_IrradianceMap, correctedN).rgb;
 
     // Apply environment tint/exposure from Global UBO so editor sky tint/exposure affect IBL
     irr *= uSkyboxTint * uSkyboxExposure;
@@ -47,8 +50,10 @@ vec3 samplePrefilteredEnv(vec3 R, float roughness)
 
     float mipHigh = min(mipFloor + 1.0, maxMapLod);
 
-    vec3 preLo = textureLod(u_PrefilteredEnvMap, R, mipFloor).rgb;
-    vec3 preHi = textureLod(u_PrefilteredEnvMap, R, mipHigh).rgb;
+    // FIX: Flip X coordinate to match skybox orientation with scene lighting
+    vec3 correctedR = vec3(-R.x, R.y, R.z);
+    vec3 preLo = textureLod(u_PrefilteredEnvMap, correctedR, mipFloor).rgb;
+    vec3 preHi = textureLod(u_PrefilteredEnvMap, correctedR, mipHigh).rgb;
 
     vec3 pre = mix(preLo, preHi, mipFrac);
 

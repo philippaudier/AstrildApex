@@ -8,6 +8,7 @@ namespace Editor
 {
     /// <summary>
     /// Gestionnaire statique du Play Mode pour l'éditeur
+    /// Now uses PlayModeTransitionManager for robust, error-safe transitions
     /// </summary>
     public static class PlayMode
     {
@@ -20,167 +21,88 @@ namespace Editor
         // PERFORMANCE: Cache component lists to avoid repeated GetAllComponents() allocations
         private static readonly Dictionary<uint, List<Engine.Components.Component>> _cachedComponentsByEntity
             = new Dictionary<uint, List<Engine.Components.Component>>();
-        
+
+        // NEW: Robust transition manager with validation, rollback, and lifecycle management
+        private static readonly PlayModeTransitionManager _transitionManager = new PlayModeTransitionManager();
+        private static bool _transitionManagerInitialized = false;
+
         public enum PlayState
         {
             Edit,    // Mode édition normale
             Playing, // Simulation en cours
             Paused   // Simulation en pause
         }
-        
+
         public static PlayState State => _state;
         public static bool IsPlaying => _state == PlayState.Playing;
         public static bool IsPaused => _state == PlayState.Paused;
         public static bool IsInPlayMode => _state != PlayState.Edit;
         public static Scene? PlayScene => _playScene;
+        public static PlayModeTransitionManager.TransitionPhase CurrentTransitionPhase => _transitionManager.CurrentPhase;
+
+        /// <summary>
+        /// Initialize transition manager with system handlers (called once)
+        /// </summary>
+        private static void EnsureTransitionManagerInitialized()
+        {
+            if (_transitionManagerInitialized) return;
+
+            // Register system handlers in order of initialization priority
+            _transitionManager.RegisterSystemHandler(new AudioSystemHandler());
+            _transitionManager.RegisterSystemHandler(new PhysicsSystemHandler());
+            _transitionManager.RegisterSystemHandler(new InputSystemHandler());
+            _transitionManager.RegisterSystemHandler(new RenderingSystemHandler());
+
+            _transitionManagerInitialized = true;
+            Engine.Utils.DebugLogger.Log("[PlayMode] Transition manager initialized with system handlers");
+        }
 
         /// <summary>
         /// Démarre le Play Mode - sauvegarde la scène actuelle et lance la simulation
+        /// Now uses PlayModeTransitionManager for robust error-safe transitions
         /// </summary>
         public static void Play()
         {
             if (_state != PlayState.Edit) return;
             var currentScene = EditorUI.MainViewport.Renderer?.Scene;
-            if (currentScene == null) return;
-            
-            // Keep a reference to the original scene so we can restore later if needed
+            if (currentScene == null)
+            {
+                LogManager.LogError("Cannot enter Play Mode: No scene loaded", "PlayMode");
+                return;
+            }
+
+            // Initialize transition manager on first use
+            EnsureTransitionManagerInitialized();
+
+            // Use the robust transition manager for entering Play Mode
+            var result = _transitionManager.EnterPlayMode(currentScene);
+
+            if (!result.Success)
+            {
+                LogManager.LogError($"Failed to enter Play Mode: {result.ErrorMessage}", "PlayMode");
+                if (result.Exception != null)
+                {
+                    LogManager.LogError($"Exception: {result.Exception}", "PlayMode");
+                }
+                return;
+            }
+
+            // Transition successful - update local state
             _originalScene = currentScene;
-            _playScene = currentScene.Clone(Program.ScriptHost);
+            _playScene = _transitionManager.PlayScene;
 
-            // Diagnostic: enumerate cloned entities and report MeshRendererComponent material GUIDs
-            try
+            // Clear component cache and rebuild for Play Mode
+            _cachedComponentsByEntity.Clear();
+            if (_playScene != null)
             {
-                if (_playScene != null)
+                var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
+                for (int i = 0; i < entitiesSpan.Length; i++)
                 {
-                    int reported = 0;
-                    int totalMeshRenders = 0;
-                    foreach (var e in _playScene.Entities)
-                    {
-                        var mr = e.GetComponent<Engine.Components.MeshRendererComponent>();
-                        if (mr == null) continue;
-                        totalMeshRenders++;
-                            if (reported < 100)
-                            {
-                                var mg = mr.MaterialGuid.HasValue ? mr.MaterialGuid.Value.ToString() : "<none>";
-                                Engine.Utils.DebugLogger.Log($"[PlayMode][Diag] Cloned Entity {e.Id} MeshRenderer.MaterialGuid={mg}");
-                                reported++;
-                            }
-                    }
-                    Engine.Utils.DebugLogger.Log($"[PlayMode][Diag] Cloned play scene has {totalMeshRenders} entities with MeshRendererComponent (reported {Math.Min(100, totalMeshRenders)})");
+                    var entity = entitiesSpan[i];
+                    if (!entity.Active) continue;
+                    var comps = entity.GetAllComponents();
+                    _cachedComponentsByEntity[entity.Id] = new List<Engine.Components.Component>(comps);
                 }
-            }
-            catch (Exception ex)
-            {
-                LogManager.LogWarning($"Failed enumerating cloned entities: {ex.Message}", "PlayMode");
-            }
-
-            // IMPORTANT: Do NOT replace the editor viewport's scene with the play scene.
-            // Rendering the play scene must be done by the GamePanel's GameRenderer only.
-            // This prevents duplicate rendering where both the Viewport and Game panels
-            // draw the same runtime scene simultaneously.
-
-            // --- Preload materials/textures used by the cloned play scene ---
-            // Trigger MaterialRuntime.FromAsset for each material referenced by mesh renderers
-            // so TextureCache.GetOrLoad schedules background decoding before we flush uploads.
-            try
-            {
-                int preloadCount = 0;
-                Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                if (_playScene != null)
-                {
-                    foreach (var ent in _playScene.Entities)
-                    {
-                        try
-                        {
-                            var mr = ent.GetComponent<Engine.Components.MeshRendererComponent>();
-                            if (mr == null) continue;
-                            if (mr.MaterialGuid.HasValue && mr.MaterialGuid.Value != Guid.Empty)
-                            {
-                                try
-                                {
-                                    var mat = Engine.Assets.AssetDatabase.LoadMaterial(mr.MaterialGuid.Value);
-                                    // Calling FromAsset will call TextureCache.GetOrLoad which schedules background loads
-                                    Engine.Rendering.MaterialRuntime.FromAsset(mat, resolver);
-                                    preloadCount++;
-                                }
-                                catch { }
-                            }
-                        }
-                        catch { }
-                    }
-                }
-                if (preloadCount > 0)
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] Preloaded {preloadCount} material(s) for Play Scene");
-            }
-            catch (Exception ex)
-            {
-                Engine.Utils.DebugLogger.Log($"[PlayMode] Material preload failed: {ex.Message}");
-            }
-
-            // Clear material cache when entering Play Mode to force reload with fresh texture handles
-            // This ensures both the GamePanel's renderer and the main Scene viewport reload materials
-            // so they pick up the newly-uploaded GL texture handles.
-            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
-            try { EditorUI.MainViewport.Renderer?.ClearMaterialCache(); } catch { }
-            try { Panels.GamePanel.ClearMaterialCache(); } catch { }
-            Engine.Utils.DebugLogger.Log("[PlayMode] Entering Play Mode - cleared global, main viewport and GamePanel material caches to force fresh texture load");
-
-            // PERFORMANCE: Flush any pending texture uploads immediately when entering Play Mode
-            // This ensures all textures are ready before the first frame renders
-            try
-            {
-                System.Threading.Thread.Sleep(10); // Give background threads time to decode images
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-
-                // Upload all pending textures in batches until complete
-                int totalUploaded = 0;
-                int batchCount = 0;
-                int uploaded;
-                const int maxBatches = 20; // Safety limit to prevent infinite loop
-
-                do
-                {
-                    // Wait a bit for background decoding to catch up
-                    if (batchCount > 0)
-                        System.Threading.Thread.Sleep(5);
-
-                    uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
-                    totalUploaded += uploaded;
-                    batchCount++;
-                }
-                while (uploaded > 0 && batchCount < maxBatches);
-
-                sw.Stop();
-
-                if (totalUploaded > 0)
-                {
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] ⚡ Flushed {totalUploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms ({batchCount} batches)");
-                }
-            }
-            catch (Exception ex)
-            {
-                Engine.Utils.DebugLogger.Log($"[PlayMode] FlushPendingUploads failed: {ex.Message}");
-            }
-
-            // Configurer les contextes d'input pour le mode Play
-            Engine.Input.InputManager.Instance?.SetPlayModeActive(true);
-            
-            // Indicate runtime play mode to engine components BEFORE initializing components
-            try { Engine.Core.RuntimeEnvironment.IsPlayMode = true; } catch { }
-
-            // Ne pas changer la scène du ViewportPanel en entrant en Play Mode.
-            InitializePlayModeComponents();
-            
-            // Maximize Game Panel if option is enabled (Unity-style)
-            if (Panels.GamePanel.Options.MaximizeOnPlay)
-            {
-                Panels.GamePanel.SetMaximized(true);
-            }
-
-            // Focus Game Panel if option is enabled
-            if (Panels.GamePanel.Options.FocusOnPlay)
-            {
-                Panels.GamePanel.FocusWindow();
             }
 
             _state = PlayState.Playing;
@@ -211,146 +133,42 @@ namespace Editor
 
         /// <summary>
         /// Arrête le Play Mode et restaure la scène originale
+        /// Now uses PlayModeTransitionManager for robust cleanup
         /// </summary>
         public static void Stop()
         {
-            // Stopping Play Mode
-            
             if (_state == PlayState.Edit) return;
-            
-            // Configurer les contextes d'input pour retourner en mode Edit
-            Engine.Input.InputManager.Instance?.SetPlayModeActive(false);
-            
-            // Force menu state to closed (in case Play Mode stopped with menu open)
-            Engine.Input.InputManager.Instance?.SetMenuVisible(false);
-            Engine.Utils.DebugLogger.Log("[PlayMode] Stop - Forced menu state to closed");
 
-            // Reset GamePanel cursor state and restore safe cursor state
-            Panels.GamePanel.ResetCursorState();
+            Engine.Utils.DebugLogger.Log("[PlayMode] Stopping Play Mode...");
 
-            // Force unlock cursor and ensure clean state - CRITICAL ORDER:
-            // 1. First unlock via InputManager (sets CursorState.Normal)
-            Engine.Input.InputManager.Instance?.UnlockCursor();
-
-            // 2. Then force cursor properties (should already be set by UnlockCursor)
-            Engine.Input.Cursor.lockState = Engine.Input.CursorLockMode.None;
-            Engine.Input.Cursor.visible = true;
-
-            Engine.Utils.DebugLogger.Log("[PlayMode] Stop - Cursor unlocked and reset to normal");
-
-            // Clear collision system to remove ghost colliders from play mode
-            Engine.Physics.CollisionSystem.ClearAll();
-            
-            // Call OnDestroy() on all components before cleanup
-            if (_playScene != null)
+            // Reset GamePanel cursor state before transition
+            try
             {
-                foreach (var entity in _playScene.Entities)
-                {
-                    foreach (var component in entity.GetAllComponents())
-                    {
-                        component.OnDestroy();
-                    }
-                }
+                Panels.GamePanel.ResetCursorState();
             }
-            
-            // The editor viewport was not replaced when entering Play Mode, so nothing
-            // needs to be restored here. Clear play scene references and cleanup.
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Warning: Failed to reset cursor state: {ex.Message}");
+            }
+
+            // Use the robust transition manager for exiting Play Mode
+            var result = _transitionManager.ExitPlayMode();
+
+            if (!result.Success)
+            {
+                LogManager.LogWarning($"Play Mode exit had errors: {result.ErrorMessage}", "PlayMode");
+                // Even if there were errors, we still transition back to Edit mode
+                // The TransitionManager guarantees cleanup even on failure
+            }
+
+            // Clear local state
             _playScene = null;
             _originalScene = null;
             _fixedTimeAccumulator = 0f;
-
-            // Clear component cache
             _cachedComponentsByEntity.Clear();
 
-            // Clear runtime play-mode flag so engine components know we're back in Edit mode
-            try { Engine.Core.RuntimeEnvironment.IsPlayMode = false; } catch { }
-            
-            // Force reload terrain shader BEFORE disposing GamePanel to ensure shader is valid
-            // This prevents black screen / InvalidOperation errors when returning to Edit mode
-            try
-            {
-                Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
-            }
-            catch (Exception ex)
-            {
-                Engine.Utils.DebugLogger.Log($"[PlayMode] Warning: Failed to reload TerrainForward shader: {ex.Message}");
-            }
-            
-            // Exit maximized mode before disposing (ensures clean state)
-            Panels.GamePanel.SetMaximized(false);
-
-            // Diagnostic: capture main viewport stats before disposing the GamePanel
-            try
-            {
-                var main = EditorUI.MainViewport.Renderer;
-                if (main != null)
-                {
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] Before Dispose - MainViewport: instances={Editor.Rendering.ViewportRenderer.InstanceCount}, LastFrameCpuMs={main.LastFrameCpuMs}, DrawCalls={main.DrawCallsThisFrame}, Triangles={main.TrianglesThisFrame}");
-                }
-                else
-                {
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] Before Dispose - MainViewport: NULL, instances={Editor.Rendering.ViewportRenderer.InstanceCount}");
-                }
-            }
-            catch { }
-
-            // Avoid full dispose to keep GL resources alive and prevent heavy reallocation on toggles
-            Panels.GamePanel.ResetForExit();
-
-            // PERFORMANCE: Flush any remaining pending texture uploads after exiting Play Mode
-            // This ensures the editor viewport has all textures loaded
-            try
-            {
-                System.Threading.Thread.Sleep(10); // Give background threads time
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-
-                // Upload all pending textures in batches until complete
-                int totalUploaded = 0;
-                int batchCount = 0;
-                int uploaded;
-                const int maxBatches = 20; // Safety limit to prevent infinite loop
-
-                do
-                {
-                    // Wait a bit for background decoding to catch up
-                    if (batchCount > 0)
-                        System.Threading.Thread.Sleep(5);
-
-                    uploaded = Engine.Rendering.TextureCache.FlushPendingUploads(100);
-                    totalUploaded += uploaded;
-                    batchCount++;
-                }
-                while (uploaded > 0 && batchCount < maxBatches);
-
-                sw.Stop();
-
-                if (totalUploaded > 0)
-                {
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] ⚡ Exit: Flushed {totalUploaded} pending texture(s) in {sw.ElapsedMilliseconds}ms ({batchCount} batches)");
-                    // Clear material cache to force reload with fresh texture handles
-                    Engine.Rendering.MaterialRuntime.ClearGlobalCache();
-                }
-            }
-            catch (Exception ex)
-            {
-                Engine.Utils.DebugLogger.Log($"[PlayMode] Exit FlushPendingUploads failed: {ex.Message}");
-            }
-
-            // Diagnostic: log ViewportRenderer instance count and main viewport renderer after dispose
-            try
-            {
-                var main2 = EditorUI.MainViewport.Renderer;
-                Engine.Utils.DebugLogger.Log($"[PlayMode] After Dispose - ViewportRenderer instances={Editor.Rendering.ViewportRenderer.InstanceCount}, EditorUI.MainViewport.Renderer is {(main2 == null ? "NULL" : "NOT NULL")}");
-                if (main2 != null)
-                {
-                    Engine.Utils.DebugLogger.Log($"[PlayMode] After Dispose - MainViewport: LastFrameCpuMs={main2.LastFrameCpuMs}, DrawCalls={main2.DrawCallsThisFrame}, Triangles={main2.TrianglesThisFrame}");
-                }
-            }
-            catch { }
-            
-            
-            
             _state = PlayState.Edit;
+            Engine.Utils.DebugLogger.Log("[PlayMode] Returned to Edit Mode");
         }
 
         /// <summary>
@@ -377,39 +195,7 @@ namespace Editor
             LateUpdateComponents(deltaTime);
         }
 
-        private static void InitializePlayModeComponents()
-        {
-            if (_playScene == null) return;
-
-            // Clear and rebuild component cache
-            _cachedComponentsByEntity.Clear();
-
-            var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_playScene.Entities);
-            for (int i = 0; i < entitiesSpan.Length; i++)
-            {
-                var entity = entitiesSpan[i];
-                if (!entity.Active) continue;
-
-                var comps = entity.GetAllComponents();
-
-                // Cache components for this entity (PERFORMANCE)
-                _cachedComponentsByEntity[entity.Id] = new List<Engine.Components.Component>(comps);
-
-                foreach (var component in comps)
-                {
-                    if (!component.Enabled) continue;
-
-                    try
-                    {
-                        component.OnEnable();
-                        component.Start();
-                    }
-                    catch (Exception)
-                    {
-                    }
-                }
-            }
-        }
+        // NOTE: InitializePlayModeComponents() removed - now handled by PlayModeTransitionManager
 
         private static void UpdateComponents(float deltaTime)
         {

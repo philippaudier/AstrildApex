@@ -191,56 +191,154 @@ namespace Engine.Rendering
     public class ToneMappingRenderer : IPostProcessRenderer
     {
         private ShaderProgram? _shader;
+        private ShaderProgram? _luminanceShader;
+
+        // Auto-exposure resources
+        private int _luminanceTexture = 0;
+        private int _luminanceFBO = 0;
+        private int _lastWidth = 0;
+        private int _lastHeight = 0;
+        // TODO: Add temporal smoothing with _lastExposure for smoother adaptation
+        private DateTime _lastFrameTime = DateTime.Now;
 
         public void Initialize()
         {
             try
             {
-                
-                // Chemins absolus pour éviter les problèmes de répertoire de travail
                 var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var fragPath = Path.Combine(baseDir, "tonemap.frag");
-                
-                
-                // Contourner le ShaderPreprocessor pour tester
+                var lumPath = Path.Combine(baseDir, "luminance.frag");
+
+                // Load tonemap shader
                 string vertexSource = System.IO.File.ReadAllText(vertPath);
                 string fragmentSource = System.IO.File.ReadAllText(fragPath);
                 _shader = ShaderProgram.FromSource(vertexSource, fragmentSource);
+
+                // Load luminance shader
+                if (File.Exists(lumPath))
+                {
+                    string lumSource = System.IO.File.ReadAllText(lumPath);
+                    _luminanceShader = ShaderProgram.FromSource(vertexSource, lumSource);
+                }
             }
             catch
             {
                 _shader = null;
+                _luminanceShader = null;
             }
+        }
+
+        private void EnsureLuminanceTexture(int width, int height)
+        {
+            if (_luminanceTexture != 0 && _lastWidth == width && _lastHeight == height)
+                return;
+
+            // Clean up old resources
+            if (_luminanceTexture != 0)
+            {
+                GL.DeleteTexture(_luminanceTexture);
+                GL.DeleteFramebuffer(_luminanceFBO);
+            }
+
+            // Create luminance texture with mipmaps for average calculation
+            _luminanceTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R16f, width, height, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            // Create FBO
+            _luminanceFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceTexture, 0);
+
+            if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete)
+            {
+                throw new Exception("Luminance framebuffer is not complete");
+            }
+
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            _lastWidth = width;
+            _lastHeight = height;
         }
 
         public void Render(PostProcessEffect effect, PostProcessContext context)
         {
-            // Force réinitialisation si shader est null
             if (_shader == null)
             {
                 Initialize();
             }
-            
+
             if (_shader == null || !(effect is ToneMappingEffect toneMap))
             {
                 return;
             }
 
+            // Calculate delta time for adaptation
+            var now = DateTime.Now;
+            float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
+            _lastFrameTime = now;
+
+            // If auto-exposure is enabled, generate luminance texture
+            if (toneMap.AutoExposure && _luminanceShader != null)
+            {
+                EnsureLuminanceTexture(context.Width, context.Height);
+
+                // Render luminance to texture
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
+                GL.Viewport(0, 0, context.Width, context.Height);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
+
+                _luminanceShader.Use();
+                GL.ActiveTexture(TextureUnit.Texture0);
+                GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
+                _luminanceShader.SetInt("u_SourceTexture", 0);
+                GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+
+                // Generate mipmaps for average luminance calculation
+                GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
+                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+
+                // Restore original framebuffer
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
+                GL.Viewport(0, 0, context.Width, context.Height);
+            }
+
+            // Render tone mapping
             _shader.Use();
 
-            // Bind la texture source
+            // Bind source texture
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
             _shader.SetInt("u_SourceTexture", 0);
 
-            // Paramètres du tone mapping
+            // Bind luminance texture for auto-exposure
+            if (toneMap.AutoExposure && _luminanceTexture != 0)
+            {
+                GL.ActiveTexture(TextureUnit.Texture1);
+                GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
+                _shader.SetInt("u_LuminanceTexture", 1);
+            }
+
+            // Tone mapping parameters
             _shader.SetInt("u_ToneMappingMode", (int)toneMap.Mode);
             _shader.SetFloat("u_Exposure", toneMap.Exposure * toneMap.Intensity);
             _shader.SetFloat("u_WhitePoint", toneMap.WhitePoint);
             _shader.SetFloat("u_Gamma", toneMap.Gamma);
 
-            // Rendu fullscreen triangle (pas besoin de VAO)
+            // Auto-exposure parameters
+            _shader.SetInt("u_AutoExposure", toneMap.AutoExposure ? 1 : 0);
+            _shader.SetFloat("u_MinExposure", toneMap.MinExposure);
+            _shader.SetFloat("u_MaxExposure", toneMap.MaxExposure);
+            _shader.SetFloat("u_TargetBrightness", toneMap.TargetBrightness);
+            _shader.SetFloat("u_AdaptationSpeed", toneMap.AdaptationSpeed);
+            _shader.SetFloat("u_DeltaTime", deltaTime);
+
+            // Render fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
 
@@ -248,6 +346,20 @@ namespace Engine.Rendering
         {
             _shader?.Dispose();
             _shader = null;
+            _luminanceShader?.Dispose();
+            _luminanceShader = null;
+
+            if (_luminanceTexture != 0)
+            {
+                GL.DeleteTexture(_luminanceTexture);
+                _luminanceTexture = 0;
+            }
+
+            if (_luminanceFBO != 0)
+            {
+                GL.DeleteFramebuffer(_luminanceFBO);
+                _luminanceFBO = 0;
+            }
         }
     }
 

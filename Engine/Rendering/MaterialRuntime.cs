@@ -1,6 +1,7 @@
 using System;
 using Engine.Assets;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 
 namespace Engine.Rendering
 {
@@ -10,6 +11,8 @@ namespace Engine.Rendering
     private static readonly System.Collections.Generic.Dictionary<Guid, MaterialRuntime> _globalCache = new();
     // Global default used when binding materials. Renderers can override this per-frame if needed.
     public static int DefaultFlipNormalY = 0; // 0 = no flip, 1 = flip
+
+    
 
         static MaterialRuntime()
         {
@@ -113,42 +116,39 @@ namespace Engine.Rendering
         public float[,] LayerUnderwaterParams = new float[MAX_LAYERS, 4]; // waterLevel, blendDist, slopeMin, slopeMax (normalized)
         public int LayerCount = 0;
 
-        // Water shader properties
+        // Water shader properties - AAA
         public float WaveAmplitude = 0.1f;
         public float WaveFrequency = 1.0f;
         public float WaveSpeed = 1.0f;
         public float[] WaveDirection = new float[] { 1f, 0f };
+        public float Wave2Amplitude = 0.05f;
+        public float Wave2Frequency = 1.5f;
+        public float Wave2Speed = 1.2f;
+        public float[] Wave2Direction = new float[] { -0.5f, 0.8f };
         public float[] WaterColor = new float[] { 0.1f, 0.3f, 0.5f, 0.8f };
-        public float Opacity = 0.8f;
-        public bool IsOpaque = false;
-        public float[] AlbedoTiling = new float[] { 1f, 1f };
-        public float[] AlbedoScrollSpeed = new float[] { 0f, 0f };
+        public float WaterOpacity = 0.5f;
+        public float WaterRefractiveIndex = 1.33f;
+        public float WaterDistortionStrength = 0.3f;
+        public float WaterChromaticAberration = 0.05f;
+        public float WaterRoughness = 0.1f;
         public float[] NormalTiling = new float[] { 1f, 1f };
-        public float[] NormalScrollSpeed1 = new float[] { 0.05f, 0.03f };
-        public float[] NormalScrollSpeed2 = new float[] { -0.04f, -0.06f };
-        public int NoiseTexture1 = 0;
-        public int NoiseTexture2 = 0;
-        public float[] Noise1Speed = new float[] { 0.03f, 0.03f };
-        public float[] Noise1Direction = new float[] { 1f, 0f };
-        public float[] Noise1Tiling = new float[] { 1f, 1f };
-        public float Noise1Strength = 0.05f;
-        public float[] Noise2Speed = new float[] { 0.02f, -0.02f };
-        public float[] Noise2Direction = new float[] { 0f, 1f };
-        public float[] Noise2Tiling = new float[] { 1.5f, 1.5f };
-        public float Noise2Strength = 0.03f;
-        public float RefractionStrength = 0.5f;
-        public float FresnelPower = 2.0f;
-        public float[] FresnelColor = new float[] { 0.8f, 0.9f, 1.0f, 1.0f };
-        public float TessellationLevel = 32.0f;
+        public float[] NormalScrollSpeed = new float[] { 0.05f, 0.03f };
+        public float WaterFresnelPower = 5.0f;
+        public float WaterReflectionStrength = 1.0f;
+        public bool UsePlanarReflection = false;
 
-    // Use procedural noise for displacement (true) or sample noise textures (false) for cheaper rendering
-    public bool UseProceduralNoise = true;
+        
 
-        // Planar Reflection properties
-        public bool EnableReflection = false;
-        public int ReflectionTexture = 0;
-        public float ReflectionStrength = 1.0f;
-        public float ReflectionBlur = 0.0f;
+        // Glass shader properties
+        public float GlassRefractiveIndex = 1.5f;
+        public float GlassDistortionStrength = 1.0f;
+        public float GlassChromaticAberration = 0.0f;
+        public float GlassRoughness = 0.0f;
+        public float GlassThickness = 0.1f;
+        public float[] GlassTint = new float[] { 1f, 1f, 1f };
+        public float GlassOpacity = 0.1f;
+        public float GlassFresnelPower = 5.0f;
+        public float GlassReflectionStrength = 1.0f;
 
         public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
         {
@@ -226,9 +226,10 @@ namespace Engine.Rendering
                 mr.LayerStrength[i] = 0f;
             }
 
-            // Map terrain layers if present
+            // Map terrain layers if present (legacy MaterialAsset.TerrainLayers supported as fallback)
             try
             {
+#pragma warning disable CS0618 // Legacy MaterialAsset.TerrainLayers: supported here as a localized fallback for old materials
                 if (a?.TerrainLayers != null)
                 {
                     var arr = a.TerrainLayers;
@@ -294,6 +295,7 @@ namespace Engine.Rendering
                         mr.LayerUnderwaterParams[i, 3] = Math.Clamp(l.UnderwaterSlopeMax / 90f, 0f, 1f);
                     }
                 }
+#pragma warning restore CS0618
             }
             catch { }
             // Determine transparency mode from asset if available
@@ -306,63 +308,25 @@ namespace Engine.Rendering
                 mr.TransparencyMode = 0;
             }
 
-            // Load water properties if present
+            // Load glass properties if present
             try
             {
-                if (a?.WaterProperties != null)
+                if (a?.GlassProperties != null)
                 {
-                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Loading Water properties for material {a.Name}"); } catch { }
-                    var w = a.WaterProperties;
-                    mr.WaveAmplitude = w.WaveAmplitude;
-                    mr.WaveFrequency = w.WaveFrequency;
-                    mr.WaveSpeed = w.WaveSpeed;
-                    mr.WaveDirection = w.WaveDirection ?? new float[] { 1f, 0f };
-                    mr.WaterColor = w.WaterColor ?? new float[] { 0.1f, 0.3f, 0.5f, 0.8f };
-                    mr.Opacity = w.Opacity;
-                    
-                    // Load water-specific textures (override base material textures)
-                    if (w.AlbedoTexture.HasValue)
-                    {
-                        mr.AlbedoTex = TextureCache.GetOrLoad(w.AlbedoTexture.Value, resolvePath);
-                        mr.AlbedoColor = w.AlbedoColor ?? new float[] { 1f, 1f, 1f, 1f };
-                    }
-                    mr.AlbedoTiling = w.AlbedoTiling ?? new float[] { 1f, 1f };
-                    mr.AlbedoScrollSpeed = w.AlbedoScrollSpeed ?? new float[] { 0f, 0f };
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Loading Glass properties for material {a.Name}"); } catch { }
+                    var g = a.GlassProperties;
+                    mr.GlassRefractiveIndex = g.RefractiveIndex;
+                    mr.GlassDistortionStrength = g.DistortionStrength;
+                    mr.GlassChromaticAberration = g.ChromaticAberration;
+                    mr.GlassRoughness = g.Roughness;
+                    mr.GlassThickness = g.Thickness;
+                    mr.GlassTint = g.Tint ?? new float[] { 1f, 1f, 1f };
+                    mr.GlassOpacity = g.Opacity;
+                    mr.GlassFresnelPower = g.FresnelPower;
+                    mr.GlassReflectionStrength = g.ReflectionStrength;
 
-                    if (w.NormalTexture.HasValue)
-                    {
-                        mr.NormalTex = TextureCache.GetOrLoad(w.NormalTexture.Value, resolvePath);
-                        mr.NormalStrength = w.NormalStrength;
-                    }
-                    mr.NormalTiling = w.NormalTiling ?? new float[] { 1f, 1f };
-                    mr.NormalScrollSpeed1 = w.NormalScrollSpeed1 ?? new float[] { 0.05f, 0.03f };
-                    mr.NormalScrollSpeed2 = w.NormalScrollSpeed2 ?? new float[] { -0.04f, -0.06f };
-
-                    // PBR properties
-                    mr.Metallic = w.Metallic;
-                    mr.Smoothness = w.Smoothness;
-                    
-                    mr.NoiseTexture1 = w.NoiseTexture1.HasValue ? TextureCache.GetOrLoad(w.NoiseTexture1.Value, resolvePath) : TextureCache.White1x1;
-                    mr.NoiseTexture2 = w.NoiseTexture2.HasValue ? TextureCache.GetOrLoad(w.NoiseTexture2.Value, resolvePath) : TextureCache.White1x1;
-                    mr.Noise1Speed = w.Noise1Speed ?? new float[] { 0.03f, 0.03f };
-                    mr.Noise1Direction = w.Noise1Direction ?? new float[] { 1f, 0f };
-                    mr.Noise1Tiling = w.Noise1Tiling ?? new float[] { 1f, 1f };
-                    mr.Noise1Strength = w.Noise1Strength;
-                    mr.Noise2Speed = w.Noise2Speed ?? new float[] { 0.02f, -0.02f };
-                    mr.Noise2Direction = w.Noise2Direction ?? new float[] { 0f, 1f };
-                    mr.Noise2Tiling = w.Noise2Tiling ?? new float[] { 1.5f, 1.5f };
-                    mr.Noise2Strength = w.Noise2Strength;
-                    mr.RefractionStrength = w.RefractionStrength;
-                    mr.FresnelPower = w.FresnelPower;
-                    mr.FresnelColor = w.FresnelColor ?? new float[] { 0.8f, 0.9f, 1.0f, 1.0f };
-                    mr.UseProceduralNoise = w.UseProceduralNoise;
-                    mr.TessellationLevel = w.TessellationLevel;
-
-                    // Planar Reflection (texture is set by ViewportRenderer from auto-generated reflection)
-                    mr.EnableReflection = w.EnableReflection;
-                    mr.ReflectionTexture = 0; // Will be set by ViewportRenderer
-                    mr.ReflectionStrength = w.ReflectionStrength;
-                    mr.ReflectionBlur = w.ReflectionBlur;
+                    // Force transparency mode for glass materials
+                    mr.TransparencyMode = 1;
                 }
             }
             catch { }
@@ -390,35 +354,13 @@ namespace Engine.Rendering
                 }
                 catch { }
 
-                // If not determined yet, check water override normal texture
-                try
-                {
-                    if (flip == 0 && a?.WaterProperties != null && a.WaterProperties.NormalTexture.HasValue)
-                    {
-                        var p = resolvePath(a.WaterProperties.NormalTexture.Value);
-                        if (!string.IsNullOrEmpty(p))
-                        {
-                            var metaPath = p + Engine.Assets.AssetDatabase.MetaExt;
-                            if (System.IO.File.Exists(metaPath))
-                            {
-                                var jm = System.IO.File.ReadAllText(metaPath);
-                                using var doc = System.Text.Json.JsonDocument.Parse(jm);
-                                if (doc.RootElement.TryGetProperty("flipGreen", out var jg) && jg.ValueKind == System.Text.Json.JsonValueKind.True)
-                                {
-                                    flip = 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
 
                 // If still not determined, inspect layer normal textures (first found wins)
                 try
                 {
+#pragma warning disable CS0618 // Legacy MaterialAsset.TerrainLayers: localized fallback to inspect legacy layer normal textures
                     if (flip == 0 && a?.TerrainLayers != null)
                     {
-#pragma warning disable CS0618 // inspect legacy NormalTexture meta for compatibility
                         foreach (var l in a.TerrainLayers)
                         {
                             if (l.NormalTexture.HasValue)
@@ -439,8 +381,8 @@ namespace Engine.Rendering
                                 }
                             }
                         }
-#pragma warning restore CS0618
                     }
+#pragma warning restore CS0618
                 }
                 catch { }
 
@@ -626,100 +568,54 @@ namespace Engine.Rendering
                 try
                 {
                     try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding Water shader uniforms"); } catch { }
-                    // Albedo texture is already bound to slot 0, just set the uniform
-                    sh.SetInt("u_AlbedoTexture", 0);
-                    sh.SetVec4("u_AlbedoColor", new OpenTK.Mathematics.Vector4(AlbedoColor[0], AlbedoColor[1], AlbedoColor[2], AlbedoColor[3]));
-                    sh.SetVec2("u_AlbedoTiling", new OpenTK.Mathematics.Vector2(AlbedoTiling[0], AlbedoTiling[1]));
-                    sh.SetVec2("u_AlbedoScrollSpeed", new OpenTK.Mathematics.Vector2(AlbedoScrollSpeed[0], AlbedoScrollSpeed[1]));
 
-                    // Normal map is already bound to slot 1
-                    sh.SetInt("u_NormalMap", 1);
-                    sh.SetFloat("u_NormalMapStrength", NormalStrength);
-                    sh.SetVec2("u_NormalTiling", new OpenTK.Mathematics.Vector2(NormalTiling[0], NormalTiling[1]));
-                    sh.SetVec2("u_NormalScrollSpeed1", new OpenTK.Mathematics.Vector2(NormalScrollSpeed1[0], NormalScrollSpeed1[1]));
-                    sh.SetVec2("u_NormalScrollSpeed2", new OpenTK.Mathematics.Vector2(NormalScrollSpeed2[0], NormalScrollSpeed2[1]));
+                    // Water color and opacity
+                    sh.SetVec4("u_WaterColor", new OpenTK.Mathematics.Vector4(WaterColor[0], WaterColor[1], WaterColor[2], WaterColor[3]));
+                    sh.SetFloat("u_Opacity", WaterOpacity);
 
                     // PBR properties
                     sh.SetFloat("u_Metallic", Metallic);
                     sh.SetFloat("u_Smoothness", Smoothness);
+                    sh.SetFloat("u_NormalStrength", NormalStrength);
 
-                    // Texture tiling and offset (from base material properties)
-                    sh.SetVec2("u_TextureTiling", new OpenTK.Mathematics.Vector2(TextureTiling[0], TextureTiling[1]));
-                    sh.SetVec2("u_TextureOffset", new OpenTK.Mathematics.Vector2(TextureOffset[0], TextureOffset[1]));
+                    // Triplanar mapping
+                    sh.SetInt("u_UseTriplanar", UseTriplanar);
+                    sh.SetFloat("u_TriplanarScale", TriplanarScale);
+                    sh.SetFloat("u_TriplanarBlendSharpness", TriplanarBlendSharpness);
 
-                    // Time uniform for animation
-                    sh.SetFloat("u_Time", time);
-
-                    // Tessellation level
-                    sh.SetFloat("u_TessellationLevel", TessellationLevel);
-
-                    // Wave parameters
-                    sh.SetFloat("u_WaveAmplitude", WaveAmplitude);
-                    sh.SetFloat("u_WaveFrequency", WaveFrequency);
-                    sh.SetFloat("u_WaveSpeed", WaveSpeed);
-                    sh.SetVec2("u_WaveDirection", new OpenTK.Mathematics.Vector2(WaveDirection[0], WaveDirection[1]));
-
-                    // Water appearance
-                    sh.SetVec4("u_WaterColor", new OpenTK.Mathematics.Vector4(WaterColor[0], WaterColor[1], WaterColor[2], WaterColor[3]));
-                    sh.SetFloat("u_Opacity", Opacity);
-
-                    // Bind noise textures (using slots 4 and 5 to avoid conflict with SSAO on slot 3)
-                    GL.ActiveTexture(TextureUnit.Texture4);
-                    GL.BindTexture(TextureTarget.Texture2D, NoiseTexture1);
-                    sh.SetInt("u_NoiseTexture1", 4);
-
-                    GL.ActiveTexture(TextureUnit.Texture5);
-                    GL.BindTexture(TextureTarget.Texture2D, NoiseTexture2);
-                    sh.SetInt("u_NoiseTexture2", 5);
-
-                    // Noise 1 parameters
-                    sh.SetVec2("u_Noise1Speed", new OpenTK.Mathematics.Vector2(Noise1Speed[0], Noise1Speed[1]));
-                    sh.SetVec2("u_Noise1Direction", new OpenTK.Mathematics.Vector2(Noise1Direction[0], Noise1Direction[1]));
-                    sh.SetVec2("u_Noise1Tiling", new OpenTK.Mathematics.Vector2(Noise1Tiling[0], Noise1Tiling[1]));
-                    sh.SetFloat("u_Noise1Strength", Noise1Strength);
-
-                    // Noise 2 parameters
-                    sh.SetVec2("u_Noise2Speed", new OpenTK.Mathematics.Vector2(Noise2Speed[0], Noise2Speed[1]));
-                    sh.SetVec2("u_Noise2Direction", new OpenTK.Mathematics.Vector2(Noise2Direction[0], Noise2Direction[1]));
-                    sh.SetVec2("u_Noise2Tiling", new OpenTK.Mathematics.Vector2(Noise2Tiling[0], Noise2Tiling[1]));
-                    sh.SetFloat("u_Noise2Strength", Noise2Strength);
-
-                    // Use procedural noise flag (1 = procedural snoise, 0 = sample noise textures)
-                    sh.SetInt("u_UseProceduralNoise", UseProceduralNoise ? 1 : 0);
-
-                    // Fresnel and refraction
-                    sh.SetFloat("u_FresnelPower", FresnelPower);
-                    sh.SetVec4("u_FresnelColor", new OpenTK.Mathematics.Vector4(FresnelColor[0], FresnelColor[1], FresnelColor[2], FresnelColor[3]));
-                    sh.SetFloat("u_RefractionStrength", RefractionStrength);
-
-                    // Planar Reflection (using slot 6 to avoid conflicts)
-                    sh.SetInt("u_EnableReflection", EnableReflection ? 1 : 0);
-                    if (EnableReflection)
-                    {
-                        try
-                        {
-                            if (Engine.Utils.DebugLogger.EnableVerbose)
-                                Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding reflection texture: ID={ReflectionTexture}, Strength={ReflectionStrength}");
-                        }
-                        catch { }
-
-                        GL.ActiveTexture(TextureUnit.Texture6);
-                        GL.BindTexture(TextureTarget.Texture2D, ReflectionTexture);
-                        sh.SetInt("u_ReflectionTexture", 6);
-                        sh.SetFloat("u_ReflectionStrength", ReflectionStrength);
-                        sh.SetFloat("u_ReflectionBlur", ReflectionBlur);
-                    }
-                    
-                    // Stylization parameters (also available for Water shader)
-                    sh.SetFloat("u_Saturation", Saturation);
-                    sh.SetFloat("u_Brightness", Brightness);
-                    sh.SetFloat("u_Contrast", Contrast);
-                    sh.SetFloat("u_Hue", Hue);
-                    sh.SetFloat("u_Emission", Emission);
+                    // Planar reflection support removed
                 }
                 catch { }
             }
-            
+
+            // Bind glass shader uniforms if shader is "Glass"
+            if (string.Equals(ShaderName, "Glass", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding Glass shader uniforms"); } catch { }
+
+                    // Glass refraction properties
+                    sh.SetFloat("u_RefractiveIndex", GlassRefractiveIndex);
+                    sh.SetFloat("u_DistortionStrength", GlassDistortionStrength);
+                    sh.SetFloat("u_ChromaticAberration", GlassChromaticAberration);
+
+                    // Glass appearance
+                    sh.SetFloat("u_Roughness", GlassRoughness);
+                    sh.SetFloat("u_Thickness", GlassThickness);
+                    sh.SetVec3("u_Tint", new OpenTK.Mathematics.Vector3(GlassTint[0], GlassTint[1], GlassTint[2]));
+                    sh.SetFloat("u_Opacity", GlassOpacity);
+
+                    // Glass reflections (Fresnel)
+                    sh.SetFloat("u_FresnelPower", GlassFresnelPower);
+                    sh.SetFloat("u_ReflectionStrength", GlassReflectionStrength);
+
+                    // Normal map strength (for frosted glass effects)
+                    sh.SetFloat("u_NormalStrength", NormalStrength);
+                }
+                catch { }
+            }
+
             // Set time uniform for all shaders that need animation (Water, BlackHole, etc.)
             // This must be done OUTSIDE the Water-specific block so other shaders can use it
             try

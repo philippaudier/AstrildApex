@@ -412,12 +412,13 @@ namespace Editor.Panels
                         }
                         ImGui.EndMenu();
                     }
-                    if (ImGui.MenuItem("Water"))
-                    {
-                        var water = scene.CreateWater("Water", new Vec3(0, 0, 0), 100f, 100f, 32);
-                        Selection.SetSingle(water.Id);
-                        EditorUI.MainViewport.UpdateGizmoPivot();
-                    }
+                    // Water menu item removed - will be reimplemented later
+                    // if (ImGui.MenuItem("Water"))
+                    // {
+                    //     var water = scene.CreateWater("Water", new Vec3(0, 0, 0), 100f, 100f);
+                    //     Selection.SetSingle(water.Id);
+                    //     EditorUI.MainViewport.UpdateGizmoPivot();
+                    // }
                     // UX menu supprimé (Separator)
                     if (ImGui.BeginMenu("Light"))
                     {

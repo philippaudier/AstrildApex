@@ -763,10 +763,6 @@ namespace Editor.Panels
                     // Use new terrain inspector
                     Editor.Inspector.TerrainInspector.Draw(entity, tg);
                     break;
-                case Engine.Components.WaterComponent water:
-                    // Use water component inspector
-                    Editor.Inspector.WaterComponentInspector.Draw(entity, water);
-                    break;
                 case Engine.Components.GlobalEffects globalEffects:
                     Editor.Inspector.GlobalEffectsInspector.DrawInspector(globalEffects);
                     break;

@@ -19,7 +19,10 @@ namespace Engine.Audio.Assets
 
         /// <summary>Buffers OpenAL pour le streaming (3-4 buffers rotatifs)</summary>
         private readonly int[] _buffers;
-        private const int BufferCount = 6;
+        // CRITICAL: Increased from 6 to 12 buffers to handle slow decoder initialization on first load
+        // 12 buffers × 32768 samples ÷ 44100 Hz = ~8.9 seconds of audio buffer
+        // This gives the streaming thread enough time to start refilling before underrun
+        private const int BufferCount = 12;
         private const int BufferSizeInSamples = 32768; // larger buffer for more headroom
 
         /// <summary>Durée totale en secondes</summary>
@@ -226,6 +229,24 @@ namespace Engine.Audio.Assets
             _sourceId = sourceId;
             _stopStreaming = false;
             _isPaused = false;
+
+            // CRITICAL FIX: Ensure the OpenAL source has NO queued buffers before starting
+            // This prevents residual audio from previous playbacks causing a loop on the first 2 seconds
+            try
+            {
+                AL.GetSource(sourceId, ALGetSourcei.BuffersQueued, out int queuedCount);
+                if (queuedCount > 0)
+                {
+                    // Unqueue all buffers to ensure clean state
+                    int[] bufferIds = new int[queuedCount];
+                    AL.SourceUnqueueBuffers(sourceId, queuedCount, bufferIds);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[StreamingAudioClip] Failed to clear residual buffers from source");
+            }
+
             if (resetPosition)
             {
                 _currentTime = 0f;
@@ -233,7 +254,6 @@ namespace Engine.Audio.Assets
                 _activeDecoder.Reset();
             }
 
-            // Pré-remplir tous les buffers
             // Pré-remplir tous les buffers
             int filled = 0;
             for (int i = 0; i < BufferCount; i++)
@@ -244,7 +264,7 @@ namespace Engine.Audio.Assets
                     break;
             }
 
-            int minBuffers = Math.Min(3, BufferCount);
+            int minBuffers = Math.Min(6, BufferCount); // Need at least half the buffers
             // Try to ensure at least `minBuffers` are filled to reduce startup underruns
             int attempts = 0;
             while (filled < minBuffers && attempts < 10)
@@ -369,35 +389,37 @@ namespace Engine.Audio.Assets
                 // Détacher tous les buffers
                 AL.SourceStop(_sourceId);
 
-                // Wait for the source to fully stop before unqueueing
-                // This prevents timing issues with BuffersQueued reporting
-                Thread.Sleep(5);
-
-                // After SourceStop, all buffers should be marked as processed
-                // Use BuffersProcessed instead of BuffersQueued for more reliable cleanup
-                AL.GetSource(_sourceId, ALGetSourcei.BuffersProcessed, out int processed);
-                if (processed > 0)
+                // CRITICAL FIX: After SourceStop, unqueue ALL queued buffers (both processed and unprocessed)
+                // Previously we only unqueued processed buffers, but queued-but-not-yet-processed buffers
+                // would remain and cause the "looping first 2 seconds" bug on next playback
+                try
                 {
-                    try
+                    AL.GetSource(_sourceId, ALGetSourcei.BuffersQueued, out int queued);
+                    if (queued > 0)
                     {
+                        // After AL.SourceStop, ALL queued buffers are marked as processed and can be unqueued
+                        // Wait a bit to ensure OpenAL has processed the stop command
+                        Thread.Sleep(5);
+
                         // Clamp to the number of allocated buffers to avoid InvalidValue
-                        int toUnqueue = Math.Min(processed, _buffers.Length);
+                        int toUnqueue = Math.Min(queued, _buffers.Length);
                         if (toUnqueue > 0)
                         {
-                            int[] dummyBuffers = new int[toUnqueue];
-                            AL.SourceUnqueueBuffers(_sourceId, toUnqueue, dummyBuffers);
+                            int[] bufferIds = new int[toUnqueue];
+                            AL.SourceUnqueueBuffers(_sourceId, toUnqueue, bufferIds);
                             var err = AL.GetError();
                             if (err != ALError.NoError)
                             {
-                                Log.Warning($"[StreamingAudioClip] AL.Error after UnqueueBuffers: {err} (processed={processed}, clamped={toUnqueue}, buffersAllocated={_buffers.Length})");
+                                Log.Warning($"[StreamingAudioClip] AL.Error after UnqueueBuffers: {err}");
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Log.Warning(ex, "[StreamingAudioClip] Exception during UnqueueBuffers cleanup");
-                    }
                 }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[StreamingAudioClip] Exception during UnqueueBuffers cleanup");
+                }
+
                 _sourceId = -1;
             }
 
@@ -422,8 +444,14 @@ namespace Engine.Audio.Assets
         /// </summary>
         private void StreamingThreadFunc()
         {
-            int underrunCount = 0;
+            // CRITICAL FIX: Unity-style streaming pipeline
+            // - Immediate underrun recovery (no waiting for 5 consecutive underruns)
+            // - Batch buffer processing for efficiency
+            // - Minimal logging to reduce thread blocking
+            // - Proactive buffer refilling to prevent underruns
+
             bool firstIteration = true;
+            int consecutiveUnderrunRecoveries = 0;
 
             // Give the main thread time to call AL.SourcePlay before we start checking state
             Thread.Sleep(20);
@@ -443,119 +471,112 @@ namespace Engine.Audio.Assets
                 // Vérifier combien de buffers ont été traités
                 if (!AL.IsSource(_sourceId))
                 {
-                    Thread.Sleep(5);
+                    Thread.Sleep(2);
                     continue;
                 }
+
                 AL.GetSource(_sourceId, ALGetSourcei.BuffersProcessed, out int processed);
 
-                // Remplir les buffers traités
-                while (processed > 0)
+                // OPTIMIZATION: Process all available buffers in batch instead of one-by-one
+                if (processed > 0)
                 {
-                    int[] buffer = new int[1];
-                    if (AL.IsSource(_sourceId))
-                    {
-                        AL.SourceUnqueueBuffers(_sourceId, 1, buffer);
-                    }
-                    else
-                    {
-                        break; // cannot unqueue from invalid source
-                    }
+                    // Clamp to prevent over-unqueueing
+                    int toProcess = Math.Min(processed, BufferCount);
+                    int[] processedBuffers = new int[toProcess];
 
-                    // Remplir avec de nouvelles données
-                    if (FillBuffer(buffer[0]))
+                    try
                     {
-                        AL.SourceQueueBuffers(_sourceId, 1, buffer);
-                    }
-                    else
-                    {
-                        // Fin du stream
-                        if (_activeDecoder != null && _activeDecoder.IsLooping)
+                        // Unqueue all processed buffers at once
+                        AL.SourceUnqueueBuffers(_sourceId, toProcess, processedBuffers);
+
+                        // Refill and re-queue all buffers
+                        for (int i = 0; i < toProcess; i++)
                         {
-                            _activeDecoder.Reset();
-                            _totalSamplesRead = 0;
-                            _currentTime = 0f;
-                            if (FillBuffer(buffer[0]))
+                            if (FillBuffer(processedBuffers[i]))
                             {
-                                AL.SourceQueueBuffers(_sourceId, 1, buffer);
+                                AL.SourceQueueBuffers(_sourceId, 1, new int[] { processedBuffers[i] });
                             }
                             else
                             {
-                                Log.Warning($"[StreamingAudioClip] Failed to refill buffer after loop reset for: {Name}");
-                                _stopStreaming = true;
-                                break;
+                                // End of stream
+                                if (_activeDecoder != null && _activeDecoder.IsLooping)
+                                {
+                                    _activeDecoder.Reset();
+                                    _totalSamplesRead = 0;
+                                    _currentTime = 0f;
+
+                                    // Retry fill after loop reset
+                                    if (FillBuffer(processedBuffers[i]))
+                                    {
+                                        AL.SourceQueueBuffers(_sourceId, 1, new int[] { processedBuffers[i] });
+                                    }
+                                    else
+                                    {
+                                        _stopStreaming = true;
+                                        break;
+                                    }
+                                }
+                                else
+                                {
+                                    _stopStreaming = true;
+                                    break;
+                                }
                             }
                         }
-                        else
-                        {
-                            _stopStreaming = true;
-                            break;
-                        }
                     }
-
-                    processed--;
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, $"[StreamingAudioClip] Error processing buffers: {Name}");
+                        Thread.Sleep(5);
+                        continue;
+                    }
                 }
 
-                // Vérifier si la source s'est arrêtée (underrun)
-                // Skip underrun check on first iteration to avoid false positives during startup
+                // Check for underrun (source stopped playing but has buffers queued)
                 if (!AL.IsSource(_sourceId))
                 {
-                    Thread.Sleep(5);
+                    Thread.Sleep(2);
                     continue;
                 }
+
                 AL.GetSource(_sourceId, ALGetSourcei.SourceState, out int state);
                 AL.GetSource(_sourceId, ALGetSourcei.BuffersQueued, out int queued);
 
-                // Verbose tracing for diagnosing underruns / restarts
-                try
+                // CRITICAL FIX: IMMEDIATE underrun recovery (Unity-style)
+                // Don't wait for multiple underruns - restart immediately when detected
+                if (!firstIteration && state != (int)ALSourceState.Playing && !_stopStreaming && queued > 0)
                 {
-                    // Downgrade to Debug to avoid spamming the terminal each frame
-                    Log.Debug($"[StreamingAudioClip] ThreadLoop: Name={Name}, sourceId={_sourceId}, state={state}, queued={queued}, processed={processed}, currentTime={_currentTime:F3}");
-                }
-                catch { }
-
-                if (!firstIteration && state != (int)ALSourceState.Playing && !_stopStreaming && queued > 0 && AL.IsSource(_sourceId))
-                {
-                    // Buffer underrun detected. Be conservative: avoid immediately
-                    // calling AL.SourcePlay which may cause audible jumps back to the
-                    // beginning. Instead require multiple consecutive underruns and a
-                    // minimum queued buffer count before attempting to restart.
-                    underrunCount++;
-                    Log.Warning($"[StreamingAudioClip] Buffer underrun detected ({underrunCount}) - will attempt recovery when stable (queued={queued}, processed={processed}, currentTime={_currentTime:F2}s)");
-
-                    int requiredUnderruns = 5; // require more consecutive underruns to avoid transient restarts
-                    int requiredQueued = Math.Min(3, BufferCount);
-
-                    if (underrunCount >= requiredUnderruns && queued >= requiredQueued)
+                    try
                     {
-                        try
+                        consecutiveUnderrunRecoveries++;
+
+                        // Log only the first underrun
+                        if (consecutiveUnderrunRecoveries == 1)
                         {
-                            Log.Information($"[StreamingAudioClip] Requesting playback restart after {underrunCount} underruns (queued={queued}) - Name={Name}");
-                            // Request the main thread to perform AL.SourcePlay. Avoid calling AL
-                            // functions from the streaming thread to improve safety and avoid
-                            // driver-specific side effects (jumping to start).
-                            _playbackRestartRequested = true;
-                            Log.Debug($"[StreamingAudioClip] Set PlaybackRestartRequested flag - Name={Name}, sourceId={_sourceId}");
-                            // Reset counter after requesting restart
-                            underrunCount = 0;
+                            Log.Warning($"[StreamingAudioClip] Buffer underrun detected - recovering (queued={queued})");
                         }
-                        catch (Exception ex)
-                        {
-                            Log.Warning(ex, "[StreamingAudioClip] Exception while requesting playback restart after underrun");
-                        }
+
+                        // IMMEDIATE restart - don't wait for multiple underruns
+                        _playbackRestartRequested = true;
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        Log.Information($"[StreamingAudioClip] Skipping immediate restart (underrunCount={underrunCount}, queued={queued})");
+                        Log.Warning(ex, "[StreamingAudioClip] Exception during underrun recovery");
                     }
                 }
                 else if (state == (int)ALSourceState.Playing)
                 {
-                    underrunCount = 0; // Reset counter when playing normally
+                    // Reset counter when playing normally
+                    if (consecutiveUnderrunRecoveries > 0)
+                    {
+                        consecutiveUnderrunRecoveries = 0;
+                    }
                 }
 
                 firstIteration = false;
 
-                // Much shorter sleep for faster buffer refills to prevent underruns
+                // OPTIMIZATION: Very short sleep for responsive buffer refilling
+                // Unity uses ~1ms audio tick rate for streaming
                 Thread.Sleep(1);
             }
 

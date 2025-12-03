@@ -474,7 +474,7 @@ void main()
             // Process pending texture uploads from background loading
             try
             {
-                var uploads = Engine.Rendering.TextureCache.ProcessPendingUploads(10); // Increased from 1 to 10 for faster loading
+                var uploads = Engine.Rendering.TextureCache.ProcessPendingUploads(1); // Throttle uploads per-frame to avoid stalls
                 if (uploads > 0)
                 {
                     // CRITICAL: Clear BOTH global AND local material caches when textures are uploaded

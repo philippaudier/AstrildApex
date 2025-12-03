@@ -13,7 +13,6 @@ namespace Engine.Assets
     public const string SkyboxExt = ".skymat";
         public const string MeshAssetExt = ".meshasset";
         private static Guid _defaultWhiteMaterialGuid = Guid.Empty;
-        private static Guid _defaultWaterMaterialGuid = Guid.Empty;
 
         static readonly Dictionary<Guid, AssetRecord> _byGuid = new();
         static readonly Dictionary<string, AssetRecord> _byPath = new(StringComparer.OrdinalIgnoreCase);
@@ -256,6 +255,7 @@ namespace Engine.Assets
             {
                 Guid = Guid.NewGuid(),
                 Name = string.IsNullOrWhiteSpace(name) ? "Material" : name,
+                Shader = "ForwardBase",
                 AlbedoColor = new float[] {1,1,1,1},
                 Metallic = 0f,
                 Roughness = 0.5f
@@ -277,7 +277,98 @@ namespace Engine.Assets
         // Event fired when a material is saved
         public static event System.Action<System.Guid>? MaterialSaved;
 
-        public static void SaveMaterial(MaterialAsset mat)
+        /// <summary>
+        /// Asynchronously save a material to disk on a background thread and
+        /// invoke the MaterialSaved event on the main thread via Engine.Utils.MainThreadInvoker.
+        /// By default this method is non-destructive for the `Shader` field: when
+        /// `overwriteShader` is false, the on-disk `Shader` value is preserved and only
+        /// other fields are updated. Set `overwriteShader` to true to forcefully write
+        /// the provided `mat.Shader` value (used by undo/redo and explicit shader changes).
+        /// This does not block the caller.
+        /// </summary>
+        public static System.Threading.Tasks.Task SaveMaterialAsync(MaterialAsset mat, bool overwriteShader = false)
+        {
+            if (!TryGet(mat.Guid, out var rec)) throw new InvalidOperationException("Material not indexed");
+
+            // Prevent re-entrant saves for same material GUID which can cause overwrite races
+            if (!_savingInProgress.Add(mat.Guid))
+            {
+                try { Console.WriteLine($"[AssetDatabase] Skipping SaveMaterialAsync for {mat.Guid} because save already in progress"); } catch { }
+                return System.Threading.Tasks.Task.CompletedTask;
+            }
+
+            return System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    try
+                    {
+                        var st = new System.Diagnostics.StackTrace();
+                        var frame = st.GetFrame(1);
+                        var method = frame?.GetMethod();
+                        var caller = method != null ? $"{method.DeclaringType?.FullName}.{method.Name}" : "<unknown>";
+                        Console.WriteLine($"[AssetDatabase] SaveMaterialAsync() called by {caller} for {mat.Guid} -> {rec.Path}");
+                    }
+                    catch { Console.WriteLine($"[AssetDatabase] SaveMaterialAsync() called for {mat.Guid} -> {rec.Path}"); }
+
+                    // Prepare material to save. If overwriteShader==false we preserve the
+                    // currently-on-disk Shader value to avoid accidental clobbers.
+                    MaterialAsset toWrite;
+                    try
+                    {
+                        var disk = MaterialAsset.Load(rec.Path);
+                        toWrite = AssetDatabaseHelpers.MergeMaterial(disk, mat, overwriteShader);
+                    }
+                    catch
+                    {
+                        // If loading existing file fails (new file or read error) fall back to mat
+                        toWrite = mat;
+                    }
+
+                    // Save synchronously on background thread
+                    MaterialAsset.SaveAtomic(rec.Path, toWrite);
+                    Console.WriteLine($"[AssetDatabase] Material file written (async): {rec.Path}");
+
+                    EnsureMetaExists(rec);
+
+                    // Readback and update in-memory cache
+                    try
+                    {
+                        var saved = MaterialAsset.Load(rec.Path);
+                        lock (_materialCacheLock)
+                        {
+                            _materialCache[saved.Guid] = saved;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[AssetDatabase] Failed to readback saved material (async): {ex.Message}");
+                    }
+
+                    // Enqueue event invocation on main thread so subscribers can safely touch GL state
+                    try
+                    {
+                        Engine.Utils.MainThreadInvoker.Enqueue(() =>
+                        {
+                            try
+                            {
+                                MaterialSaved?.Invoke(mat.Guid);
+                                Console.WriteLine($"[AssetDatabase] MaterialSaved event invoked (async) for {mat.Guid}");
+                            }
+                            catch { }
+                            try { Engine.Rendering.MaterialRuntime.ClearGlobalCache(); } catch { }
+                        });
+                    }
+                    catch { }
+                }
+                finally
+                {
+                    _savingInProgress.Remove(mat.Guid);
+                }
+            });
+        }
+
+        public static void SaveMaterial(MaterialAsset mat, bool overwriteShader = false)
         {
             if (!TryGet(mat.Guid, out var rec)) throw new InvalidOperationException("Material not indexed");
             // Prevent re-entrant saves for same material GUID which can cause overwrite races
@@ -300,8 +391,19 @@ namespace Engine.Assets
                 }
                 catch { Console.WriteLine($"[AssetDatabase] SaveMaterial() called for {mat.Guid} -> {rec.Path}"); }
 
+                // Prepare material to save by merging only changed fields into the
+                // on-disk material. This avoids overwriting user-intended fields with
+                // stale in-memory values.
+                MaterialAsset toWrite;
+                try
+                {
+                    var disk = MaterialAsset.Load(rec.Path);
+                    toWrite = AssetDatabaseHelpers.MergeMaterial(disk, mat, overwriteShader);
+                }
+                catch { toWrite = mat; }
+
                 // Save synchronously - simple and reliable
-                MaterialAsset.SaveAtomic(rec.Path, mat);
+                MaterialAsset.SaveAtomic(rec.Path, toWrite);
                 Console.WriteLine($"[AssetDatabase] Material file written: {rec.Path}");
 
                 EnsureMetaExists(rec);
@@ -422,6 +524,7 @@ namespace Engine.Assets
             {
                 Guid = Guid.NewGuid(),
                 Name = "Default White",
+                Shader = "ForwardBase",
                 AlbedoColor = new float[] { 1, 1, 1, 1 },
                 AlbedoTexture = null,
                 Metallic = 0f,
@@ -439,114 +542,6 @@ namespace Engine.Assets
             return _defaultWhiteMaterialGuid;
         }
 
-        public static Guid EnsureDefaultWaterMaterial()
-        {
-            // Si on a déjà un GUID en cache et qu'il existe toujours, le retourner
-            if (_defaultWaterMaterialGuid != Guid.Empty && TryGet(_defaultWaterMaterialGuid, out _))
-                return _defaultWaterMaterialGuid;
-
-            // Chercher d'abord physiquement le fichier "WaterMaterial.material"
-            string matFolder = Path.Combine(AssetsRoot, "Materials");
-            string matPath = Path.Combine(matFolder, "WaterMaterial.material");
-
-            if (File.Exists(matPath))
-            {
-                try
-                {
-                    var loadedMat = MaterialAsset.Load(matPath);
-                    _defaultWaterMaterialGuid = loadedMat.Guid;
-
-                    // S'assurer qu'il est indexé
-                    if (!TryGet(_defaultWaterMaterialGuid, out _))
-                    {
-                        var loadedRec = new AssetRecord(loadedMat.Guid, matPath, "Material");
-                        Index(loadedRec);
-                        EnsureMetaExists(loadedRec);
-                    }
-                    return _defaultWaterMaterialGuid;
-                }
-                catch { /* continue si échec de lecture */ }
-            }
-
-            // Chercher dans l'index un material déjà nommé exactement "WaterMaterial"
-            foreach (var assetRec in _byGuid.Values)
-            {
-                if (string.Equals(assetRec.Type, "Material", StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(assetRec.Name, "WaterMaterial", StringComparison.OrdinalIgnoreCase))
-                {
-                    _defaultWaterMaterialGuid = assetRec.Guid;
-                    return _defaultWaterMaterialGuid;
-                }
-            }
-
-            // Aucun "WaterMaterial" trouvé - créer un nouveau UNIQUEMENT avec ce nom exact
-            Directory.CreateDirectory(matFolder);
-
-            var mat = new MaterialAsset
-            {
-                Guid = Guid.NewGuid(),
-                Name = "WaterMaterial",
-                Shader = "Water", // Use Water shader
-                AlbedoColor = new float[] { 0.1f, 0.3f, 0.5f, 0.8f }, // Blue water color
-                AlbedoTexture = null,
-                Metallic = 0f,
-                Roughness = 0.1f,
-                WaterProperties = new WaterMaterialProperties
-                {
-                    // Wave parameters - moderate waves by default
-                    WaveAmplitude = 0.15f,
-                    WaveFrequency = 1.2f,
-                    WaveSpeed = 1.5f,
-                    WaveDirection = new float[] { 1f, 0f },
-
-                    // Water color and appearance
-                    WaterColor = new float[] { 0.1f, 0.3f, 0.5f, 0.8f },
-                    Opacity = 0.8f,
-
-                    // Albedo texture
-                    AlbedoTexture = null,
-                    AlbedoColor = new float[] { 1.0f, 1.0f, 1.0f, 1.0f },
-
-                    // Normal map
-                    NormalTexture = null,
-                    NormalStrength = 1.0f,
-
-                    // PBR properties
-                    Metallic = 0.0f,
-                    Smoothness = 0.9f,
-
-                    // Noise textures (will be null initially - user can add textures)
-                    NoiseTexture1 = null,
-                    NoiseTexture2 = null,
-                    Noise1Speed = new float[] { 0.03f, 0.03f },
-                    Noise1Direction = new float[] { 1f, 0f },
-                    Noise1Tiling = new float[] { 1f, 1f },
-                    Noise1Strength = 0.05f,
-                    Noise2Speed = new float[] { 0.02f, -0.02f },
-                    Noise2Direction = new float[] { 0f, 1f },
-                    Noise2Tiling = new float[] { 1.5f, 1.5f },
-                    Noise2Strength = 0.03f,
-
-                    // Refraction and fresnel
-                    RefractionStrength = 0.5f,
-                    FresnelPower = 2.0f,
-                    FresnelColor = new float[] { 0.8f, 0.9f, 1.0f, 1.0f },
-
-                    // Tessellation
-                    TessellationLevel = 32.0f
-                }
-            };
-
-            // Sauver directement avec le nom exact (pas de numérotation)
-            MaterialAsset.Save(matPath, mat);
-
-            var rec = new AssetRecord(mat.Guid, matPath, "Material");
-            Index(rec);
-            EnsureMetaExists(rec);
-
-            _defaultWaterMaterialGuid = mat.Guid;
-            return _defaultWaterMaterialGuid;
-        }
 
         public static Guid CloneMaterial(Guid srcGuid, string? newName = null)
         {
@@ -914,6 +909,118 @@ namespace Engine.Assets
         {
             public Guid guid { get; set; }
             public string? type { get; set; }
+        }
+    }
+}
+
+// ------------------ Merge helper for non-destructive material saves ------------------
+namespace Engine.Assets
+{
+    public static class AssetDatabaseHelpers
+    {
+        // Merge incoming -> disk: start from disk state and copy only fields that differ
+        // from incoming. If overwriteShader is true, use incoming.Shader; otherwise keep disk.Shader.
+        public static MaterialAsset MergeMaterial(MaterialAsset disk, MaterialAsset incoming, bool overwriteShader)
+        {
+            // Start from disk copy
+            var merged = new MaterialAsset
+            {
+                Guid = disk.Guid,
+                Name = disk.Name,
+            Shader = disk.Shader,
+                AlbedoTexture = disk.AlbedoTexture,
+                AlbedoColor = disk.AlbedoColor != null ? (float[])disk.AlbedoColor.Clone() : new float[] {1,1,1,1},
+                NormalTexture = disk.NormalTexture,
+                NormalStrength = disk.NormalStrength,
+                MetallicTexture = disk.MetallicTexture,
+                RoughnessTexture = disk.RoughnessTexture,
+                MetallicRoughnessTexture = disk.MetallicRoughnessTexture,
+                OcclusionTexture = disk.OcclusionTexture,
+                OcclusionStrength = disk.OcclusionStrength,
+                EmissiveTexture = disk.EmissiveTexture,
+                EmissiveColor = disk.EmissiveColor != null ? (float[])disk.EmissiveColor.Clone() : new float[] {1f,1f,1f},
+                HeightTexture = disk.HeightTexture,
+                HeightScale = disk.HeightScale,
+                DetailMaskTexture = disk.DetailMaskTexture,
+                DetailAlbedoTexture = disk.DetailAlbedoTexture,
+                DetailNormalTexture = disk.DetailNormalTexture,
+                Metallic = disk.Metallic,
+                Roughness = disk.Roughness,
+                TextureTiling = disk.TextureTiling != null ? (float[])disk.TextureTiling.Clone() : new float[] {1f,1f},
+                TextureOffset = disk.TextureOffset != null ? (float[])disk.TextureOffset.Clone() : new float[] {0f,0f},
+                UseTriplanar = disk.UseTriplanar,
+                TriplanarScale = disk.TriplanarScale,
+                TriplanarBlendSharpness = disk.TriplanarBlendSharpness,
+                TransparencyMode = disk.TransparencyMode,
+                Opacity = disk.Opacity,
+                Saturation = disk.Saturation,
+                Brightness = disk.Brightness,
+                Contrast = disk.Contrast,
+                Hue = disk.Hue,
+                Emission = disk.Emission,
+                GlassProperties = disk.GlassProperties
+            };
+
+            // Overwrite simple fields when incoming differs from disk
+            if (!string.Equals(incoming.Name, disk.Name, StringComparison.Ordinal)) merged.Name = incoming.Name;
+            if (overwriteShader) merged.Shader = incoming.Shader;
+
+            // Note: TerrainLayers are intentionally ignored here (legacy property).
+
+            if (incoming.AlbedoTexture != disk.AlbedoTexture) merged.AlbedoTexture = incoming.AlbedoTexture;
+            if (!ArrayEquals(incoming.AlbedoColor, disk.AlbedoColor)) merged.AlbedoColor = (float[])incoming.AlbedoColor.Clone();
+
+            if (incoming.NormalTexture != disk.NormalTexture) merged.NormalTexture = incoming.NormalTexture;
+            if (Math.Abs(incoming.NormalStrength - disk.NormalStrength) > 1e-6f) merged.NormalStrength = incoming.NormalStrength;
+
+            if (incoming.MetallicTexture != disk.MetallicTexture) merged.MetallicTexture = incoming.MetallicTexture;
+            if (incoming.RoughnessTexture != disk.RoughnessTexture) merged.RoughnessTexture = incoming.RoughnessTexture;
+            if (incoming.MetallicRoughnessTexture != disk.MetallicRoughnessTexture) merged.MetallicRoughnessTexture = incoming.MetallicRoughnessTexture;
+
+            if (incoming.OcclusionTexture != disk.OcclusionTexture) merged.OcclusionTexture = incoming.OcclusionTexture;
+            if (Math.Abs(incoming.OcclusionStrength - disk.OcclusionStrength) > 1e-6f) merged.OcclusionStrength = incoming.OcclusionStrength;
+
+            if (incoming.EmissiveTexture != disk.EmissiveTexture) merged.EmissiveTexture = incoming.EmissiveTexture;
+            if (!ArrayEquals(incoming.EmissiveColor, disk.EmissiveColor)) merged.EmissiveColor = (float[])incoming.EmissiveColor.Clone();
+
+            if (incoming.HeightTexture != disk.HeightTexture) merged.HeightTexture = incoming.HeightTexture;
+            if (Math.Abs(incoming.HeightScale - disk.HeightScale) > 1e-6f) merged.HeightScale = incoming.HeightScale;
+
+            if (incoming.DetailMaskTexture != disk.DetailMaskTexture) merged.DetailMaskTexture = incoming.DetailMaskTexture;
+            if (incoming.DetailAlbedoTexture != disk.DetailAlbedoTexture) merged.DetailAlbedoTexture = incoming.DetailAlbedoTexture;
+            if (incoming.DetailNormalTexture != disk.DetailNormalTexture) merged.DetailNormalTexture = incoming.DetailNormalTexture;
+
+            if (Math.Abs(incoming.Metallic - disk.Metallic) > 1e-6f) merged.Metallic = incoming.Metallic;
+            if (Math.Abs(incoming.Roughness - disk.Roughness) > 1e-6f) merged.Roughness = incoming.Roughness;
+
+            if (!ArrayEquals(incoming.TextureTiling, disk.TextureTiling)) merged.TextureTiling = (float[])incoming.TextureTiling.Clone();
+            if (!ArrayEquals(incoming.TextureOffset, disk.TextureOffset)) merged.TextureOffset = (float[])incoming.TextureOffset.Clone();
+
+            if (incoming.UseTriplanar != disk.UseTriplanar) merged.UseTriplanar = incoming.UseTriplanar;
+            if (Math.Abs(incoming.TriplanarScale - disk.TriplanarScale) > 1e-6f) merged.TriplanarScale = incoming.TriplanarScale;
+            if (Math.Abs(incoming.TriplanarBlendSharpness - disk.TriplanarBlendSharpness) > 1e-6f) merged.TriplanarBlendSharpness = incoming.TriplanarBlendSharpness;
+
+            if (incoming.TransparencyMode != disk.TransparencyMode) merged.TransparencyMode = incoming.TransparencyMode;
+            if (Math.Abs(incoming.Opacity - disk.Opacity) > 1e-6f) merged.Opacity = incoming.Opacity;
+
+            if (Math.Abs(incoming.Saturation - disk.Saturation) > 1e-6f) merged.Saturation = incoming.Saturation;
+            if (Math.Abs(incoming.Brightness - disk.Brightness) > 1e-6f) merged.Brightness = incoming.Brightness;
+            if (Math.Abs(incoming.Contrast - disk.Contrast) > 1e-6f) merged.Contrast = incoming.Contrast;
+            if (Math.Abs(incoming.Hue - disk.Hue) > 1e-6f) merged.Hue = incoming.Hue;
+            if (Math.Abs(incoming.Emission - disk.Emission) > 1e-6f) merged.Emission = incoming.Emission;
+
+            if (incoming.GlassProperties != disk.GlassProperties) merged.GlassProperties = incoming.GlassProperties;
+
+            return merged;
+        }
+
+        private static bool ArrayEquals(float[]? x, float[]? y)
+        {
+            if (x == null && y == null) return true;
+            if (x == null || y == null) return false;
+            if (x.Length != y.Length) return false;
+            for (int i = 0; i < x.Length; i++) if (Math.Abs(x[i] - y[i]) > 1e-6f) return false;
+            return true;
         }
     }
 }
