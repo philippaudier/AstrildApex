@@ -438,6 +438,17 @@ public static class Program
             Editor.State.InputSettings.ApplySettingsToInputManager();
             Editor.Utils.StartupProfiler.EndSection();
 
+            // --- Initialize Engine Update Pipeline ---
+            loadingManager.UpdateStep("Initializing engine pipeline...");
+            Editor.Utils.StartupProfiler.BeginSection("Engine Pipeline Init");
+            var pipeline = Engine.Core.EngineUpdatePipeline.Instance;
+            pipeline.RegisterSystem(new Engine.Core.Systems.InputUpdateSystem());
+            pipeline.RegisterSystem(new Engine.Core.Systems.PhysicsUpdateSystem());
+            pipeline.RegisterSystem(new Editor.Systems.PlayModeSimulationSystem());
+            pipeline.RegisterSystem(new Engine.Core.Systems.AudioUpdateSystem());
+            Log.Information("Engine update pipeline initialized with {Count} systems", pipeline.GetAllSystems().Count);
+            Editor.Utils.StartupProfiler.EndSection();
+
             // --- PostProcessManager init ---
             loadingManager.UpdateStep("Initializing post-processing...");
             Editor.Utils.StartupProfiler.BeginSection("PostProcess Manager Init");
@@ -502,14 +513,9 @@ public static class Program
                 wantMouse
             );
 
-            // Update InputSystem
-            Engine.Input.InputManager.Instance?.Update();
-
-            // Update AudioEngine
-            Engine.Audio.Core.AudioEngine.Instance.Update((float)e.Time);
-
-            // Mettre à jour la simulation du jeu en Play Mode
-            PlayMode.UpdateSimulation((float)e.Time);
+            // Execute engine update pipeline (handles Input, Audio, PlayMode simulation, etc.)
+            // The pipeline provides crash isolation and performance profiling
+            Engine.Core.EngineUpdatePipeline.Instance.ExecuteFrame((float)e.Time);
 
             // UI Editor
             EditorUI.DrawDockspaceAndMainMenu();

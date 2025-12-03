@@ -91,6 +91,7 @@ public static class EditorUI
                 var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
                 ImGui.Separator();
                 var spo = ShowPerformanceOverlay; if (ImGui.MenuItem("⚡ Performance Overlay", null, spo)) ShowPerformanceOverlay = !ShowPerformanceOverlay;
+                var ssp = SystemsProfilerPanel.IsOpen; if (ImGui.MenuItem("🔧 Systems Profiler", null, ssp)) SystemsProfilerPanel.IsOpen = !SystemsProfilerPanel.IsOpen;
                 ImGui.EndMenu();
             }
 
@@ -205,6 +206,11 @@ public static class EditorUI
 
         if (ShowDemoWindow) ImGui.ShowDemoWindow(ref ShowDemoWindow);
         if (ShowIconManager) IconManager.RenderIconsTestWindow();
+
+        // Engine systems profiler panel
+        PanelProfiler.BeginPanel("SystemsProfiler");
+        SystemsProfilerPanel.Draw();
+        PanelProfiler.EndPanel("SystemsProfiler");
 
         // Render settings panels
         PanelProfiler.BeginPanel("InputSettings");
