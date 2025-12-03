@@ -58,7 +58,7 @@ namespace Editor.UIManager.Profiling
 
         private static readonly Dictionary<string, PanelStats> _stats = new Dictionary<string, PanelStats>();
         private static readonly object _lock = new object();
-        private static bool _enabled = true;
+        private static bool _enabled = false; // DISABLED FOR PERFORMANCE TESTING
 
         public static bool Enabled
         {
