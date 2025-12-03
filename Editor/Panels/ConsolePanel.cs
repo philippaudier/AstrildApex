@@ -50,7 +50,11 @@ namespace Editor.Panels
                 // Recompute counts (over all entries) and the filtered list (for current filters/search)
                 _cachedCounts.Clear();
                 foreach (LogLevel lv in Enum.GetValues(typeof(LogLevel))) _cachedCounts[lv] = 0;
-                var all = LogManager.Entries;
+
+                // CRITICAL FIX: ToList() to avoid "Collection was modified" exception
+                // The log collection can be modified by background threads while we iterate
+                var all = LogManager.Entries.ToList();
+
                 foreach (var e in all) _cachedCounts[e.Level]++;
 
                 _cachedFilteredEntries = all

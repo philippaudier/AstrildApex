@@ -301,21 +301,9 @@ namespace Engine.Audio.Components
                 LoadClipFromGuid();
             }
 
-            // CRITICAL FIX: If this is a StreamingAudioClip that's already streaming (happens during
-            // scene cloning when Edit Mode sources share clips with Play Mode), force stop it to
-            // ensure decoder is in clean state. This prevents the "looping first 2 seconds" bug.
-            if (_clip is StreamingAudioClip streamingClip && streamingClip.IsStreamingActive)
-            {
-                try
-                {
-                    streamingClip.StopStreaming();
-                    Log.Information($"[AudioSource] Force-stopped streaming clip during OnAttached: {_clip.Name}");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "[AudioSource] Failed to stop streaming clip during OnAttached");
-                }
-            }
+            // NOTE: Do NOT stop streaming clips during OnAttached.
+            // The Play() method will handle stopping any active streams before starting new ones.
+            // Stopping here can kill streaming threads prematurely and cause the "looping bug".
 
             if (!AudioEngine.Instance.IsInitialized)
             {
@@ -610,11 +598,49 @@ namespace Engine.Audio.Components
             // Handle streaming vs non-streaming clips differently
             if (clip!.IsStreaming && _streamingClip != null)
             {
-                // Stop any existing streaming before starting new one
+                // CRITICAL FIX: Streaming clips may be shared between Edit Mode and Play Mode via AudioImporter cache.
+                // We MUST ensure the clip is not actively streaming on ANY source before starting.
+                // This prevents the "looping first 4 seconds" bug caused by residual streaming state.
                 if (_streamingClip.IsStreamingActive)
                 {
-                    Log.Warning($"[AudioSource] Stopping existing stream before starting new one for: {clip!.Name}");
+                    Log.Warning($"[AudioSource] Clip is actively streaming elsewhere - forcing stop before restarting: {clip!.Name}");
                     _streamingClip.StopStreaming();
+
+                    // Give OpenAL time to process the stop and cleanup
+                    System.Threading.Thread.Sleep(50);
+                }
+
+                // CRITICAL FIX: Recreate the OpenAL source for streaming clips to avoid buffer processing bugs.
+                // When transitioning from Edit to Play Mode, the cloned AudioSource inherits the source ID
+                // from Edit Mode, which can be in a bad state where buffers never get marked as "processed".
+                // Deleting and recreating ensures a fresh, clean OpenAL source.
+                try
+                {
+                    if (AL.IsSource(_sourceId))
+                    {
+                        AL.SourceStop(_sourceId);
+                        AL.DeleteSource(_sourceId);
+                        Log.Information($"[AudioSource] Deleted old OpenAL source {_sourceId} before streaming");
+                    }
+
+                    _sourceId = AL.GenSource();
+
+                    // CRITICAL: Reset property caches to ensure all properties (including pitch) are applied
+                    ResetPropertyCaches();
+
+                    UpdateSourceProperties();
+                    ApplyMixerGroupEffects();
+                    ApplySourceFilters();
+                    if (SpatialBlend > 0.1f)
+                    {
+                        ReverbZoneExtensions.ApplyReverbZones(this, _sourceId);
+                    }
+                    Log.Information($"[AudioSource] Created fresh OpenAL source {_sourceId} for streaming: {clip!.Name}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[AudioSource] Failed to recreate OpenAL source for streaming");
+                    return;
                 }
 
                 // For streaming clips, set loop on decoder and start the streaming thread
@@ -622,7 +648,14 @@ namespace Engine.Audio.Components
                 int queued = _streamingClip.StartStreaming(_sourceId, resetPosition, startThread: false);
                 if (queued > 0)
                 {
+                    // CRITICAL FIX: Call AL.SourcePlay() TWICE to force OpenAL to actually start processing buffers.
+                    // On the first Play Mode entry after scene load, OpenAL sometimes gets into a state where
+                    // the source is "Playing" but buffers are never marked as "processed". Calling SourcePlay()
+                    // twice (with a small delay) forces OpenAL to properly initialize its buffer processing pipeline.
                     AL.SourcePlay(_sourceId);
+                    System.Threading.Thread.Sleep(10); // Give OpenAL time to initialize
+                    AL.SourcePlay(_sourceId); // Second call to force buffer processing to actually start
+
                     // Start the streaming thread after initiating playback to avoid a
                     // race where the thread sees the source not yet playing and logs
                     // an underrun immediately.

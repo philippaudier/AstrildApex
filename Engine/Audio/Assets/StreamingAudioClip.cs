@@ -19,10 +19,9 @@ namespace Engine.Audio.Assets
 
         /// <summary>Buffers OpenAL pour le streaming (3-4 buffers rotatifs)</summary>
         private readonly int[] _buffers;
-        // CRITICAL: Increased from 6 to 12 buffers to handle slow decoder initialization on first load
-        // 12 buffers × 32768 samples ÷ 44100 Hz = ~8.9 seconds of audio buffer
-        // This gives the streaming thread enough time to start refilling before underrun
-        private const int BufferCount = 12;
+        // Audio streaming buffer count - 6 buffers = ~4.5 seconds of audio
+        // With proactive thread wake-up, this is sufficient even on first load
+        private const int BufferCount = 6;
         private const int BufferSizeInSamples = 32768; // larger buffer for more headroom
 
         /// <summary>Durée totale en secondes</summary>
@@ -215,6 +214,47 @@ namespace Engine.Audio.Assets
                 Log.Warning("[StreamingAudioClip] Already streaming");
                 return 0;
             }
+
+            // CRITICAL FIX: Ensure the OpenAL source is in a completely clean state BEFORE creating decoder
+            // This must happen first to prevent residual buffers from previous playback sessions
+            try
+            {
+                // Stop the source first to ensure all buffers can be unqueued
+                if (AL.IsSource(sourceId))
+                {
+                    AL.SourceStop(sourceId);
+
+                    // Wait a moment for OpenAL to process the stop command
+                    System.Threading.Thread.Sleep(5);
+
+                    // Get the count of queued buffers (both processed and unprocessed)
+                    AL.GetSource(sourceId, ALGetSourcei.BuffersQueued, out int queuedCount);
+                    if (queuedCount > 0)
+                    {
+                        Log.Information($"[StreamingAudioClip] Clearing {queuedCount} residual buffers before starting streaming: {Name}");
+
+                        // After SourceStop, all buffers become unqueueable
+                        int[] bufferIds = new int[queuedCount];
+                        AL.SourceUnqueueBuffers(sourceId, queuedCount, bufferIds);
+
+                        // Verify cleanup succeeded
+                        AL.GetSource(sourceId, ALGetSourcei.BuffersQueued, out int remainingBuffers);
+                        if (remainingBuffers > 0)
+                        {
+                            Log.Warning($"[StreamingAudioClip] Failed to clear all buffers - {remainingBuffers} remain");
+                        }
+                    }
+
+                    // Reset the source position to beginning
+                    AL.Source(sourceId, ALSourcef.SecOffset, 0f);
+                    AL.Source(sourceId, ALSourcei.Buffer, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[StreamingAudioClip] Failed to clean OpenAL source before starting");
+            }
+
             // Create a fresh decoder instance for this streaming session so multiple
             // playbacks of the same clip do not interfere with each other.
             _activeDecoder = CreateDecoderInstance();
@@ -230,28 +270,86 @@ namespace Engine.Audio.Assets
             _stopStreaming = false;
             _isPaused = false;
 
-            // CRITICAL FIX: Ensure the OpenAL source has NO queued buffers before starting
-            // This prevents residual audio from previous playbacks causing a loop on the first 2 seconds
-            try
-            {
-                AL.GetSource(sourceId, ALGetSourcei.BuffersQueued, out int queuedCount);
-                if (queuedCount > 0)
-                {
-                    // Unqueue all buffers to ensure clean state
-                    int[] bufferIds = new int[queuedCount];
-                    AL.SourceUnqueueBuffers(sourceId, queuedCount, bufferIds);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "[StreamingAudioClip] Failed to clear residual buffers from source");
-            }
-
             if (resetPosition)
             {
                 _currentTime = 0f;
                 _totalSamplesRead = 0;
                 _activeDecoder.Reset();
+            }
+
+            // CRITICAL FIX: Recreate OpenAL buffers to ensure completely clean state
+            // Simply clearing buffer data with IntPtr.Zero doesn't always work reliably.
+            // Deleting and regenerating buffers guarantees no residual audio data.
+            try
+            {
+                // Check if buffers are currently valid
+                bool buffersNeedRecreation = false;
+                for (int i = 0; i < BufferCount; i++)
+                {
+                    if (!AL.IsBuffer(_buffers[i]))
+                    {
+                        buffersNeedRecreation = true;
+                        break;
+                    }
+                }
+
+                // If buffers are valid, check if they're in use (queued on any source)
+                // We can only delete buffers that are NOT queued
+                bool canDeleteBuffers = true;
+                if (!buffersNeedRecreation)
+                {
+                    try
+                    {
+                        AL.GetBuffer(_buffers[0], ALGetBufferi.Frequency, out _);
+                        // If we can query without error, buffers are valid and not queued
+                    }
+                    catch
+                    {
+                        // Buffers may be queued or in use - cannot delete
+                        canDeleteBuffers = false;
+                    }
+                }
+
+                // Recreate buffers if needed and possible
+                if (buffersNeedRecreation || (canDeleteBuffers && !buffersNeedRecreation))
+                {
+                    // Delete old buffers if they exist
+                    for (int i = 0; i < BufferCount; i++)
+                    {
+                        if (AL.IsBuffer(_buffers[i]))
+                        {
+                            try
+                            {
+                                AL.DeleteBuffer(_buffers[i]);
+                            }
+                            catch (Exception delEx)
+                            {
+                                Log.Debug($"[StreamingAudioClip] Could not delete buffer {i}: {delEx.Message}");
+                            }
+                        }
+                    }
+
+                    // Generate fresh buffers
+                    AL.GenBuffers(BufferCount, _buffers);
+                    Log.Information($"[StreamingAudioClip] Recreated {BufferCount} OpenAL buffers for clean state: {Name}");
+                }
+                else
+                {
+                    // Cannot recreate - fallback to clearing with empty data
+                    for (int i = 0; i < BufferCount; i++)
+                    {
+                        try
+                        {
+                            AL.BufferData(_buffers[i], Format, IntPtr.Zero, 0, Frequency);
+                        }
+                        catch { }
+                    }
+                    Log.Information($"[StreamingAudioClip] Cleared buffer data (could not recreate): {Name}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[StreamingAudioClip] Failed to recreate/clear buffers");
             }
 
             // Pré-remplir tous les buffers
@@ -339,8 +437,13 @@ namespace Engine.Audio.Assets
         /// </summary>
         public void StartStreamingThread()
         {
+            Log.Information($"[StreamingAudioClip] StartStreamingThread called: IsStreamingActive={IsStreamingActive}, activeDecoder={((_activeDecoder == null) ? "null" : "present")}, sourceId={_sourceId}");
+
             if (IsStreamingActive || _activeDecoder == null || _sourceId == -1)
+            {
+                Log.Warning($"[StreamingAudioClip] Cannot start thread - already active or invalid state");
                 return;
+            }
 
             _stopStreaming = false;
             _isPaused = false;
@@ -350,6 +453,7 @@ namespace Engine.Audio.Assets
                 IsBackground = true
             };
             _streamingThread.Start();
+            Log.Information($"[StreamingAudioClip] Streaming thread created and started for {Name}");
         }
 
         /// <summary>
@@ -450,11 +554,61 @@ namespace Engine.Audio.Assets
             // - Minimal logging to reduce thread blocking
             // - Proactive buffer refilling to prevent underruns
 
+            Log.Information($"[StreamingThread] *** THREAD STARTED for {Name} ***");
+
             bool firstIteration = true;
             int consecutiveUnderrunRecoveries = 0;
 
-            // Give the main thread time to call AL.SourcePlay before we start checking state
-            Thread.Sleep(20);
+            // CRITICAL FIX: Small delay to let OpenAL start playing before checking for processed buffers
+            // 50ms is enough - 100ms was too long and caused the "looping bug" if user stopped quickly
+            System.Threading.Thread.Sleep(50);
+
+            Log.Information($"[StreamingThread] Starting main loop, stopStreaming={_stopStreaming}, activeDecoder={(_activeDecoder != null ? "present" : "null")}");
+
+            // CRITICAL FIX: Wait for OpenAL to actually START PROCESSING buffers
+            // The source may be in "Playing" state, but OpenAL hasn't started consuming buffers yet.
+            // We need to wait for at least ONE buffer to be marked as "processed" before entering
+            // the main loop, otherwise we'll loop indefinitely with BuffersProcessed=0.
+            int playCheckAttempts = 0;
+            int maxWaitAttempts = 200; // Wait up to 2 seconds (200 * 10ms)
+
+            while (playCheckAttempts < maxWaitAttempts && !_stopStreaming)
+            {
+                if (!AL.IsSource(_sourceId))
+                {
+                    Log.Warning($"[StreamingThread] Source {_sourceId} became invalid during play check");
+                    return;
+                }
+
+                // Check if source is playing
+                AL.GetSource(_sourceId, ALGetSourcei.SourceState, out int state);
+
+                // Also check how many buffers have been processed
+                AL.GetSource(_sourceId, ALGetSourcei.BuffersProcessed, out int processedCount);
+                AL.GetSource(_sourceId, ALGetSourcei.BuffersQueued, out int queuedCount);
+
+                // Log every 50 attempts (every 500ms) to avoid spam
+                if (playCheckAttempts % 50 == 0)
+                {
+                    Log.Information($"[StreamingThread] Waiting for playback to start... attempt={playCheckAttempts}, state={state}, queued={queuedCount}, processed={processedCount}");
+                }
+
+                // Success condition: source is playing AND at least one buffer has been processed
+                if (state == (int)ALSourceState.Playing && processedCount > 0)
+                {
+                    Log.Information($"[StreamingThread] ✓ Playback confirmed after {playCheckAttempts} attempts (state=Playing, processed={processedCount})");
+                    break;
+                }
+
+                System.Threading.Thread.Sleep(10);
+                playCheckAttempts++;
+            }
+
+            if (playCheckAttempts >= maxWaitAttempts)
+            {
+                Log.Warning($"[StreamingThread] OpenAL never started processing buffers after {maxWaitAttempts} attempts - aborting thread");
+                return;
+            }
 
             while (!_stopStreaming && _activeDecoder != null)
             {
@@ -486,6 +640,12 @@ namespace Engine.Audio.Assets
 
                     try
                     {
+                        // DIAGNOSTIC: Log streaming thread activity
+                        if (!firstIteration)
+                        {
+                            Log.Information($"[StreamingThread] Processing {toProcess} buffers (processed={processed})");
+                        }
+
                         // Unqueue all processed buffers at once
                         AL.SourceUnqueueBuffers(_sourceId, toProcess, processedBuffers);
 
@@ -580,7 +740,7 @@ namespace Engine.Audio.Assets
                 Thread.Sleep(1);
             }
 
-            Log.Debug($"[StreamingAudioClip] Streaming thread exiting: {Name}");
+            Log.Information($"[StreamingThread] *** THREAD EXITING for {Name}, stopStreaming={_stopStreaming}, activeDecoder={(_activeDecoder != null ? "present" : "null")} ***");
         }
 
         /// <summary>
@@ -605,17 +765,21 @@ namespace Engine.Audio.Assets
                 catch { }
                 return false;
             }
-            
-            // Mettre à jour le temps de lecture
-            try
-            {
-                // Detailed per-buffer fill info is noisy; log at Debug level only
-                Log.Debug($"[StreamingAudioClip] FillBuffer: buffer={bufferId}, samplesRead={samplesRead}, channels={Channels}, freq={Frequency}, currentTimeBefore={_currentTime:F3}");
-            }
-            catch { }
 
+            // DIAGNOSTIC: Log buffer fill with more detail to detect if decoder is stuck
+            int oldTotalSamples = _totalSamplesRead;
+            float oldTime = _currentTime;
+
+            // Mettre à jour le temps de lecture
             _totalSamplesRead += samplesRead / Channels;
             _currentTime = (float)_totalSamplesRead / Frequency;
+
+            try
+            {
+                // DIAGNOSTIC: Always log during startup to see if decoder advances
+                Log.Information($"[StreamingAudioClip] FillBuffer: buffer={bufferId}, samplesRead={samplesRead}, time {oldTime:F3}s -> {_currentTime:F3}s (delta={_currentTime - oldTime:F3}s)");
+            }
+            catch { }
 
             // Charger les données dans le buffer OpenAL
             unsafe
