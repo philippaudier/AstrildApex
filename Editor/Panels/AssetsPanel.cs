@@ -719,14 +719,30 @@ namespace Editor.Panels
             int cols = Math.Max(1, (int)MathF.Floor((regionW + spacing) / (tileW + spacing)));
             if (cols > 16) cols = 16;
 
+            // PERFORMANCE: Calculate visible rect to skip offscreen items
+            var windowPos = ImGui.GetWindowPos();
+            var scrollY = ImGui.GetScrollY();
+            var windowHeight = ImGui.GetWindowSize().Y;
+            float visibleTop = scrollY - tileH; // Include one row above for smooth scrolling
+            float visibleBottom = scrollY + windowHeight + tileH; // Include one row below
+
             int col = 0, row = 0;
 
             // folders
             foreach (var rel in childDirs)
             {
                 var pos = new SysVec2(startX + col * (tileW + spacing), startY + row * (tileH + spacing));
-                ImGui.SetCursorPos(pos);
-                DrawFolderTileGrid(rel, tileW, tileH);
+
+                // PERFORMANCE: Only draw if potentially visible
+                float itemTop = pos.Y;
+                float itemBottom = pos.Y + tileH;
+                bool isVisible = itemBottom >= visibleTop && itemTop <= visibleBottom;
+
+                if (isVisible)
+                {
+                    ImGui.SetCursorPos(pos);
+                    DrawFolderTileGrid(rel, tileW, tileH);
+                }
 
                 _displayOrder.Add(KeyFolder(rel));
                 if (++col >= cols) { col = 0; row++; }
@@ -736,8 +752,17 @@ namespace Editor.Panels
             foreach (var a in files)
             {
                 var pos = new SysVec2(startX + col * (tileW + spacing), startY + row * (tileH + spacing));
-                ImGui.SetCursorPos(pos);
-                DrawAssetTileGrid(a, tileW, tileH);
+
+                // PERFORMANCE: Only draw if potentially visible
+                float itemTop = pos.Y;
+                float itemBottom = pos.Y + tileH;
+                bool isVisible = itemBottom >= visibleTop && itemTop <= visibleBottom;
+
+                if (isVisible)
+                {
+                    ImGui.SetCursorPos(pos);
+                    DrawAssetTileGrid(a, tileW, tileH);
+                }
 
                 _displayOrder.Add(KeyAsset(a.Guid));
                 if (++col >= cols) { col = 0; row++; }
@@ -1262,14 +1287,36 @@ namespace Editor.Panels
             ImGui.TextDisabled("Path"); ImGui.NextColumn();
             ImGui.Separator();
 
+            // PERFORMANCE: Calculate visible range for culling
+            var scrollY = ImGui.GetScrollY();
+            var windowHeight = ImGui.GetWindowSize().Y;
+            float rowH = ImGui.GetTextLineHeightWithSpacing();
+            float visibleTop = scrollY - rowH * 2; // 2 rows margin
+            float visibleBottom = scrollY + windowHeight + rowH * 2;
+
+            float currentY = ImGui.GetCursorPosY();
+
             // Folders
             foreach (var rel in childDirs)
             {
+                // PERFORMANCE: Check if row is visible
+                float itemTop = currentY;
+                float itemBottom = currentY + rowH;
+                bool isRowVisible = itemBottom >= visibleTop && itemTop <= visibleBottom;
+
+                if (!isRowVisible)
+                {
+                    // Item offscreen - just advance cursor without drawing
+                    ImGui.Dummy(new SysVec2(1, rowH));
+                    ImGui.NextColumn(); ImGui.NextColumn(); ImGui.NextColumn();
+                    currentY += rowH;
+                    continue;
+                }
+
                 ImGui.PushID($"row-folder::{rel}");
                 bool selected = _selFolders.Contains(rel);
 
                 // Taille icône liste (entre 16 et 24 px)
-                float rowH = ImGui.GetTextLineHeightWithSpacing();
                 float iconSz = MathF.Max(16f, MathF.Min(24f, _iconSize * 0.35f));
 
                 // Bornes de la ligne pour sélection rectangulaire & DnD
@@ -1328,15 +1375,29 @@ namespace Editor.Panels
                 ImGui.NextColumn(); ImGui.TextDisabled("Folder"); ImGui.NextColumn();
                 ImGui.TextDisabled(rel); ImGui.NextColumn();
                 ImGui.PopID();
+                currentY += rowH;
             }
 
             // Files
             foreach (var a in files)
             {
+                // PERFORMANCE: Check if row is visible
+                float itemTop = currentY;
+                float itemBottom = currentY + rowH;
+                bool isRowVisible = itemBottom >= visibleTop && itemTop <= visibleBottom;
+
+                if (!isRowVisible)
+                {
+                    // Item offscreen - just advance cursor without drawing
+                    ImGui.Dummy(new SysVec2(1, rowH));
+                    ImGui.NextColumn(); ImGui.NextColumn(); ImGui.NextColumn();
+                    currentY += rowH;
+                    continue;
+                }
+
                 ImGui.PushID(a.Guid.ToString());
                 bool selected = _selAssets.Contains(a.Guid);
 
-                float rowH = ImGui.GetTextLineHeightWithSpacing();
                 float iconSz = MathF.Max(16f, MathF.Min(24f, _iconSize * 0.35f));
 
                 var rowStart = ImGui.GetCursorScreenPos();
@@ -1459,6 +1520,7 @@ namespace Editor.Panels
                 ImGui.NextColumn(); ImGui.Text(a.Type); ImGui.NextColumn();
                 ImGui.TextDisabled(RelPath(a.Path)); ImGui.NextColumn();
                 ImGui.PopID();
+                currentY += rowH;
             }
 
             ImGui.Columns(1);
