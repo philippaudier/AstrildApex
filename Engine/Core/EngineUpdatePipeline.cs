@@ -78,6 +78,9 @@ namespace Engine.Core
         private double _fixedTimeAccumulator = 0.0;
         private const double FixedTimeStep = 1.0 / 60.0; // 60 Hz physics
 
+        // PERFORMANCE: Cache UpdatePhase enum values to avoid Enum.GetValues() allocation every frame
+        private static readonly UpdatePhase[] AllPhases = (UpdatePhase[])Enum.GetValues(typeof(UpdatePhase));
+
         public bool ProfilingEnabled { get; set; } = false;
 
         private class SystemMetrics
@@ -191,8 +194,8 @@ namespace Engine.Core
         {
             RebuildPipeline();
 
-            // Execute each phase in order
-            foreach (UpdatePhase phase in Enum.GetValues(typeof(UpdatePhase)))
+            // Execute each phase in order - use cached enum values to avoid allocation
+            foreach (UpdatePhase phase in AllPhases)
             {
                 var systems = _systemsByPhase[phase];
                 if (systems.Count == 0) continue;

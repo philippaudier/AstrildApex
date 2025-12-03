@@ -443,7 +443,8 @@ public static class Program
             Editor.Utils.StartupProfiler.BeginSection("Engine Pipeline Init");
             var pipeline = Engine.Core.EngineUpdatePipeline.Instance;
             pipeline.RegisterSystem(new Engine.Core.Systems.InputUpdateSystem());
-            pipeline.RegisterSystem(new Engine.Core.Systems.PhysicsUpdateSystem());
+            // NOTE: Physics is handled inside PlayModeSimulationSystem via PlayMode.UpdateSimulation()
+            // which has its own FixedUpdate loop. Don't add PhysicsUpdateSystem here or physics runs 2x!
             pipeline.RegisterSystem(new Editor.Systems.PlayModeSimulationSystem());
             pipeline.RegisterSystem(new Engine.Core.Systems.AudioUpdateSystem());
             Log.Information("Engine update pipeline initialized with {Count} systems", pipeline.GetAllSystems().Count);

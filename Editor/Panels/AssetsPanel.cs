@@ -92,9 +92,45 @@ namespace Editor.Panels
         private static readonly Dictionary<Guid, System.Numerics.Vector4> _materialColorCache = new();
         private static bool _materialColorCacheEventsInit = false;
 
+        // PERFORMANCE: Cache icon texture handles to avoid IconManager lookups every frame
+        private static readonly Dictionary<(string iconName, int size), nint> _iconTextureCache = new();
+        private static int _lastIconSize = -1;
+
+        /// <summary>
+        /// PERFORMANCE: Get icon texture with caching to avoid IconManager.GetIconTexture() calls every frame
+        /// </summary>
+        private static nint GetCachedIconTexture(string iconName, int size)
+        {
+            var key = (iconName, size);
+            if (_iconTextureCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
+            var texture = IconManager.GetIconTexture(iconName, size);
+            _iconTextureCache[key] = texture;
+            return texture;
+        }
+
+        /// <summary>
+        /// Clear icon cache when icon size changes
+        /// </summary>
+        private static void InvalidateIconCacheIfNeeded()
+        {
+            int currentSize = (int)_iconSize;
+            if (_lastIconSize != currentSize)
+            {
+                _iconTextureCache.Clear();
+                _lastIconSize = currentSize;
+            }
+        }
+
         // ============= PUBLIC =============
         public static void Draw()
         {
+            // PERF: Invalidate icon cache if icon size changed
+            InvalidateIconCacheIfNeeded();
+
             // PERF FIX: Initialize watcher only once instead of every frame
             if (!_watcherInitialized)
             {
@@ -755,7 +791,7 @@ namespace Editor.Panels
             // dl.AddText(new SysVec2(iconTL.X + 8, iconTL.Y + 8), 0xFFFFFFFF, "📁");
 
             // Nouveau : utiliser l'icône "folder"
-            var tex = IconManager.GetIconTexture("folder", (int)_iconSize);
+            var tex = GetCachedIconTexture("folder", (int)_iconSize);
             if (tex != nint.Zero)
             {
                 dl.AddImage(tex, iconTL, iconBR, new SysVec2(0,0), new SysVec2(1,1), 0xFFFFFFFF);
@@ -881,7 +917,7 @@ namespace Editor.Panels
                 else
                 {
                     // Fallback : icône "texture" au lieu de "Missing"
-                    var tex = IconManager.GetIconTexture("texture", (int)_iconSize);
+                    var tex = GetCachedIconTexture("texture", (int)_iconSize);
                     if (tex != nint.Zero)
                         ImGui.GetWindowDrawList().AddImage(tex, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                     else
@@ -893,8 +929,8 @@ namespace Editor.Panels
             }
             else if (a.Type.Equals("Material", StringComparison.OrdinalIgnoreCase))
             {
-                // Rendu de l’icône "material"
-                var tex = IconManager.GetIconTexture("material", (int)_iconSize);
+                // Rendu de l'icône "material"
+                var tex = GetCachedIconTexture("material", (int)_iconSize);
                 if (tex != nint.Zero)
                     ImGui.GetWindowDrawList().AddImage(tex, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                 else
@@ -947,7 +983,7 @@ namespace Editor.Panels
                      a.Type.StartsWith("Model", StringComparison.OrdinalIgnoreCase))
             {
                 // Mesh/Model assets - show 3D model icon
-                var tex = IconManager.GetIconTexture("model", (int)_iconSize);
+                var tex = GetCachedIconTexture("model", (int)_iconSize);
                 if (tex != nint.Zero)
                     ImGui.GetWindowDrawList().AddImage(tex, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                 else
@@ -964,7 +1000,7 @@ namespace Editor.Panels
                           Path.GetExtension(a.Path).Equals(".scene", StringComparison.OrdinalIgnoreCase) ? "scene_file" :
                           "file"; // mets une "file" générique si tu en ajoutes une dans le JSON
 
-                var tex = IconManager.GetIconTexture(key, (int)_iconSize);
+                var tex = GetCachedIconTexture(key, (int)_iconSize);
                 if (tex != nint.Zero)
                     ImGui.GetWindowDrawList().AddImage(tex, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                 else
@@ -1256,11 +1292,11 @@ namespace Editor.Panels
                 _itemBounds[KeyFolder(rel)] = (rowStart, rowEnd);
                 _displayOrder.Add(KeyFolder(rel));
 
-                // Dessin de l’icône à gauche
+                // Dessin de l'icône à gauche
                 var dl = ImGui.GetWindowDrawList();
                 var iconTL = new SysVec2(rowStart.X + 4f, rowStart.Y + (rowH - iconSz) * 0.5f);
                 var iconBR = new SysVec2(iconTL.X + iconSz, iconTL.Y + iconSz);
-                var tex = IconManager.GetIconTexture("folder", (int)iconSz);
+                var tex = GetCachedIconTexture("folder", (int)iconSz);
                 if (tex != nint.Zero)
                     dl.AddImage(tex, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                 else
@@ -1382,14 +1418,14 @@ namespace Editor.Panels
                     }
                     else
                     {
-                        var t = IconManager.GetIconTexture("texture", (int)iconSz);
+                        var t = GetCachedIconTexture("texture", (int)iconSz);
                         if (t != nint.Zero) dl.AddImage(t, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                         else dl.AddRectFilled(iconTL, iconBR, 0xFF444444, 4);
                     }
                 }
                 else if (a.Type.Equals("Material", StringComparison.OrdinalIgnoreCase))
                 {
-                    var t = IconManager.GetIconTexture("material", (int)iconSz);
+                    var t = GetCachedIconTexture("material", (int)iconSz);
                     if (t != nint.Zero) dl.AddImage(t, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                     else dl.AddRectFilled(iconTL, iconBR, 0xFF444444, 4);
 
@@ -1415,7 +1451,7 @@ namespace Editor.Panels
                               a.Type.Equals("Folder", StringComparison.OrdinalIgnoreCase) ? "folder" :
                               Path.GetExtension(a.Path).Equals(".scene", StringComparison.OrdinalIgnoreCase) ? "scene_file" :
                               "file"; // ajoute "file" plus tard si tu veux une icône générique
-                    var t = IconManager.GetIconTexture(key, (int)iconSz);
+                    var t = GetCachedIconTexture(key, (int)iconSz);
                     if (t != nint.Zero) dl.AddImage(t, iconTL, iconBR, new SysVec2(0, 0), new SysVec2(1, 1), 0xFFFFFFFF);
                     else dl.AddRectFilled(iconTL, iconBR, 0xFF444444, 4);
                 }
