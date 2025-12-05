@@ -18,6 +18,7 @@ namespace Engine.Audio.Core
         private ALContext _context;
         private bool _initialized;
         private readonly List<Components.AudioSource> _activeSources = new();
+        private readonly object _sourcesLock = new object(); // PERFORMANCE: Use lock instead of ToList()
 
         public AudioSettings Settings { get; private set; }
         public Mixing.AudioMixer? Mixer { get; set; }
@@ -102,8 +103,11 @@ namespace Engine.Audio.Core
         {
             if (!_initialized) return;
 
-            // Nettoyer les sources arrêtées
-            _activeSources.RemoveAll(s => !s.IsPlaying);
+            // Nettoyer les sources arrêtées (avec lock pour thread-safety)
+            lock (_sourcesLock)
+            {
+                _activeSources.RemoveAll(s => !s.IsPlaying);
+            }
 
             // Note: RefreshProperties() is now only called when properties actually change
             // Not every frame to avoid audio glitches
@@ -122,19 +126,23 @@ namespace Engine.Audio.Core
         public float GetCategoryLevel(Components.AudioCategory category)
         {
             if (!_initialized) return 0f;
-            
+
             float maxLevel = 0f;
-            foreach (var source in _activeSources)
+            // PERFORMANCE FIX: Use lock instead of ToList() to avoid allocations every frame
+            lock (_sourcesLock)
             {
-                if (source.Category == category && source.IsPlaying)
+                foreach (var source in _activeSources)
                 {
-                    // Le niveau est approximé par le volume de la source
-                    float level = source.Volume * GetCategoryVolume(category);
-                    if (level > maxLevel)
-                        maxLevel = level;
+                    if (source.Category == category && source.IsPlaying)
+                    {
+                        // Le niveau est approximé par le volume de la source
+                        float level = source.Volume * GetCategoryVolume(category);
+                        if (level > maxLevel)
+                            maxLevel = level;
+                    }
                 }
             }
-            
+
             return Math.Clamp(maxLevel, 0f, 1f);
         }
 
@@ -143,9 +151,12 @@ namespace Engine.Audio.Core
         /// </summary>
         internal void RegisterActiveSource(Components.AudioSource source)
         {
-            if (!_activeSources.Contains(source))
+            lock (_sourcesLock)
             {
-                _activeSources.Add(source);
+                if (!_activeSources.Contains(source))
+                {
+                    _activeSources.Add(source);
+                }
             }
         }
 
@@ -156,16 +167,20 @@ namespace Engine.Audio.Core
         {
             if (!_initialized) return;
 
-            foreach (var src in _activeSources)
+            // PERFORMANCE FIX: Use lock instead of ToList() to avoid allocations
+            lock (_sourcesLock)
             {
-                try
+                foreach (var src in _activeSources)
                 {
-                    if (src.Category.ToString().Equals(groupName, StringComparison.OrdinalIgnoreCase))
+                    try
                     {
-                        src.ApplyMixerGroupEffects();
+                        if (src.Category.ToString().Equals(groupName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            src.ApplyMixerGroupEffects();
+                        }
                     }
+                    catch { }
                 }
-                catch { }
             }
         }
 
@@ -174,7 +189,10 @@ namespace Engine.Audio.Core
         /// </summary>
         internal void UnregisterActiveSource(Components.AudioSource source)
         {
-            _activeSources.Remove(source);
+            lock (_sourcesLock)
+            {
+                _activeSources.Remove(source);
+            }
         }
 
         /// <summary>
@@ -313,9 +331,13 @@ namespace Engine.Audio.Core
         /// </summary>
         public void PauseAll()
         {
-            foreach (var source in _activeSources)
+            // PERFORMANCE FIX: Use lock instead of ToList() to avoid allocations
+            lock (_sourcesLock)
             {
-                source.Pause();
+                foreach (var source in _activeSources)
+                {
+                    source.Pause();
+                }
             }
         }
 
@@ -324,9 +346,13 @@ namespace Engine.Audio.Core
         /// </summary>
         public void ResumeAll()
         {
-            foreach (var source in _activeSources)
+            // PERFORMANCE FIX: Use lock instead of ToList() to avoid allocations
+            lock (_sourcesLock)
             {
-                source.UnPause();
+                foreach (var source in _activeSources)
+                {
+                    source.UnPause();
+                }
             }
         }
 
@@ -335,11 +361,17 @@ namespace Engine.Audio.Core
         /// </summary>
         public void StopAll()
         {
-            foreach (var source in _activeSources)
+            // CRITICAL: source.Stop() may call UnregisterActiveSource(), so we need ToList() here
+            // This is only called during Play Mode transitions, not every frame, so allocation is acceptable
+            foreach (var source in _activeSources.ToList())
             {
                 source.Stop();
             }
-            _activeSources.Clear();
+
+            lock (_sourcesLock)
+            {
+                _activeSources.Clear();
+            }
         }
 
         public void Dispose()

@@ -142,7 +142,13 @@ public class ViewportPanelModern
         UpdateFpsTracking();
 
         ImGui.SetNextWindowSize(new Vector2(800, 600), ImGuiCond.FirstUseEver);
-        ImGui.Begin("Scene", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
+        // PERFORMANCE FIX: Skip rendering if window is collapsed/hidden
+        if (!ImGui.Begin("Scene", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+        {
+            ImGui.End();
+            return;
+        }
 
         var io = ImGui.GetIO();
         bool focusedDock = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows | ImGuiFocusedFlags.NoPopupHierarchy | ImGuiFocusedFlags.DockHierarchy);

@@ -81,12 +81,18 @@ namespace Editor.Panels
         private static int _framesSinceLastCheck = 0;  // Throttle FS checks
         private const int FS_CHECK_INTERVAL = 30;  // Check filesystem every 30 frames (~0.5s at 60fps)
 
+
         // ====== PERF: cached asset snapshot & material color cache ======
         private static List<AssetRecord>? _cachedAllAssets = null;
         private static string _lastSearchForAssets = string.Empty;
         private static string _lastCurrentDir = string.Empty;
         private static SortMode _lastSort = SortMode.NameAsc;
         private static ViewMode _lastViewMode = ViewMode.Grid;
+
+        // PERFORMANCE: Cache filtered/sorted results to avoid rebuilding lists every frame
+        private static List<AssetRecord>? _cachedFilteredAssets = null;
+        private static List<string>? _cachedChildDirs = null;
+        private static string _lastChildDirsPath = string.Empty;
 
         // Cache small preview data (albedo color) to avoid loading materials each frame
         private static readonly Dictionary<Guid, System.Numerics.Vector4> _materialColorCache = new();
@@ -178,6 +184,7 @@ namespace Editor.Panels
 
             // CRITICAL PERFORMANCE FIX: Check if window is visible before drawing content
             // ImGui.Begin() returns false when window is collapsed/hidden - skip all expensive operations!
+            // PERFORMANCE: Skip content if window is collapsed/hidden
             if (!ImGui.Begin("Assets"))
             {
                 ImGui.End();
@@ -624,18 +631,38 @@ namespace Editor.Panels
         // ============= Content (droite) =============
         private static void DrawContent()
         {
-            // Build dataset with thread-safe snapshot.
-            // PERF: reuse a cached snapshot of all assets when nothing changed to avoid enumerating the DB every frame.
-            var childDirs = ListChildDirsFs(_currentDir); // dossiers directs
+            // PERFORMANCE: Cache child directories to avoid filesystem calls every frame
+            List<string> childDirs;
+            if (_lastChildDirsPath != _currentDir || _isDirty)
+            {
+                childDirs = ListChildDirsFs(_currentDir);
+                _cachedChildDirs = childDirs;
+                _lastChildDirsPath = _currentDir;
+            }
+            else
+            {
+                childDirs = _cachedChildDirs ?? new List<string>();
+            }
 
             bool needRebuildAll = _isDirty || _lastSearchForAssets != _search || _lastCurrentDir != _currentDir || _lastSort != _sort || _lastViewMode != _viewMode;
-            List<AssetRecord> allAssets;
+            List<AssetRecord> filtered;
+
             if (needRebuildAll)
             {
+                // PERFORMANCE: Only rebuild when something actually changed
                 try
                 {
-                    allAssets = AssetDatabase.All().ToList();
+                    var allAssets = AssetDatabase.All().ToList();
                     _cachedAllAssets = allAssets;
+
+                    // Apply filter chain and cache the result
+                    var filesInDir = FilterByDirectory(allAssets, _currentDir);
+                    var searchFiltered = ApplySearch(filesInDir, _search);
+                    filtered = SortAssets(searchFiltered.ToList(), _sort);
+
+                    // Cache filtered result
+                    _cachedFilteredAssets = filtered;
+
                     _isDirty = false;
                     _lastSearchForAssets = _search;
                     _lastCurrentDir = _currentDir;
@@ -650,12 +677,9 @@ namespace Editor.Panels
             }
             else
             {
-                allAssets = _cachedAllAssets ?? new List<AssetRecord>();
+                // PERFORMANCE: Reuse cached filtered assets - ZERO allocations!
+                filtered = _cachedFilteredAssets ?? new List<AssetRecord>();
             }
-
-            var filesInDir = FilterByDirectory(allAssets, _currentDir);
-            var filtered = ApplySearch(filesInDir, _search);
-            filtered = SortAssets(filtered.ToList(), _sort);
 
             // Menu contextuel dans le vide
             if (ImGui.BeginPopupContextWindow("ContentContextMenu",

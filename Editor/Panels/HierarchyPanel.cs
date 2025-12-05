@@ -17,6 +17,12 @@ namespace Editor.Panels
 {
     public static class HierarchyPanel
     {
+        // PERFORMANCE: Dirty flags to avoid redrawing when scene hasn't changed
+        private static bool _isDirty = true;
+        private static int _lastEntityCount = 0;
+        private static int _lastSelectionCount = 0;
+        private static HashSet<uint> _lastSelectedIds = new();
+
         // --- Déféré (corrige shift-click bas→haut) ---
         private static bool _deferredRangeSelect = false;
         private static uint _deferredRangeToId = 0;
@@ -45,8 +51,12 @@ namespace Editor.Panels
         private static bool _mouseDownOnEmpty = false;
         private static Vector2 _windowMouseDownStart;
 
+        /// <summary>Mark hierarchy as dirty - will force redraw next frame</summary>
+        public static void MarkDirty() => _isDirty = true;
+
         public static void Draw()
         {
+            // PERFORMANCE: Check visibility before heavy work
             if (!ImGui.Begin("Hierarchy")) { ImGui.End(); return; }
 
             var scene = EditorUI.MainViewport.Renderer?.Scene;
@@ -56,6 +66,23 @@ namespace Editor.Panels
                 ImGui.End();
                 return;
             }
+
+            // PERFORMANCE: Check if scene has changed (dirty flags)
+            int currentEntityCount = scene.Entities.Count;
+            int currentSelectionCount = Selection.Selected.Count;
+            var currentSelectedIds = new HashSet<uint>(Selection.Selected);
+
+            bool selectionChanged = currentSelectionCount != _lastSelectionCount ||
+                                    !currentSelectedIds.SetEquals(_lastSelectedIds);
+
+            bool sceneChanged = _isDirty ||
+                                currentEntityCount != _lastEntityCount ||
+                                selectionChanged;
+
+            _lastEntityCount = currentEntityCount;
+            _lastSelectionCount = currentSelectionCount;
+            _lastSelectedIds = currentSelectedIds;
+            _isDirty = false;
 
             // Reset state for this frame
             _itemRects.Clear();
@@ -69,10 +96,15 @@ namespace Editor.Panels
             _itemRects.Clear();
             _visibleOrder.Clear();
 
-            // Tree (racines -> récursif)
-            foreach (var e in scene.Entities.ToArray())
-                if (e.Parent == null)
+            // PERFORMANCE FIX: Avoid ToArray() allocation every frame
+            // Use Span to avoid allocation while protecting against collection modification
+            var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scene.Entities);
+            for (int i = 0; i < entitiesSpan.Length; i++)
+            {
+                var e = entitiesSpan[i];
+                if (e != null && e.Parent == null)
                     DrawEntityNode(scene, e);
+            }
 
             // Traite un shift-click différé une fois que _visibleOrder est complet
             if (_deferredRangeSelect && _deferredRangeToId != 0 && _lastAnchorId != 0)
@@ -454,6 +486,18 @@ namespace Editor.Panels
                     }
                     if (ImGui.BeginMenu("Effects"))
                     {
+                        if (ImGui.MenuItem("Particle System"))
+                        {
+                            var entity = new Engine.Scene.Entity
+                            {
+                                Id = scene.GetNextEntityId(),
+                                Name = "Particle System"
+                            };
+                            scene.Entities.Add(entity);
+                            entity.AddComponent<Engine.Components.ParticleSystem>();
+                            Selection.SetSingle(entity.Id);
+                            EditorUI.MainViewport.UpdateGizmoPivot();
+                        }
                         if (ImGui.MenuItem("Global Effects"))
                         {
                             var entity = new Engine.Scene.Entity

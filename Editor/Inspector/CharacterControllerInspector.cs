@@ -4,7 +4,7 @@ using Engine.Components;
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Professional Unity-style Character Controller inspector
+    /// Inspector for the new CharacterController (industry-standard phase-based architecture)
     /// </summary>
     public static class CharacterControllerInspector
     {
@@ -16,8 +16,8 @@ namespace Editor.Inspector
             // === CHARACTER CONTROLLER ===
             if (InspectorWidgets.Section("Character Controller", defaultOpen: true))
             {
-                InspectorWidgets.InfoBox("Character Controller provides arcade-style character movement with collision detection and slope handling.");
-                
+                InspectorWidgets.InfoBox("Industry-standard CharacterController with phase-based collision resolution.\nBased on Unity, Unreal, and Godot best practices.");
+
                 InspectorWidgets.EndSection();
             }
 
@@ -50,7 +50,7 @@ namespace Editor.Inspector
                     ("Human", "1.8 × 0.4"),
                     ("Crouch", "1.0 × 0.4"),
                     ("Child", "1.2 × 0.3"));
-                
+
                 if (preset == 0)
                 {
                     cc.Height = 1.8f;
@@ -88,13 +88,6 @@ namespace Editor.Inspector
                     helpText: "Small values help hugging geometry; too small may cause tunnelling");
                 cc.SkinWidth = skin;
 
-                float groundOffset = cc.GroundOffset;
-                InspectorWidgets.FloatField("Ground Offset", ref groundOffset, entityId, "GroundOffset",
-                    speed: 0.001f, min: -0.5f, max: 0.5f,
-                    tooltip: "Vertical offset applied when snapping to ground",
-                    helpText: "Use to tweak how the capsule sits above the surface");
-                cc.GroundOffset = groundOffset;
-
                 float gravity = cc.Gravity;
                 InspectorWidgets.FloatField("Gravity", ref gravity, entityId, "Gravity",
                     speed: 0.05f, min: -50f, max: 50f,
@@ -102,47 +95,33 @@ namespace Editor.Inspector
                     helpText: "Earth-like: 9.8-15. Low gravity: 3-5. High gravity: 20-30.");
                 cc.Gravity = gravity;
 
-                float maxSlope = cc.MaxSlopeAngleDeg;
-                InspectorWidgets.FloatField("Max Slope (deg)", ref maxSlope, entityId, "MaxSlopeAngleDeg",
+                float maxSlope = cc.MaxSlopeAngle;
+                InspectorWidgets.FloatField("Max Slope (deg)", ref maxSlope, entityId, "MaxSlopeAngle",
                     speed: 0.5f, min: 0f, max: 89f,
                     tooltip: "Maximum slope angle (degrees) considered walkable",
                     helpText: "Typical walkable slopes: 30-50°");
-                cc.MaxSlopeAngleDeg = maxSlope;
+                cc.MaxSlopeAngle = maxSlope;
 
-                float maxClimb = cc.MaxClimbPerFrame;
-                InspectorWidgets.FloatField("Max Climb Per Frame", ref maxClimb, entityId, "MaxClimbPerFrame",
-                    speed: 0.01f, min: 0f, max: 2f,
-                    tooltip: "Maximum vertical climb allowed by sliding/projection per frame",
-                    helpText: "Prevent large upward hops when sliding on curved surfaces");
-                cc.MaxClimbPerFrame = maxClimb;
+                float groundCheckDist = cc.GroundCheckDistance;
+                InspectorWidgets.FloatField("Ground Check Distance", ref groundCheckDist, entityId, "GroundCheckDistance",
+                    speed: 0.01f, min: 0.1f, max: 2f,
+                    tooltip: "Maximum distance to raycast downward for ground detection",
+                    helpText: "Typical: 0.3-0.5");
+                cc.GroundCheckDistance = groundCheckDist;
 
-                float climbSpeed = cc.ClimbSmoothSpeed;
-                InspectorWidgets.FloatField("Climb Smooth Speed", ref climbSpeed, entityId, "ClimbSmoothSpeed",
-                    speed: 0.1f, min: 0f, max: 50f,
-                    tooltip: "Speed used to smooth upward adjustments when moving over geometry",
-                    helpText: "Higher = faster snapping up slopes");
-                cc.ClimbSmoothSpeed = climbSpeed;
+                float snapDist = cc.SnapDistance;
+                InspectorWidgets.FloatField("Snap Distance", ref snapDist, entityId, "SnapDistance",
+                    speed: 0.01f, min: 0.1f, max: 2f,
+                    tooltip: "Maximum distance to snap down to ground when grounded",
+                    helpText: "Typical: 0.5-1.0. Higher = smoother on slopes");
+                cc.SnapDistance = snapDist;
 
-                float descendSpeed = cc.DescendSmoothSpeed;
-                InspectorWidgets.FloatField("Descend Smooth Speed", ref descendSpeed, entityId, "DescendSmoothSpeed",
-                    speed: 0.1f, min: 0f, max: 100f,
-                    tooltip: "Speed used to smooth downward adjustments when moving down slopes",
-                    helpText: "Higher = faster descent (less smoothing)");
-                cc.DescendSmoothSpeed = descendSpeed;
-
-                float snapEps = cc.SnapEpsilon;
-                InspectorWidgets.FloatField("Snap Epsilon", ref snapEps, entityId, "SnapEpsilon",
-                    speed: 0.001f, min: 0f, max: 0.2f,
-                    tooltip: "Tolerance for considering the controller 'on the ground'",
-                    helpText: "Smaller = stricter grounding, larger = more forgiving");
-                cc.SnapEpsilon = snapEps;
-
-                float alignSpeed = cc.GroundAlignSpeed;
-                InspectorWidgets.FloatField("Ground Align Speed", ref alignSpeed, entityId, "GroundAlignSpeed",
-                    speed: 0.1f, min: 0f, max: 100f,
-                    tooltip: "How quickly the character's up vector aligns to the ground normal",
-                    helpText: "0 = instant alignment, higher = smoother alignment");
-                cc.GroundAlignSpeed = alignSpeed;
+                float snapSpeed = cc.GroundSnapSpeed;
+                InspectorWidgets.FloatField("Ground Snap Speed", ref snapSpeed, entityId, "GroundSnapSpeed",
+                    speed: 1f, min: 1f, max: 100f,
+                    tooltip: "Speed (m/s) to snap to ground surface",
+                    helpText: "Higher = instant snapping, lower = smooth interpolation");
+                cc.GroundSnapSpeed = snapSpeed;
 
                 InspectorWidgets.EndSection();
             }
@@ -155,15 +134,23 @@ namespace Editor.Inspector
                 ImGui.BeginDisabled();
                 ImGui.Checkbox("Is Grounded", ref isGrounded);
                 ImGui.EndDisabled();
-                
+
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Whether the character is currently touching the ground (read-only)");
+
+                // Velocity display
+                ImGui.BeginDisabled();
+                var vel = cc.Velocity;
+                ImGui.Text($"Velocity: X={vel.X:F2}, Y={vel.Y:F2}, Z={vel.Z:F2}");
+                ImGui.Text($"Ground Distance: {cc.GroundDistance:F3}");
+                ImGui.Text($"Ground Normal: X={cc.GroundNormal.X:F2}, Y={cc.GroundNormal.Y:F2}, Z={cc.GroundNormal.Z:F2}");
+                ImGui.EndDisabled();
 
                 // Debug toggle
                 bool debugPhysics = cc.DebugPhysics;
                 InspectorWidgets.Checkbox("Debug Physics", ref debugPhysics, entityId, "DebugPhysics",
-                    tooltip: "Show debug visualization for physics collisions",
-                    helpText: "Renders collision capsule and raycast debug lines in the scene");
+                    tooltip: "Show debug logs for physics collisions",
+                    helpText: "Logs detailed physics information to console");
                 cc.DebugPhysics = debugPhysics;
 
                 InspectorWidgets.EndSection();

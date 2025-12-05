@@ -37,6 +37,12 @@ namespace Editor.Panels
         static bool _autoLockedForDrag = false;
         static bool _pendingSelectionRefresh = false;
 
+        // PERFORMANCE: Cache components to avoid ToList() + LINQ every frame
+        private static uint _cachedComponentsEntityId = 0;
+        private static System.Collections.Generic.List<Engine.Components.Component>? _cachedComponents = null;
+        private static TransformComponent? _cachedTransform = null;
+        private static System.Collections.Generic.List<Engine.Components.Component>? _cachedOtherComponents = null;
+
         static InspectorPanel()
         {
             Editor.State.UndoRedo.AfterChange += () =>
@@ -45,6 +51,12 @@ namespace Editor.Panels
                 _trEditing = false;
                 _eulerCacheEntity = 0; // force recalcul du cache euler depuis le quaternion
                 _forceRefreshUI = true;
+
+                // PERFORMANCE: Invalidate component cache on undo/redo
+                _cachedComponentsEntityId = 0;
+                _cachedComponents = null;
+                _cachedTransform = null;
+                _cachedOtherComponents = null;
 
                 // ► recaler le gizmo après Undo/Redo ou toute action
                 EditorUI.MainViewport.UpdateGizmoPivot();
@@ -546,10 +558,19 @@ namespace Editor.Panels
                 ImGui.EndDragDropTarget();
             }
             
-            // Get all components, with Transform always first
-            var allComponents = entity.GetAllComponents().ToList();
-            var transformComponent = allComponents.OfType<TransformComponent>().FirstOrDefault();
-            var otherComponents = allComponents.Where(c => !(c is TransformComponent)).ToList();
+            // PERFORMANCE: Cache components to avoid expensive ToList() + LINQ every frame
+            if (_cachedComponentsEntityId != entity.Id || _cachedComponents == null)
+            {
+                // Cache miss - rebuild cache
+                var allComponents = entity.GetAllComponents().ToList();
+                _cachedTransform = allComponents.OfType<TransformComponent>().FirstOrDefault();
+                _cachedOtherComponents = allComponents.Where(c => !(c is TransformComponent)).ToList();
+                _cachedComponents = allComponents;
+                _cachedComponentsEntityId = entity.Id;
+            }
+
+            var transformComponent = _cachedTransform;
+            var otherComponents = _cachedOtherComponents!;
             
             // Always draw Transform first (mandatory)
             if (transformComponent != null)
@@ -792,6 +813,9 @@ namespace Editor.Panels
                 case Engine.Audio.Components.ReverbZoneComponent reverbZone:
                     Editor.Inspector.ReverbZoneInspector.DrawInspector(reverbZone);
                     break;
+                case Engine.Components.ParticleSystem particleSystem:
+                    Editor.Inspector.ParticleSystemInspector.Draw(particleSystem);
+                    break;
                 case Engine.Scripting.MonoBehaviour script:
                     Editor.Inspector.ReflectionInspector.DrawMembers(script, script.GetType(), "");
                     break;
@@ -808,6 +832,7 @@ namespace Editor.Panels
                 LightComponent => "light_component",
                 TransformComponent => "transform", 
                 MeshRendererComponent => "mesh_renderer",
+                Engine.Components.ParticleSystem => "particle_system",
                 _ => "component"
             };
         }
@@ -947,6 +972,17 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Global Effects") && !entity.HasComponent<Engine.Components.GlobalEffects>())
                     {
                         entity.AddComponent<Engine.Components.GlobalEffects>();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.EndMenu();
+                }
+
+                // Effects category
+                if (ImGui.BeginMenu("Effects"))
+                {
+                    if (ImGui.MenuItem("Particle System") && !entity.HasComponent<Engine.Components.ParticleSystem>())
+                    {
+                        entity.AddComponent<Engine.Components.ParticleSystem>();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();

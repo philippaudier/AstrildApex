@@ -11,6 +11,7 @@ using Editor.State;
 using Editor.Panels;
 using Engine.Components;
 using Editor.Logging;
+using ImGuiNET;
 
 
 // en tête du fichier si absents :
@@ -749,6 +750,9 @@ namespace Editor.Rendering
     // MSAA Renderer (MultiSample Anti-Aliasing)
     private Engine.Rendering.MSAARenderer? _msaaRenderer = null;
 
+    // Particle Renderer
+    private Engine.Rendering.ParticleRenderer? _particleRenderer = null;
+
         // Public accessor for UI
         public int GBufferDebugMode
         {
@@ -1018,6 +1022,21 @@ namespace Editor.Rendering
             {
                 if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to create Selection Outline renderer: {ex.Message}");
                 _outlineRenderer = null;
+            }
+
+            // Initialize particle renderer
+            if (_particleRenderer == null)
+            {
+                try
+                {
+                    _particleRenderer = new Engine.Rendering.ParticleRenderer();
+                    Editor.Logging.LogManager.LogInfo("Particle Renderer initialized", "Renderer");
+                }
+                catch (Exception ex)
+                {
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to create Particle renderer: {ex.Message}");
+                    _particleRenderer = null;
+                }
             }
 
             // Initialize or recreate TAA renderer when size changes
@@ -2548,6 +2567,33 @@ void main(){
             // === QUEUE 4000: OVERLAY ===
             // Light icons (always visible)
             RenderLightIcons();
+
+            // === QUEUE 3500: PARTICLES (rendered after opaque, before post-process) ===
+            try
+            {
+                if (_particleRenderer != null && Scene != null)
+                {
+                    // Update particle systems in editor mode (with frame delta time)
+                    float dt = ImGui.GetIO().DeltaTime;
+                    foreach (var entity in Scene.Entities)
+                    {
+                        if (!entity.Active) continue;
+                        var ps = entity.GetComponent<Engine.Components.ParticleSystem>();
+                        if (ps != null && ps.Enabled && ps.IsPlaying)
+                        {
+                            ps.UpdateEditor(dt);
+                        }
+                    }
+
+                    var particleCamPos = CameraPosition();
+                    _particleRenderer.RenderParticleSystems(Scene, _viewGL, _projGL, particleCamPos);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose) 
+                    LogManager.LogWarning($"Particle rendering error: {ex.Message}", "ViewportRenderer");
+            }
 
             // Grid overlay placeholder: actual draw happens after post-processing so it's not overwritten
 
@@ -5473,10 +5519,153 @@ void main(){
                         DrawSphereWire(wpos, radius, lightColor, 48);
                     }
                 }
+
+                // Draw particle system gizmo for selected entities with ParticleSystem
+                if (entitySelected && e.HasComponent<Engine.Components.ParticleSystem>())
+                {
+                    var ps = e.GetComponent<Engine.Components.ParticleSystem>();
+                    if (ps != null && ps.Enabled)
+                    {
+                        try
+                        {
+                            DrawParticleSystemGizmo(ps);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (Engine.Utils.DebugLogger.EnableVerbose)
+                                LogManager.LogWarning($"ParticleSystem gizmo error: {ex.Message}", "ViewportRenderer");
+                        }
+                    }
+                }
             }
 
             // Restore depth func
             GL.DepthFunc((DepthFunction)oldDepthFunc);
+        }
+
+        /// <summary>
+        /// Draw particle system gizmo showing emission shape
+        /// </summary>
+        private void DrawParticleSystemGizmo(Engine.Components.ParticleSystem ps)
+        {
+            if (ps?.Entity?.Transform == null) return;
+
+            // Get world transform
+            ps.Entity.GetWorldTRS(out var worldPos, out var worldRot, out var worldScale);
+
+            // Get gizmo color based on state
+            var color = GetParticleSystemGizmoColor(ps);
+
+            // Scale radius by world scale
+            float radius = ps.ShapeRadius * Math.Max(worldScale.X, Math.Max(worldScale.Y, worldScale.Z));
+
+            // Draw emission shape based on type
+            switch (ps.Shape)
+            {
+                case Engine.Components.ShapeType.Sphere:
+                    DrawSphereWire(worldPos, radius, color, 24);
+                    break;
+
+                case Engine.Components.ShapeType.Circle:
+                    {
+                        // Draw circle in XY plane, then rotate by world rotation
+                        Vector3 normal = Vector3.Transform(Vector3.UnitZ, worldRot);
+                        DrawCircle(worldPos, radius, normal, color, 32);
+                    }
+                    break;
+
+                case Engine.Components.ShapeType.Cone:
+                    {
+                        // Draw cone wireframe
+                        Vector3 direction = Vector3.Transform(Vector3.UnitZ, worldRot);
+                        float height = radius * 2.0f;
+                        float angle = ps.ShapeAngle * (MathF.PI / 180.0f); // Convert to radians
+                        float baseRadius = height * MathF.Tan(angle);
+
+                        // Draw base circle
+                        Vector3 baseCenter = worldPos + direction * height;
+                        DrawCircle(baseCenter, baseRadius, direction, color, 24);
+
+                        // Draw lines from apex to base circle
+                        for (int i = 0; i < 8; i++)
+                        {
+                            float t = (float)i / 8 * MathF.Tau;
+                            Vector3 refv = MathF.Abs(Vector3.Dot(direction, Vector3.UnitY)) < 0.999f ? Vector3.UnitY : Vector3.UnitX;
+                            Vector3 u = Vector3.Normalize(Vector3.Cross(direction, refv));
+                            Vector3 v = Vector3.Normalize(Vector3.Cross(direction, u));
+                            Vector3 pointOnBase = baseCenter + (MathF.Cos(t) * u + MathF.Sin(t) * v) * baseRadius;
+                            DrawLineWorld(worldPos, pointOnBase, color);
+                        }
+                    }
+                    break;
+
+                case Engine.Components.ShapeType.Box:
+                    {
+                        // Draw box wireframe
+                        var halfSize = ps.ShapeBox * 0.5f;
+                        halfSize.X *= worldScale.X;
+                        halfSize.Y *= worldScale.Y;
+                        halfSize.Z *= worldScale.Z;
+
+                        var rot = Matrix3.CreateFromQuaternion(worldRot);
+
+                        // 8 corners of the box
+                        Vector3[] corners = new Vector3[8];
+                        for (int i = 0; i < 8; i++)
+                        {
+                            Vector3 local = new Vector3(
+                                ((i & 1) != 0 ? 1 : -1) * halfSize.X,
+                                ((i & 2) != 0 ? 1 : -1) * halfSize.Y,
+                                ((i & 4) != 0 ? 1 : -1) * halfSize.Z
+                            );
+                            corners[i] = worldPos + rot * local;
+                        }
+
+                        // Draw 12 edges
+                        int[] edges = new int[]
+                        {
+                            0,1, 2,3, 4,5, 6,7,  // Bottom and top faces
+                            0,2, 1,3, 4,6, 5,7,  // Side edges
+                            0,4, 1,5, 2,6, 3,7   // Vertical edges
+                        };
+
+                        for (int i = 0; i < edges.Length; i += 2)
+                        {
+                            DrawLineWorld(corners[edges[i]], corners[edges[i + 1]], color);
+                        }
+                    }
+                    break;
+            }
+
+            // Draw direction indicator (small arrow from center)
+            if (ps.Shape != Engine.Components.ShapeType.Sphere)
+            {
+                Vector3 direction = Vector3.Transform(Vector3.UnitZ, worldRot);
+                Vector3 arrowEnd = worldPos + direction * (radius * 0.3f);
+                var arrowColor = new Vector4(color.X * 1.5f, color.Y * 1.5f, color.Z * 1.5f, color.W);
+                DrawLineWorld(worldPos, arrowEnd, arrowColor);
+            }
+        }
+
+        /// <summary>
+        /// Get gizmo color based on particle system state
+        /// </summary>
+        private Vector4 GetParticleSystemGizmoColor(Engine.Components.ParticleSystem ps)
+        {
+            if (ps == null) return new Vector4(0.8f, 0.8f, 0.8f, 0.6f);
+
+            if (ps.IsPlaying && !ps.IsPaused)
+            {
+                return new Vector4(0.3f, 1.0f, 0.5f, 0.8f); // Green when playing
+            }
+            else if (ps.IsPaused)
+            {
+                return new Vector4(1.0f, 0.7f, 0.2f, 0.8f); // Orange when paused
+            }
+            else
+            {
+                return new Vector4(0.5f, 0.5f, 1.0f, 0.6f); // Blue when stopped
+            }
         }
 
         /// <summary>
@@ -7214,6 +7403,10 @@ void main(){
             _grid?.Dispose();
             _skyboxRenderer?.Dispose();
             _terrainRenderer?.Dispose();
+            _particleRenderer?.Dispose();
+            _outlineRenderer?.Dispose();
+            _taaRenderer?.Dispose();
+            _msaaRenderer?.Dispose();
 
             // === NEW: Dispose Modern Shadow System ===
             _shadowManager?.Dispose();

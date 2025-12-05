@@ -101,6 +101,17 @@ namespace Engine.Scene
                 } 
             } 
         }
+
+        /// <summary>
+        /// Get the world position (accounting for parent hierarchy)
+        /// </summary>
+        public Vector3 GetWorldPosition()
+        {
+            if (_owner?.Parent == null)
+                return _position;
+            
+            return _owner.Parent.Transform.GetWorldPosition() + _position;
+        }
     }
 
     // Entity : remplace ta classe Entity par ceci

@@ -1,3 +1,4 @@
+using System.Linq;
 using Serilog;
 using Engine.Core;
 
@@ -11,6 +12,9 @@ namespace Editor.Systems
     {
         public string Name => "PlayModeSimulation";
         public bool Enabled { get; set; } = true;
+        // Use Update (not FixedUpdate) for CharacterController movement
+        // CharacterController is frame-rate dependent like Unity's CharacterController
+        // We clamp deltaTime to prevent issues at very high frame rates
         public UpdatePhase Phase => UpdatePhase.Update;
         public int Priority => 50; // After input, before audio
 

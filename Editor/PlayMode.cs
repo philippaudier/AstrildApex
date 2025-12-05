@@ -178,19 +178,24 @@ namespace Editor
         {
             if (_state != PlayState.Playing || _playScene == null) return;
 
-            // Mettre à jour les composants
+            // Mettre à jour les composants (Update phase)
             UpdateComponents(deltaTime);
-            
-            // Fixed update pour la physique
+
+            // FixedUpdate accumulator for physics and character controllers
+            // CRITICAL: Physics and CharacterController MUST run in the same accumulator
+            // to ensure collision queries see up-to-date collider positions
             _fixedTimeAccumulator += deltaTime;
             while (_fixedTimeAccumulator >= _fixedDeltaTime)
             {
-                // Step simple collision world first
+                // Step 1: Update physics/colliders
                 Engine.Physics.CollisionSystem.Step(_fixedDeltaTime);
+
+                // Step 2: Update CharacterControllers (they query the colliders updated above)
                 FixedUpdateComponents(_fixedDeltaTime);
+
                 _fixedTimeAccumulator -= _fixedDeltaTime;
             }
-            
+
             // Late update
             LateUpdateComponents(deltaTime);
         }

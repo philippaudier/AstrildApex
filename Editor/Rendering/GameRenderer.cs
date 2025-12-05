@@ -40,6 +40,9 @@ namespace Editor.Rendering
         // Renderer pour les terrains
         private Engine.Rendering.Terrain.TerrainRenderer? _terrainRenderer;
 
+        // Particle renderer
+        private Engine.Rendering.ParticleRenderer? _particleRenderer;
+
         public GameRenderer()
         {
             InitializeOpenGL();
@@ -106,6 +109,17 @@ namespace Editor.Rendering
             {
                 Console.WriteLine($"[GameRenderer] ✗ Impossible d'initialiser TerrainRenderer: {ex.Message}");
                 Console.WriteLine($"[GameRenderer] Stack trace: {ex.StackTrace}");
+            }
+
+            // Initialize particle renderer
+            try
+            {
+                _particleRenderer = new Engine.Rendering.ParticleRenderer();
+                Console.WriteLine("[GameRenderer] ✓ ParticleRenderer initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameRenderer] ✗ Failed to initialize ParticleRenderer: {ex.Message}");
             }
 
             // DISABLED: Initialize UIRenderer and a simple demo canvas
@@ -679,6 +693,22 @@ void main()
             GL.BindVertexArray(0);
             GL.UseProgram(0);
 
+            // Render particles after opaque geometry
+            try
+            {
+                if (_particleRenderer != null && _scene != null)
+                {
+                    // Extract camera position from view matrix
+                    var invView = view.Inverted();
+                    var camPos = new Vector3(invView.M41, invView.M42, invView.M43);
+                    _particleRenderer.RenderParticleSystems(_scene, view, proj, camPos);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameRenderer] Particle render error: {ex.Message}");
+            }
+
             // DISABLED: Render UI on top of the scene
             // This was causing GL errors (UIRenderer doesn't save/restore GL state properly)
             /*
@@ -767,6 +797,7 @@ void main()
                 catch { }
 
                 _terrainRenderer?.Dispose();
+                _particleRenderer?.Dispose();
 
                 // Clean up custom meshes
                 foreach (var mesh in _customMeshCache.Values)

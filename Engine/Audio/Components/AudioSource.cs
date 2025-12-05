@@ -330,7 +330,6 @@ namespace Engine.Audio.Components
                     {
                         int[] bufferIds = new int[queuedCount];
                         AL.SourceUnqueueBuffers(_sourceId, queuedCount, bufferIds);
-                        Log.Information($"[AudioSource] Cleared {queuedCount} residual buffers from reused OpenAL source on entity: {Entity?.Name}");
                     }
 
                     // Reset source to initial state
@@ -416,7 +415,6 @@ namespace Engine.Audio.Components
                 try
                 {
                     Play();
-                    Log.Information($"[AudioSource] Deferred PlayOnAwake executed for entity: {Entity?.Name}");
                 }
                 catch (Exception ex)
                 {
@@ -429,7 +427,6 @@ namespace Engine.Audio.Components
             {
                 _sourceId = AL.GenSource();
                 UpdateSourceProperties();
-                Log.Information($"[AudioSource] Late initialization of OpenAL source on entity: {Entity?.Name}");
             }
 
             if (_sourceId == -1 || Entity?.Transform == null) return;
@@ -466,7 +463,6 @@ namespace Engine.Audio.Components
                 {
                     AL.SourcePlay(_sourceId);
                     _streamingClip.ClearPlaybackRestartRequest();
-                    Log.Information($"[AudioSource] Performed AL.SourcePlay on main thread for streaming clip: {_streamingClip.Name}");
                 }
             }
             catch (Exception ex)
@@ -483,7 +479,6 @@ namespace Engine.Audio.Components
             // Prevent multiple simultaneous Play() calls
             if (_isPlaying && !resetPosition)
             {
-                Log.Debug($"[AudioSource] Already playing, ignoring redundant Play() call for: {Entity?.Name}");
                 return;
             }
 
@@ -502,7 +497,6 @@ namespace Engine.Audio.Components
                     // Reset caches after late initialization
                     ResetPropertyCaches();
                     UpdateSourceProperties();
-                    Log.Information($"[AudioSource] Late initialization of OpenAL source for entity: {Entity?.Name}");
                 }
                 catch (Exception ex)
                 {
@@ -519,7 +513,6 @@ namespace Engine.Audio.Components
 
             // Capture local reference to satisfy nullable analysis and avoid repeated null checks
             var clip = _clip!;
-            Log.Information($"[AudioSource] Play: entity={Entity?.Name}, clip={(clip?.Name ?? "null")}, streaming={(clip?.IsStreaming ?? false)}, resetPosition={resetPosition}");
 
             // Warn if spatialization requested but clip is not mono (OpenAL will not spatialize stereo sources)
             if (SpatialBlend > 0f && _clip != null && _clip.IsLoaded)
@@ -564,7 +557,6 @@ namespace Engine.Audio.Components
                             // After SourceStop, all buffers can be unqueued
                             int[] bufferIds = new int[queued];
                             AL.SourceUnqueueBuffers(_sourceId, queued, bufferIds);
-                            Log.Information($"[AudioSource] Cleared {queued} residual buffers before Play()");
                         }
                     }
                     catch (Exception ex)
@@ -620,7 +612,6 @@ namespace Engine.Audio.Components
                     {
                         AL.SourceStop(_sourceId);
                         AL.DeleteSource(_sourceId);
-                        Log.Information($"[AudioSource] Deleted old OpenAL source {_sourceId} before streaming");
                     }
 
                     _sourceId = AL.GenSource();
@@ -635,7 +626,6 @@ namespace Engine.Audio.Components
                     {
                         ReverbZoneExtensions.ApplyReverbZones(this, _sourceId);
                     }
-                    Log.Information($"[AudioSource] Created fresh OpenAL source {_sourceId} for streaming: {clip!.Name}");
                 }
                 catch (Exception ex)
                 {
@@ -660,7 +650,6 @@ namespace Engine.Audio.Components
                     // race where the thread sees the source not yet playing and logs
                     // an underrun immediately.
                     _streamingClip.StartStreamingThread();
-                    Log.Information($"[AudioSource] Started streaming playback: {clip!.Name}");
                 }
                 else
                 {
@@ -763,15 +752,7 @@ namespace Engine.Audio.Components
                 _sourceId = -1;
                 return;
             }
-            try
-            {
-                Log.Information($"[AudioSource] Stop: entity={Entity?.Name}, sourceId={_sourceId}\nCaller:\n{Environment.StackTrace}");
-            }
-            catch
-            {
-                Log.Information($"[AudioSource] Stop: entity={Entity?.Name}, sourceId={_sourceId}");
-            }
-            
+
             // Vérifier que la source est toujours valide avant d'interagir avec
             if (!AL.IsSource(_sourceId))
             {
@@ -1082,7 +1063,6 @@ namespace Engine.Audio.Components
                 {
                     _clip = clip;
                     _streamingClip = clip as StreamingAudioClip;
-                    Log.Information($"[AudioSource] Loaded clip from GUID: {clip.Name} on entity: {Entity?.Name}");
                 }
                 else
                 {
@@ -1094,7 +1074,6 @@ namespace Engine.Audio.Components
                         {
                             _clip = clip;
                             _streamingClip = clip as StreamingAudioClip;
-                            Log.Information($"[AudioSource] Loaded clip from AssetDatabase: {clip.Name} on entity: {Entity?.Name}");
                         }
                         else
                         {

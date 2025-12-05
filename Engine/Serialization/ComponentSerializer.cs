@@ -177,6 +177,32 @@ namespace Engine.Serialization
                 Vector2 v2 => new[] { v2.X, v2.Y },
                 Vector4 v4 => new[] { v4.X, v4.Y, v4.Z, v4.W },
                 Quaternion q => new[] { q.X, q.Y, q.Z, q.W },
+                Color4 c => new[] { c.R, c.G, c.B, c.A },
+                Engine.Components.MinMaxCurve curve => new Dictionary<string, object>
+                {
+                    ["constant"] = curve.Constant,
+                    ["min"] = curve.Min,
+                    ["max"] = curve.Max,
+                    ["mode"] = curve.Mode.ToString()
+                },
+                Engine.Components.AnimationCurve animCurve => new Dictionary<string, object>
+                {
+                    ["keys"] = animCurve.Keys
+                },
+                Engine.Components.ColorGradient gradient => new Dictionary<string, object>
+                {
+                    ["colors"] = gradient.Colors
+                },
+                Engine.Components.ColorKey colorKey => new Dictionary<string, object>
+                {
+                    ["time"] = colorKey.Time,
+                    ["color"] = new[] { colorKey.Color.R, colorKey.Color.G, colorKey.Color.B, colorKey.Color.A }
+                },
+                Engine.Components.Keyframe keyframe => new Dictionary<string, object>
+                {
+                    ["time"] = keyframe.Time,
+                    ["value"] = keyframe.Value
+                },
                 Matrix4 m => new[] {
                     m.M11, m.M12, m.M13, m.M14,
                     m.M21, m.M22, m.M23, m.M24,
@@ -234,6 +260,103 @@ namespace Engine.Serialization
             {
                 var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 4 ? new Quaternion(array[0], array[1], array[2], array[3]) : Quaternion.Identity;
+            }
+
+            if (targetType == typeof(Color4))
+            {
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
+                return array?.Length >= 4 ? new Color4(array[0], array[1], array[2], array[3]) : Color4.White;
+            }
+
+            if (targetType == typeof(Engine.Components.MinMaxCurve))
+            {
+                if (element.ValueKind == JsonValueKind.Object)
+                {
+                    var curve = new Engine.Components.MinMaxCurve(0);
+                    if (element.TryGetProperty("constant", out var constEl))
+                        curve.Constant = constEl.GetSingle();
+                    if (element.TryGetProperty("min", out var minEl))
+                        curve.Min = minEl.GetSingle();
+                    if (element.TryGetProperty("max", out var maxEl))
+                        curve.Max = maxEl.GetSingle();
+                    if (element.TryGetProperty("mode", out var modeEl))
+                    {
+                        var modeStr = modeEl.GetString();
+                        if (Enum.TryParse<Engine.Components.CurveMode>(modeStr, out var mode))
+                            curve.Mode = mode;
+                    }
+                    return curve;
+                }
+                return new Engine.Components.MinMaxCurve(0);
+            }
+
+            if (targetType == typeof(Engine.Components.AnimationCurve))
+            {
+                if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("keys", out var keysEl))
+                {
+                    var curve = new Engine.Components.AnimationCurve();
+                    if (keysEl.ValueKind == JsonValueKind.Array)
+                    {
+                        curve.Keys = new List<Engine.Components.Keyframe>();
+                        foreach (var keyEl in keysEl.EnumerateArray())
+                        {
+                            var key = (Engine.Components.Keyframe?)DeserializeValue(keyEl, typeof(Engine.Components.Keyframe));
+                            if (key != null) curve.Keys.Add(key);
+                        }
+                    }
+                    return curve;
+                }
+                return Engine.Components.AnimationCurve.Linear(0, 1, 1, 0);
+            }
+
+            if (targetType == typeof(Engine.Components.ColorGradient))
+            {
+                if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("colors", out var colorsEl))
+                {
+                    var gradient = new Engine.Components.ColorGradient();
+                    if (colorsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        gradient.Colors = new List<Engine.Components.ColorKey>();
+                        foreach (var colorEl in colorsEl.EnumerateArray())
+                        {
+                            var colorKey = (Engine.Components.ColorKey?)DeserializeValue(colorEl, typeof(Engine.Components.ColorKey));
+                            if (colorKey != null) gradient.Colors.Add(colorKey);
+                        }
+                    }
+                    return gradient;
+                }
+                return new Engine.Components.ColorGradient();
+            }
+
+            if (targetType == typeof(Engine.Components.ColorKey))
+            {
+                if (element.ValueKind == JsonValueKind.Object)
+                {
+                    var colorKey = new Engine.Components.ColorKey();
+                    if (element.TryGetProperty("time", out var timeEl))
+                        colorKey.Time = timeEl.GetSingle();
+                    if (element.TryGetProperty("color", out var colorEl))
+                    {
+                        var color = (Color4?)DeserializeValue(colorEl, typeof(Color4));
+                        if (color.HasValue) colorKey.Color = color.Value;
+                    }
+                    return colorKey;
+                }
+                return new Engine.Components.ColorKey();
+            }
+
+            if (targetType == typeof(Engine.Components.Keyframe))
+            {
+                if (element.ValueKind == JsonValueKind.Object)
+                {
+                    var keyframe = new Engine.Components.Keyframe();
+                    if (element.TryGetProperty("time", out var timeEl))
+                        keyframe.Time = timeEl.GetSingle();
+                    if (element.TryGetProperty("value", out var valueEl))
+                        keyframe.Value = valueEl.GetSingle();
+                    return keyframe;
+                }
+                return new Engine.Components.Keyframe();
             }
 
             if (targetType == typeof(Matrix4))

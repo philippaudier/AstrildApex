@@ -47,32 +47,36 @@ namespace Editor.Panels
 
             ImGui.SetNextWindowSize(new Vector2(900, 400), ImGuiCond.FirstUseEver);
 
-            if (ImGui.Begin("Audio Mixer", ref _isOpen))
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Audio Mixer", ref _isOpen))
             {
-                if (_mixer == null)
-                {
-                    ImGui.Text("No mixer loaded");
-                    ImGui.End();
-                    return;
-                }
-                
-                // Mettre à jour les niveaux en temps réel
-                UpdateLevelsFromEngine();
-
-                // Toolbar with Master Volume
-                DrawToolbar();
-
-                ImGui.Separator();
-                ImGui.Spacing();
-
-                // Mixer view - horizontal layout
-                ImGui.BeginChild("MixerView", new Vector2(0, -30));
-                DrawMixerGroupsHorizontal();
-                ImGui.EndChild();
-
-                // Status bar
-                DrawStatusBar();
+                ImGui.End();
+                return;
             }
+
+            if (_mixer == null)
+            {
+                ImGui.Text("No mixer loaded");
+                ImGui.End();
+                return;
+            }
+
+            // Mettre à jour les niveaux en temps réel
+            UpdateLevelsFromEngine();
+
+            // Toolbar with Master Volume
+            DrawToolbar();
+
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Mixer view - horizontal layout
+            ImGui.BeginChild("MixerView", new Vector2(0, -30));
+            DrawMixerGroupsHorizontal();
+            ImGui.EndChild();
+
+            // Status bar
+            DrawStatusBar();
 
             ImGui.End();
         }

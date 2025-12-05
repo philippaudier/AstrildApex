@@ -26,69 +26,74 @@ namespace Editor.Panels
 
             ImGui.SetNextWindowSize(new Vector2(600, 400), ImGuiCond.FirstUseEver);
 
-            if (ImGui.Begin("Systems Profiler", ref _isOpen, ImGuiWindowFlags.None))
+            // PERFORMANCE: Skip content if window is collapsed/hidden
+            if (!ImGui.Begin("Systems Profiler", ref _isOpen, ImGuiWindowFlags.None))
             {
-                var pipeline = EngineUpdatePipeline.Instance;
-
-                // Header controls
-                ImGui.Text("Engine Update Pipeline Profiler");
-                ImGui.Separator();
-
-                // Profiling toggle
-                bool enabled = pipeline.ProfilingEnabled;
-                if (ImGui.Checkbox("Enable Profiling", ref enabled))
-                {
-                    pipeline.ProfilingEnabled = enabled;
-                    _profilingEnabled = enabled;
-                }
-
-                ImGui.SameLine();
-                if (ImGui.Button("Clear Metrics"))
-                {
-                    pipeline.ClearMetrics();
-                }
-
-                ImGui.SameLine();
-                if (ImGui.Button("Reset Pipeline"))
-                {
-                    pipeline.Reset();
-                }
-
-                if (!_profilingEnabled)
-                {
-                    ImGui.TextDisabled("Enable profiling to see system performance metrics");
-                    ImGui.End();
-                    return;
-                }
-
-                ImGui.Spacing();
-                ImGui.Separator();
-                ImGui.Spacing();
-
-                // System list grouped by phase
-                if (ImGui.BeginTabBar("ProfilerTabs"))
-                {
-                    if (ImGui.BeginTabItem("By Phase"))
-                    {
-                        DrawSystemsByPhase(pipeline);
-                        ImGui.EndTabItem();
-                    }
-
-                    if (ImGui.BeginTabItem("All Systems"))
-                    {
-                        DrawAllSystems(pipeline);
-                        ImGui.EndTabItem();
-                    }
-
-                    if (ImGui.BeginTabItem("Performance"))
-                    {
-                        DrawPerformanceOverview(pipeline);
-                        ImGui.EndTabItem();
-                    }
-
-                    ImGui.EndTabBar();
-                }
+                ImGui.End();
+                return;
             }
+
+            var pipeline = EngineUpdatePipeline.Instance;
+
+            // Header controls
+            ImGui.Text("Engine Update Pipeline Profiler");
+            ImGui.Separator();
+
+            // Profiling toggle
+            bool enabled = pipeline.ProfilingEnabled;
+            if (ImGui.Checkbox("Enable Profiling", ref enabled))
+            {
+                pipeline.ProfilingEnabled = enabled;
+                _profilingEnabled = enabled;
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Clear Metrics"))
+            {
+                pipeline.ClearMetrics();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Reset Pipeline"))
+            {
+                pipeline.Reset();
+            }
+
+            if (!_profilingEnabled)
+            {
+                ImGui.TextDisabled("Enable profiling to see system performance metrics");
+                ImGui.End();
+                return;
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // System list grouped by phase
+            if (ImGui.BeginTabBar("ProfilerTabs"))
+            {
+                if (ImGui.BeginTabItem("By Phase"))
+                {
+                    DrawSystemsByPhase(pipeline);
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("All Systems"))
+                {
+                    DrawAllSystems(pipeline);
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("Performance"))
+                {
+                    DrawPerformanceOverview(pipeline);
+                    ImGui.EndTabItem();
+                }
+
+                ImGui.EndTabBar();
+            }
+
             ImGui.End();
         }
 
