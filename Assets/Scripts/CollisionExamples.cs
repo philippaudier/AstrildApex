@@ -107,12 +107,12 @@ namespace Examples
             var motion = (forward * moveZ + right * moveX) * speed * deltaTime;
 
             // Appliquer le mouvement (avec collision automatique)
-            controller.Move(motion, deltaTime);
+            controller.Move(motion);
 
             // Saut (exemple)
             // if (Input.IsKeyPressed(Key.Space) && controller.IsGrounded)
             // {
-            //     controller.AddVerticalImpulse(5f); // Force du saut
+            //     controller.AddImpulse(5f); // Force du saut
             // }
 
             // Vérifier l'état

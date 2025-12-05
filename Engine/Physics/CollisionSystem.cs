@@ -285,15 +285,8 @@ namespace Engine.Physics
             return false;
         }
 
-        // Stats for RaycastAll optimization
-        private static int _raycastCallsThisSecond = 0;
-        private static int _totalCollidersTestedThisSecond = 0;
-        private static System.Diagnostics.Stopwatch _raycastStatsTimer = System.Diagnostics.Stopwatch.StartNew();
-
         public static List<RaycastHit> RaycastAll(Ray ray, float maxDistance, int layerMask = ~0, QueryTriggerInteraction qti = QueryTriggerInteraction.UseGlobal)
         {
-            _raycastCallsThisSecond++;
-
             bool includeTriggers = qti == QueryTriggerInteraction.Include || (qti == QueryTriggerInteraction.UseGlobal && QueriesHitTriggers == QueryTriggerInteraction.Include);
             var results = new List<RaycastHit>(8);
 
@@ -316,19 +309,6 @@ namespace Engine.Physics
             // If spatial hash returns no results, fall back to all colliders (safety net)
             if (candidates.Count == 0)
                 candidates = _colliders;
-
-            _totalCollidersTestedThisSecond += candidates.Count;
-
-            // PERF FIX: Removed per-second raycast stats logging (massive performance hit)
-            // Debug stats every second
-            // if (_raycastStatsTimer.ElapsedMilliseconds > 1000)
-            // {
-            //     float avgCollidersPerRaycast = _raycastCallsThisSecond > 0 ? (float)_totalCollidersTestedThisSecond / _raycastCallsThisSecond : 0;
-            //     Console.WriteLine($"[CollisionSystem] RaycastAll: {_raycastCallsThisSecond} calls/sec, avg {avgCollidersPerRaycast:F1} colliders tested per raycast (total colliders: {_colliders.Count})");
-            //     _raycastCallsThisSecond = 0;
-            //     _totalCollidersTestedThisSecond = 0;
-            //     _raycastStatsTimer.Restart();
-            // }
 
             foreach (var c in candidates)
             {
@@ -514,8 +494,8 @@ namespace Engine.Physics
                 if (!includeTriggers && c.IsTrigger) continue;
 
                 // Sweep test: check for collision at multiple points along the path
-                // Adaptive sampling: choose number of steps based on distance and capsule radius
-                int steps = Math.Min(128, Math.Max(8, (int)(maxDistance / Math.Max(radius * 0.2f, 0.02f))));
+                // Reduced sampling for better performance: 32 steps max (was 128)
+                int steps = Math.Min(32, Math.Max(6, (int)(maxDistance / Math.Max(radius * 0.25f, 0.05f))));
                 for (int i = 0; i <= steps; i++)
                 {
                     float t = (float)i / (float)steps * maxDistance;
@@ -611,7 +591,8 @@ namespace Engine.Physics
                         Vector3 hitNormal = normal;
 
                         // Sweep test: check for collision at multiple points along the path
-                                int steps = Math.Min(128, Math.Max(6, (int)(maxDistance / Math.Max(radius * 0.5f, 0.02f))));
+                        // Reduced sampling: 32 steps max (was 128)
+                        int steps = Math.Min(32, Math.Max(6, (int)(maxDistance / Math.Max(radius * 0.5f, 0.05f))));
                                 for (int i = 0; i <= steps; i++)
                                 {
                                     float tt = (float)i / (float)steps * maxDistance;

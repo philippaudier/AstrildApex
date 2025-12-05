@@ -338,7 +338,6 @@ namespace Editor.Serialization
                         {
                             ["height"] = characterController.Height,
                             ["radius"] = characterController.Radius,
-                            ["stepOffset"] = characterController.StepOffset,
                             // useGravity is always true in the new simple system
                             ["gravity"] = characterController.Gravity,
                             ["isGrounded"] = characterController.IsGrounded
@@ -945,9 +944,6 @@ namespace Editor.Serialization
                             
                         if (ccData.TryGetValue("radius", out var radiusEl))
                             characterController.Radius = radiusEl.GetSingle();
-                            
-                        if (ccData.TryGetValue("stepOffset", out var stepEl))
-                            characterController.StepOffset = stepEl.GetSingle();
                             
                         // useGravity is always true in the new simple system
                         // Skip loading this property

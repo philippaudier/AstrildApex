@@ -74,12 +74,19 @@ namespace Editor.Inspector
             if (InspectorWidgets.Section("Movement", defaultOpen: true,
                 tooltip: "Movement and physics settings"))
             {
-                float stepOffset = cc.StepOffset;
-                InspectorWidgets.FloatField("Step Offset", ref stepOffset, entityId, "StepOffset",
-                    speed: 0.01f, min: 0f, max: 1f,
-                    tooltip: "Maximum height the character can step up automatically",
-                    helpText: "Stairs: 0.3-0.5. Flat ground only: 0.05. Small obstacles: 0.1-0.2");
-                cc.StepOffset = stepOffset;
+                float height = cc.Height;
+                InspectorWidgets.FloatField("Height", ref height, entityId, "Height",
+                    speed: 0.01f, min: 0.1f, max: 5f,
+                    tooltip: "Height of the character capsule",
+                    helpText: "Typical human: 1.8-2.0");
+                cc.Height = height;
+
+                float radius = cc.Radius;
+                InspectorWidgets.FloatField("Radius", ref radius, entityId, "Radius",
+                    speed: 0.01f, min: 0.1f, max: 2f,
+                    tooltip: "Radius of the character capsule",
+                    helpText: "Typical human: 0.3-0.5");
+                cc.Radius = radius;
 
                 float skin = cc.SkinWidth;
                 InspectorWidgets.FloatField("Skin Width", ref skin, entityId, "SkinWidth",
@@ -95,12 +102,12 @@ namespace Editor.Inspector
                     helpText: "Earth-like: 9.8-15. Low gravity: 3-5. High gravity: 20-30.");
                 cc.Gravity = gravity;
 
-                float maxSlope = cc.MaxSlopeAngle;
-                InspectorWidgets.FloatField("Max Slope (deg)", ref maxSlope, entityId, "MaxSlopeAngle",
+                float slopeLimit = cc.SlopeLimit;
+                InspectorWidgets.FloatField("Slope Limit (deg)", ref slopeLimit, entityId, "SlopeLimit",
                     speed: 0.5f, min: 0f, max: 89f,
                     tooltip: "Maximum slope angle (degrees) considered walkable",
                     helpText: "Typical walkable slopes: 30-50°");
-                cc.MaxSlopeAngle = maxSlope;
+                cc.SlopeLimit = slopeLimit;
 
                 float groundCheckDist = cc.GroundCheckDistance;
                 InspectorWidgets.FloatField("Ground Check Distance", ref groundCheckDist, entityId, "GroundCheckDistance",
@@ -109,25 +116,11 @@ namespace Editor.Inspector
                     helpText: "Typical: 0.3-0.5");
                 cc.GroundCheckDistance = groundCheckDist;
 
-                float snapDist = cc.SnapDistance;
-                InspectorWidgets.FloatField("Snap Distance", ref snapDist, entityId, "SnapDistance",
-                    speed: 0.01f, min: 0.1f, max: 2f,
-                    tooltip: "Maximum distance to snap down to ground when grounded",
-                    helpText: "Typical: 0.5-1.0. Higher = smoother on slopes");
-                cc.SnapDistance = snapDist;
-
-                float snapSpeed = cc.GroundSnapSpeed;
-                InspectorWidgets.FloatField("Ground Snap Speed", ref snapSpeed, entityId, "GroundSnapSpeed",
-                    speed: 1f, min: 1f, max: 100f,
-                    tooltip: "Speed (m/s) to snap to ground surface",
-                    helpText: "Higher = instant snapping, lower = smooth interpolation");
-                cc.GroundSnapSpeed = snapSpeed;
-
                 InspectorWidgets.EndSection();
             }
 
-            // === STATUS & DEBUG ===
-            if (InspectorWidgets.Section("Status & Debug", defaultOpen: false))
+            // === STATUS ===
+            if (InspectorWidgets.Section("Status", defaultOpen: false))
             {
                 // Read-only status
                 bool isGrounded = cc.IsGrounded;
@@ -142,16 +135,7 @@ namespace Editor.Inspector
                 ImGui.BeginDisabled();
                 var vel = cc.Velocity;
                 ImGui.Text($"Velocity: X={vel.X:F2}, Y={vel.Y:F2}, Z={vel.Z:F2}");
-                ImGui.Text($"Ground Distance: {cc.GroundDistance:F3}");
-                ImGui.Text($"Ground Normal: X={cc.GroundNormal.X:F2}, Y={cc.GroundNormal.Y:F2}, Z={cc.GroundNormal.Z:F2}");
                 ImGui.EndDisabled();
-
-                // Debug toggle
-                bool debugPhysics = cc.DebugPhysics;
-                InspectorWidgets.Checkbox("Debug Physics", ref debugPhysics, entityId, "DebugPhysics",
-                    tooltip: "Show debug logs for physics collisions",
-                    helpText: "Logs detailed physics information to console");
-                cc.DebugPhysics = debugPhysics;
 
                 InspectorWidgets.EndSection();
             }
