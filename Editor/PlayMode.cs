@@ -91,6 +91,14 @@ namespace Editor
             _originalScene = currentScene;
             _playScene = _transitionManager.PlayScene;
 
+            // CRITICAL: Switch viewport renderer to use PLAY SCENE instead of original scene
+            // This prevents modifications during play mode from affecting the original scene
+            if (_playScene != null && EditorUI.MainViewport.Renderer != null)
+            {
+                EditorUI.MainViewport.Renderer.SetScene(_playScene);
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Switched viewport to play scene with {_playScene.Entities.Count} entities");
+            }
+
             // Clear component cache and rebuild for Play Mode
             _cachedComponentsByEntity.Clear();
             if (_playScene != null)
