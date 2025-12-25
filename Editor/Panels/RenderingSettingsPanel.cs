@@ -3,6 +3,8 @@ using ImGuiNET;
 using OpenTK.Mathematics;
 using Engine.Rendering;
 using Editor.State;
+using Editor.Themes;
+using Editor.UI;
 using Numerics = System.Numerics;
 
 namespace Editor.Panels
@@ -13,6 +15,8 @@ namespace Editor.Panels
     /// </summary>
     public static class RenderingSettingsPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         private static bool _showDebugOptions = false;
 
         public static void Draw()
@@ -69,7 +73,7 @@ namespace Editor.Panels
 
         private static void DrawCameraSettings(Editor.Rendering.ViewportRenderer renderer)
         {
-            if (!ImGui.CollapsingHeader("Camera", ImGuiTreeNodeFlags.DefaultOpen))
+            if (!ThemedImGui.CollapsingHeader("Camera", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 return;
             }
@@ -233,7 +237,7 @@ namespace Editor.Panels
 
             // Info
             ImGui.Spacing();
-            if (ImGui.CollapsingHeader("Info"))
+            if (ThemedImGui.CollapsingHeader("Info"))
             {
                 ImGui.Text($"FOV: {renderer.FovDegrees:F1}°");
                 if (renderer.ProjectionMode == 1 || renderer.ProjectionMode == 2) ImGui.Text($"Ortho Size: {renderer.OrthoSize:F1}");
@@ -257,7 +261,7 @@ namespace Editor.Panels
         private static void DrawSSAOSettings(Editor.Rendering.ViewportRenderer renderer)
         {
             // SSAO Section Header
-            if (ImGui.CollapsingHeader("Screen Space Ambient Occlusion (SSAO)", _showSSAOSettings ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            if (ThemedImGui.CollapsingHeader("Screen Space Ambient Occlusion (SSAO)", _showSSAOSettings ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
             {
                 _showSSAOSettings = true;
 
@@ -410,7 +414,7 @@ namespace Editor.Panels
 
         private static void DrawDebugOptions(Editor.Rendering.ViewportRenderer renderer)
         {
-            if (ImGui.CollapsingHeader("Debug & Visualization", _showDebugOptions ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            if (ThemedImGui.CollapsingHeader("Debug & Visualization", _showDebugOptions ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
             {
                 _showDebugOptions = true;
 
@@ -480,7 +484,7 @@ namespace Editor.Panels
 
         private static void DrawShadowsSettings(Editor.Rendering.ViewportRenderer renderer)
         {
-            if (ImGui.CollapsingHeader("Shadows", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Shadows", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 var s = Editor.State.EditorSettings.ShadowsSettings;
 
@@ -588,7 +592,7 @@ namespace Editor.Panels
 
         private static void DrawAntiAliasingSettings(Editor.Rendering.ViewportRenderer renderer)
         {
-            if (!ImGui.CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags.DefaultOpen))
+            if (!ThemedImGui.CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 return;
             }

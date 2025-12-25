@@ -1,14 +1,17 @@
 using System.Numerics;
 using ImGuiNET;
 using Engine.Audio.Components;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Inspecteur pour le composant AudioListenerComponent
+    /// Modern AudioListener inspector with unified UX
     /// </summary>
     public static class AudioListenerInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         public static void Draw(AudioListenerComponent listener)
         {
             if (listener == null) return;
@@ -23,15 +26,15 @@ namespace Editor.Inspector
 
             if (isActive && isEnabled)
             {
-                ImGui.TextColored(new Vector4(0.2f, 1.0f, 0.2f, 1.0f), "● ACTIVE LISTENER");
+                ImGui.TextColored(UI.Success, "● ACTIVE LISTENER");
             }
             else if (!isEnabled)
             {
-                ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1.0f), "○ Disabled (Enable the component)");
+                ImGui.TextColored(UI.TextDisabled, "○ Disabled (Enable the component)");
             }
             else
             {
-                ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.0f, 1.0f), "○ Inactive (Another listener is active)");
+                ImGui.TextColored(UI.Warning, "○ Inactive (Another listener is active)");
             }
 
             ImGui.Spacing();

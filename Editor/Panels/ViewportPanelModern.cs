@@ -215,11 +215,9 @@ public class ViewportPanelModern
         HandleCameraInput(hoveredWindow, io);
         
         // === Render Scene ===
-        if (!PlayMode.IsInPlayMode)
-        {
-            Renderer?.RenderScene();
-        }
-        
+        // Render in both Edit and Play modes (PlayMode needs continuous rendering for animations)
+        Renderer?.RenderScene();
+
         // === Display Texture ===
         Vector2 itemMin = Vector2.Zero;
         Vector2 itemMax = Vector2.Zero;
@@ -840,8 +838,8 @@ public class ViewportPanelModern
     }
 
     /// <summary>
-    /// Handle mesh asset drop from AssetsPanel to scene
-    /// Creates an entity with MeshRendererComponent at the drop position
+    /// Handle mesh asset or prefab drop from AssetsPanel to scene
+    /// Creates an entity with MeshRendererComponent at the drop position for meshes, or instantiates prefab
     /// </summary>
     private unsafe void HandleMeshAssetDrop(Vector2 itemMin, Vector2 itemMax, float imgW, float imgH)
     {
@@ -854,18 +852,26 @@ public class ViewportPanelModern
         if (span.Length < 16) return;
         var assetGuid = new Guid(span.Slice(0, 16));
 
-        // Check if it's a mesh asset
+        // Check asset exists
         if (!Engine.Assets.AssetDatabase.TryGet(assetGuid, out var assetRec))
         {
             LogManager.LogWarning($"Dropped asset GUID not found in AssetDatabase: {assetGuid}", "ViewportPanel");
             return;
         }
 
-    LogManager.LogInfo($"Dropped asset: GUID={assetGuid}, Path={assetRec.Path}, Type={assetRec.Type}", "ViewportPanel");
+        LogManager.LogInfo($"Dropped asset: GUID={assetGuid}, Path={assetRec.Path}, Type={assetRec.Type}", "ViewportPanel");
 
+        // Handle prefabs
+        if (assetRec.Type == "Prefab")
+        {
+            HandlePrefabDrop(assetGuid, assetRec, itemMin, itemMax, imgW, imgH);
+            return;
+        }
+
+        // Handle mesh assets
         if (!Engine.Assets.AssetDatabase.IsMeshAsset(assetGuid))
         {
-            LogManager.LogWarning($"Dropped asset is not a mesh: {assetRec.Type}", "ViewportPanel");
+            LogManager.LogWarning($"Dropped asset is not a mesh or prefab: {assetRec.Type}", "ViewportPanel");
             return;
         }
 
@@ -891,6 +897,7 @@ public class ViewportPanelModern
     LogManager.LogInfo($"Loaded MeshAsset GUID={meshAsset.Guid}, SubMeshes={meshAsset.SubMeshes.Count}, Materials={meshAsset.MaterialGuids.Count}", "ViewportPanel");
         
         // DEBUG: Print submesh and material information
+        LogManager.LogInfo($"═══ DEBUG: MESH ASSET SUBMESH BREAKDOWN ═══", "ViewportPanel");
         for (int i = 0; i < meshAsset.SubMeshes.Count; i++)
         {
             var submesh = meshAsset.SubMeshes[i];
@@ -900,16 +907,40 @@ public class ViewportPanelModern
                 matGuid = meshAsset.MaterialGuids[submesh.MaterialIndex];
 
             var matName = matGuid.HasValue ? Engine.Assets.AssetDatabase.GetName(matGuid.Value) : "<none>";
-            LogManager.LogVerbose($"DEBUG: Submesh[{i}] Name={submesh.Name}, MaterialIndex={submesh.MaterialIndex}, AssignedMaterial={matName}", "ViewportPanel");
+            LogManager.LogInfo($"  Submesh[{i}]: Name='{submesh.Name}', Verts={submesh.VertexCount}, Tris={submesh.TriangleCount}, MatIdx={submesh.MaterialIndex}, Material='{matName}'", "ViewportPanel");
         }
+        LogManager.LogInfo($"═══════════════════════════════════════", "ViewportPanel");
 
-        // Create parent entity
+        // Calculate global minY for all submeshes to place pivot at base
+        float globalMinY = float.MaxValue;
+        for (int i = 0; i < meshAsset.SubMeshes.Count; i++)
+        {
+            float submeshMinY = CalculateMeshMinY(meshAsset.SubMeshes[i]);
+            LogManager.LogInfo($"  Submesh[{i}] minY = {submeshMinY:F3}", "ViewportPanel");
+            if (submeshMinY < globalMinY)
+                globalMinY = submeshMinY;
+        }
+        if (globalMinY == float.MaxValue) globalMinY = 0f;
+        
+        LogManager.LogInfo($"🎯 Global minY = {globalMinY:F3}, worldPos.Y = {worldPos.Y:F3}", "ViewportPanel");
+
+        // Create parent entity with adjusted position (pivot at base)
         var parentEntity = new Engine.Scene.Entity
         {
             Id = Renderer.Scene.GetNextEntityId(),
             Name = assetRec.Name
         };
-        parentEntity.Transform.Position = new OpenTK.Mathematics.Vector3(worldPos.X, worldPos.Y, worldPos.Z);
+        
+        // IMPORTANT: If minY is negative (below origin), we need to ADD its absolute value
+        // to raise the model so its base touches the drop point
+        // If minY is positive (above origin), we subtract it to lower the base to the drop point
+        // This simplifies to: adjustedY = worldPos.Y - globalMinY
+        // Example: if globalMinY = -5 (base 5 units below origin), worldPos.Y - (-5) = worldPos.Y + 5 (raise by 5)
+        //          if globalMinY = 2 (base 2 units above origin), worldPos.Y - 2 (lower by 2)
+        var adjustedY = worldPos.Y - globalMinY;
+        parentEntity.Transform.Position = new OpenTK.Mathematics.Vector3(worldPos.X, adjustedY, worldPos.Z);
+        
+        LogManager.LogInfo($"🎯 Parent position set to: ({worldPos.X:F2}, {adjustedY:F2}, {worldPos.Z:F2}) [worldPos.Y - globalMinY = {worldPos.Y:F2} - ({globalMinY:F2})]", "ViewportPanel");
 
         // Add to scene first so child entities can reference the parent
         Renderer.Scene.Entities.Add(parentEntity);
@@ -933,12 +964,25 @@ public class ViewportPanelModern
     LogManager.LogVerbose($"===== Model '{assetRec.Name}' has {(hasNodeTransforms ? "MEANINGFUL node" : "IDENTITY/BAKED")} transforms =====", "ViewportPanel");
     LogManager.LogVerbose($"Mesh bounds center: ({meshAsset.Bounds.Center.X:F3}, {meshAsset.Bounds.Center.Y:F3}, {meshAsset.Bounds.Center.Z:F3})", "ViewportPanel");
 
+    // For baked geometry (no node transforms), adjust X,Z for mesh center to place pivot correctly
+    var meshCenter = meshAsset.Bounds.Center;
+    if (!hasNodeTransforms)
+    {
+        // For baked geometry: adjust X,Z for mesh center (Y already adjusted for globalMinY)
+        parentEntity.Transform.Position = new OpenTK.Mathematics.Vector3(
+            worldPos.X - meshCenter.X,
+            parentEntity.Transform.Position.Y, // Keep the Y already adjusted for globalMinY
+            worldPos.Z - meshCenter.Z
+        );
+        LogManager.LogVerbose($"Adjusted parent position for baked geometry: ({parentEntity.Transform.Position.X:F3}, {parentEntity.Transform.Position.Y:F3}, {parentEntity.Transform.Position.Z:F3})", "ViewportPanel");
+    }
+
             // If there's only one submesh, add it to the parent entity
         if (meshAsset.SubMeshes.Count == 1)
         {
             var meshRenderer = parentEntity.AddComponent<Engine.Components.MeshRendererComponent>();
             meshRenderer.SetCustomMesh(assetGuid, 0);
-            
+
             LogManager.LogInfo($"SetCustomMesh called with GUID={assetGuid}, submesh=0", "ViewportPanel");
             LogManager.LogInfo($"CustomMeshGuid after set: {meshRenderer.CustomMeshGuid}", "ViewportPanel");
             LogManager.LogInfo($"IsUsingCustomMesh: {meshRenderer.IsUsingCustomMesh()}", "ViewportPanel");
@@ -954,13 +998,8 @@ public class ViewportPanelModern
                 meshRenderer.SetMaterial(matGuid0.Value);
             else
                 meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
-            
-            // Automatically add MeshCollider for imported meshes
-            var meshCollider = parentEntity.AddComponent<Engine.Components.MeshCollider>();
-            meshCollider.UseMeshRendererMesh = true;
-            LogManager.LogInfo($"Auto-added MeshCollider to '{parentEntity.Name}'", "ViewportPanel");
 
-            LogManager.LogVerbose($"Created single-submesh entity '{parentEntity.Name}' at {worldPos}", "ViewportPanel");
+            LogManager.LogVerbose($"Created single-submesh entity '{parentEntity.Name}' at {worldPos} (pivot at base, minY={globalMinY:F2})", "ViewportPanel");
         }
         else
         {
@@ -968,14 +1007,7 @@ public class ViewportPanelModern
             // IMPORTANT: For models with baked transforms (vertices already in world space),
             // we DON'T move the submeshes - they stay at origin relative to parent
             // If we detected node transforms, apply them per-child. Otherwise assume the model
-            // vertices are baked in place and recenter the parent so the model is placed at drop position.
-            // Compute mesh center once so we can place children relative to it when needed
-            var meshCenter = meshAsset.Bounds.Center;
-            if (!hasNodeTransforms)
-            {
-                // Recentering: offset parent so the mesh center lands on worldPos
-                parentEntity.Transform.Position = new OpenTK.Mathematics.Vector3(worldPos.X - meshCenter.X, worldPos.Y - meshCenter.Y, worldPos.Z - meshCenter.Z);
-            }
+            // vertices are baked in place and parent position already adjusted above for mesh center.
 
             for (int i = 0; i < meshAsset.SubMeshes.Count; i++)
             {
@@ -998,20 +1030,13 @@ public class ViewportPanelModern
                     ApplyMatrixToTransform(childEntity.Transform, mat);
                     LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' placed using node LocalTransform", "ViewportPanel");
                 }
-                else if (!hasNodeTransforms)
-                {
-                    // For baked geometry (no meaningful node transforms), place the child at the
-                    // submesh centroid relative to the mesh center so parts (e.g. wheels) sit in the expected spot
-                    var subCenter = submesh.BoundsCenter; // System.Numerics.Vector3
-                    var local = new System.Numerics.Vector3(subCenter.X - meshCenter.X, subCenter.Y - meshCenter.Y, subCenter.Z - meshCenter.Z);
-                    childEntity.Transform.Position = new OpenTK.Mathematics.Vector3(local.X, local.Y, local.Z);
-                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' placed at centroid offset ({local.X:F3}, {local.Y:F3}, {local.Z:F3})", "ViewportPanel");
-                }
                 else
                 {
-                    // Mixed case: keep at origin
+                    // For baked geometry (no meaningful node transforms), vertices are already in world space
+                    // Parent position is already adjusted for meshCenter and globalMinY
+                    // So all submeshes should be at (0,0,0) local - their baked vertices will appear correctly
                     childEntity.Transform.Position = OpenTK.Mathematics.Vector3.Zero;
-                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' kept at local origin (mixed transforms)", "ViewportPanel");
+                    LogManager.LogVerbose($"Child[{i}] '{childEntity.Name}' at local origin (baked geometry)", "ViewportPanel");
                 }
 
                 var meshRenderer = childEntity.AddComponent<Engine.Components.MeshRendererComponent>();
@@ -1028,11 +1053,6 @@ public class ViewportPanelModern
                     meshRenderer.SetMaterial(matGuid.Value);
                 else
                     meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
-                
-                // Automatically add MeshCollider for each submesh
-                var meshCollider = childEntity.AddComponent<Engine.Components.MeshCollider>();
-                meshCollider.UseMeshRendererMesh = true;
-                LogManager.LogVerbose($"Auto-added MeshCollider to child '{childEntity.Name}'", "ViewportPanel");
 
                 Renderer.Scene.Entities.Add(childEntity);
             }
@@ -1046,6 +1066,125 @@ public class ViewportPanelModern
 
         // Mark scene as modified
         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+    }
+
+    /// <summary>
+    /// Handle prefab drop from AssetsPanel to scene
+    /// Instantiates the prefab at the drop position
+    /// </summary>
+    private void HandlePrefabDrop(Guid prefabGuid, Engine.Assets.AssetDatabase.AssetRecord assetRec, Vector2 itemMin, Vector2 itemMax, float imgW, float imgH)
+    {
+        if (Renderer?.Scene == null) return;
+
+        // Calculate drop world position
+        var mousePos = ImGui.GetMousePos();
+        var localX = mousePos.X - itemMin.X;
+        var localY = mousePos.Y - itemMin.Y;
+        Vector3 worldPos = CalculateDropWorldPosition(localX, localY, imgW, imgH);
+
+        // Load prefab asset
+        var prefabAsset = Engine.Assets.AssetDatabase.LoadPrefab(prefabGuid);
+        if (prefabAsset?.RootEntity == null)
+        {
+            LogManager.LogWarning($"Failed to load prefab asset: {assetRec.Path}", "ViewportPanel");
+            return;
+        }
+
+        // Instantiate prefab using PrefabInstantiator
+        var rootEntity = Inspector.PrefabInstantiator.Instantiate(prefabAsset.RootEntity, Renderer.Scene);
+        if (rootEntity == null)
+        {
+            LogManager.LogWarning($"Failed to instantiate prefab: {prefabAsset.Name}", "ViewportPanel");
+            return;
+        }
+
+        // Calculate bounds to position pivot at base instead of center
+        float minY = CalculateEntityBoundsMinY(rootEntity);
+        
+        // Adjust position so the base (minY) is at the drop location
+        rootEntity.Transform.Position = new OpenTK.Mathematics.Vector3(worldPos.X, worldPos.Y - minY, worldPos.Z);
+
+        LogManager.LogInfo($"Instantiated prefab '{prefabAsset.Name}' at {worldPos} (adjusted for base pivot, minY={minY:F2})", "ViewportPanel");
+
+        // Select the instantiated entity
+        Selection.ActiveEntityId = rootEntity.Id;
+        UpdateGizmoPivot();
+
+        // Mark scene as modified
+        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+    }
+
+    /// <summary>
+    /// Calculate the minimum Y coordinate from a submesh's vertices
+    /// </summary>
+    private float CalculateMeshMinY(Engine.Assets.SubMesh submesh)
+    {
+        float minY = float.MaxValue;
+        
+        // Vertices format: Position(3) + Normal(3) + TexCoord(2) = 8 floats per vertex
+        for (int i = 0; i < submesh.Vertices.Length; i += 8)
+        {
+            float vertexY = submesh.Vertices[i + 1]; // Y is at offset 1
+            if (vertexY < minY)
+                minY = vertexY;
+        }
+        
+        return minY == float.MaxValue ? 0f : minY;
+    }
+
+    /// <summary>
+    /// Calculate the minimum Y bound of an entity and all its children (for base pivot placement)
+    /// </summary>
+    private float CalculateEntityBoundsMinY(Engine.Scene.Entity entity)
+    {
+        float minY = float.MaxValue;
+        CalculateEntityBoundsMinYRecursive(entity, ref minY);
+        return minY == float.MaxValue ? 0f : minY;
+    }
+
+    private void CalculateEntityBoundsMinYRecursive(Engine.Scene.Entity entity, ref float minY)
+    {
+        // Check if entity has a MeshRenderer to get its bounds
+        var meshRenderer = entity.GetComponent<Engine.Components.MeshRendererComponent>();
+        if (meshRenderer != null && meshRenderer.IsUsingCustomMesh())
+        {
+            try
+            {
+                var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(meshRenderer.CustomMeshGuid!.Value);
+                if (meshAsset != null && meshRenderer.SubmeshIndex < meshAsset.SubMeshes.Count)
+                {
+                    var submesh = meshAsset.SubMeshes[meshRenderer.SubmeshIndex];
+                    
+                    // Calculate bounds from vertices (format: Position(3) + Normal(3) + TexCoord(2) = 8 floats per vertex)
+                    float localMinY = float.MaxValue;
+                    for (int i = 0; i < submesh.Vertices.Length; i += 8)
+                    {
+                        float vertexY = submesh.Vertices[i + 1]; // Y is at offset 1
+                        if (vertexY < localMinY)
+                            localMinY = vertexY;
+                    }
+                    
+                    if (localMinY < float.MaxValue)
+                    {
+                        // Get world position of this entity
+                        var worldPos = entity.Transform.GetWorldPosition();
+                        
+                        // Transform local minY to world space (using local scale for simplicity)
+                        float boundsMinY = worldPos.Y + localMinY * entity.Transform.Scale.Y;
+                        
+                        if (boundsMinY < minY)
+                            minY = boundsMinY;
+                    }
+                }
+            }
+            catch { }
+        }
+        
+        // Recursively check children
+        foreach (var child in entity.Children)
+        {
+            CalculateEntityBoundsMinYRecursive(child, ref minY);
+        }
     }
 
     /// <summary>
@@ -1114,6 +1253,14 @@ public class ViewportPanelModern
             // Calculate a ray from camera through mouse position and place object 10 units away
             return Vector3.Zero; // Fallback to origin for now
         }
+    }
+
+    /// <summary>
+    /// Focus the Scene viewport window (bring it to front in docked layout)
+    /// </summary>
+    public void FocusWindow()
+    {
+        ImGui.SetWindowFocus("Scene");
     }
 }
 

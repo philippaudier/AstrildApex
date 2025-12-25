@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using ImGuiNET;
 using Editor.State;
+using Editor.UI;
 using Engine.Assets;
 
 namespace Editor.Inspector
@@ -61,6 +63,9 @@ namespace Editor.Inspector
             Emission = m.Emission,
             TransparencyMode = m.TransparencyMode,
             Opacity = m.Opacity,
+            CullingMode = m.CullingMode,
+            AlphaClippingEnabled = m.AlphaClippingEnabled,
+            AlphaClipThreshold = m.AlphaClipThreshold,
             GlassProperties = m.GlassProperties != null ? new Engine.Assets.GlassMaterialProperties
             {
                 RefractiveIndex = m.GlassProperties.RefractiveIndex,
@@ -72,6 +77,18 @@ namespace Editor.Inspector
                 Opacity = m.GlassProperties.Opacity,
                 FresnelPower = m.GlassProperties.FresnelPower,
                 ReflectionStrength = m.GlassProperties.ReflectionStrength
+            } : null
+            ,WaterProperties = m.WaterProperties != null ? new Engine.Assets.WaterProperties
+            {
+                WaveSpeed = m.WaterProperties.WaveSpeed,
+                WaveHeight = m.WaterProperties.WaveHeight,
+                WaveFrequency = m.WaterProperties.WaveFrequency,
+                Reflectivity = m.WaterProperties.Reflectivity,
+                FresnelPower = m.WaterProperties.FresnelPower,
+                DistortionStrength = m.WaterProperties.DistortionStrength,
+                Transparency = m.WaterProperties.Transparency,
+                SpecularPower = m.WaterProperties.SpecularPower,
+                SpecularColor = m.WaterProperties.SpecularColor != null ? (float[])m.WaterProperties.SpecularColor.Clone() : new float[] { 1f, 1f, 1f }
             } : null
         };
 
@@ -128,7 +145,20 @@ namespace Editor.Inspector
                         {
                             BeginEdit("Shader");
                             mat.Shader = arr[Math.Clamp(curIndex, 0, arr.Length - 1)];
-                            SaveAndApplyImmediate(guid, mat, "Shader");
+
+                            // CRITICAL FIX: Invalidate this material in BOTH caches (AssetDatabase + MaterialRuntime)
+                            // This ensures the new shader is picked up when rendering
+                            Engine.Assets.AssetDatabase.InvalidateMaterial(guid);
+
+                            // Force shader reload to ensure it's available
+                            try
+                            {
+                                Engine.Rendering.ShaderLibrary.ReloadShader(mat.Shader);
+                            }
+                            catch { }
+
+                            // Save with overwriteShader=true to ensure the shader field is saved
+                            SaveAndApplyImmediate(guid, mat, "Shader", overwriteShader: true);
                         }
                     }
                     else
@@ -139,12 +169,61 @@ namespace Editor.Inspector
                 catch { }
             }
 
-            // If terrain shader, show readonly hint
+            // If terrain shader, show simplified UI
             if (string.Equals(mat.Shader, "TerrainForward", StringComparison.OrdinalIgnoreCase))
             {
                 ImGui.Separator();
-                ImGui.Text("Terrain Layers");
-                ImGui.TextDisabled("Legacy: Terrain layers are now managed on the Terrain component (use the Terrain inspector to edit layers).\nThis view is read-only for migration/compatibility.");
+                ImGui.Spacing();
+                
+                // Info box
+                ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.2f, 0.3f, 0.5f, 0.3f));
+                ImGui.BeginChild("TerrainInfo", new Vector2(-1, 0), ImGuiChildFlags.AutoResizeY | ImGuiChildFlags.Borders);
+                
+                ImGui.TextUnformatted("ℹ️ Terrain Material");
+                ImGui.Spacing();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.8f, 0.8f, 0.8f, 1f));
+                ImGui.TextWrapped("Terrain layers, textures, and material properties are managed directly on the Terrain component.");
+                ImGui.TextWrapped("Use the Terrain inspector to edit:");
+                ImGui.BulletText("Layer textures (albedo, normal)");
+                ImGui.BulletText("Layer properties (metallic, smoothness, tiling)");
+                ImGui.BulletText("Layer blending (height, slope)");
+                ImGui.BulletText("Triplanar mapping settings");
+                ImGui.PopStyleColor();
+                
+                ImGui.Spacing();
+                
+                // Quick link to select terrain entity
+                if (ImGui.Button("Select Terrain Entity", new Vector2(-1, 0)))
+                {
+                    // Find first entity with Terrain component
+                    var scene = Panels.EditorUI.MainViewport.Renderer?.Scene;
+                    if (scene != null)
+                    {
+                        foreach (var entity in scene.Entities)
+                        {
+                            if (entity.GetComponent<Engine.Components.Terrain>() != null)
+                            {
+                                Selection.SetSingle(entity.Id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Select terrain entity to edit layers in the Inspector");
+                
+                ImGui.EndChild();
+                ImGui.PopStyleColor();
+                
+                // Only show shader selection for terrain
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+                
+                ImGui.TextUnformatted("Shader: TerrainForward");
+                ImGui.TextDisabled("(Fixed shader for terrain rendering)");
+                
+                return; // Skip all other material properties
             }
 
             // If glass shader, show glass properties
@@ -160,9 +239,31 @@ namespace Editor.Inspector
                 return;
             }
 
+            // NOTE: WaterForward shader and its inspector were removed. Water-specific
+            // properties should be edited via the generic "Water" shader or the
+            // Terrain/Material workflows. Skip special-case UI here.
+
+            // NOTE: Legacy Water shader support retained but planar reflection controls
+            // have been removed as planar reflection system was purged.
+
             // === TEXTURES SECTION ===
-            mat.AlbedoTexture = DrawTextureField(guid, mat, "Albedo Texture", mat.AlbedoTexture, "Assign Albedo");
-            mat.NormalTexture = DrawTextureField(guid, mat, "Normal Texture", mat.NormalTexture, "Assign Normal");
+            {
+                var newAlbedo = EditorWidgets.AssetField("Albedo Texture", mat.AlbedoTexture, "Texture", "Assign Albedo", showPreview: true);
+                if (newAlbedo != mat.AlbedoTexture)
+                {
+                    BeginEdit("Assign Albedo");
+                    mat.AlbedoTexture = newAlbedo;
+                    SaveAndApplyImmediate(guid, mat, "Assign Albedo");
+                }
+
+                var newNormal = EditorWidgets.AssetField("Normal Texture", mat.NormalTexture, "Texture", "Assign Normal", showPreview: false);
+                if (newNormal != mat.NormalTexture)
+                {
+                    BeginEdit("Assign Normal");
+                    mat.NormalTexture = newNormal;
+                    SaveAndApplyImmediate(guid, mat, "Assign Normal");
+                }
+            }
 
             if (mat.NormalTexture.HasValue && mat.NormalTexture.Value != Guid.Empty)
             {
@@ -179,39 +280,39 @@ namespace Editor.Inspector
             // PBR Textures
             ImGui.Separator();
             ImGui.Text("PBR Textures");
-            mat.MetallicTexture = DrawTextureField(guid, mat, "Metallic Texture", mat.MetallicTexture, "Assign Metallic");
-            mat.RoughnessTexture = DrawTextureField(guid, mat, "Roughness Texture", mat.RoughnessTexture, "Assign Roughness");
-
-            ImGui.Text("Metallic-Roughness (GLTF):");
-            ImGui.SameLine();
-            var btnMR = mat.MetallicRoughnessTexture.HasValue && mat.MetallicRoughnessTexture.Value != Guid.Empty
-                ? AssetDatabase.GetName(mat.MetallicRoughnessTexture.Value)
-                : "<none>";
-            ImGui.Button(btnMR + "##MetallicRoughnessBtn");
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("GLTF 2.0 combined texture (G=roughness, B=metallic)");
-            if (ImGui.BeginDragDropTarget())
             {
-                if (Editor.Panels.AssetsPanel.TryConsumeDraggedAsset(out var dropped) &&
-                    AssetDatabase.GetTypeName(dropped) == "Texture2D")
+                var newMetallic = EditorWidgets.AssetField("Metallic Texture", mat.MetallicTexture, "Texture", "Assign Metallic", showPreview: false);
+                if (newMetallic != mat.MetallicTexture)
+                {
+                    BeginEdit("Assign Metallic");
+                    mat.MetallicTexture = newMetallic;
+                    SaveAndApplyImmediate(guid, mat, "Assign Metallic");
+                }
+
+                var newRoughness = EditorWidgets.AssetField("Roughness Texture", mat.RoughnessTexture, "Texture", "Assign Roughness", showPreview: false);
+                if (newRoughness != mat.RoughnessTexture)
+                {
+                    BeginEdit("Assign Roughness");
+                    mat.RoughnessTexture = newRoughness;
+                    SaveAndApplyImmediate(guid, mat, "Assign Roughness");
+                }
+
+                var newMR = EditorWidgets.AssetField("Metallic-Roughness (GLTF)", mat.MetallicRoughnessTexture, "Texture", "GLTF combined texture (G=roughness, B=metallic)", showPreview: false);
+                if (newMR != mat.MetallicRoughnessTexture)
                 {
                     BeginEdit("Assign Metallic-Roughness");
-                    mat.MetallicRoughnessTexture = dropped;
+                    mat.MetallicRoughnessTexture = newMR;
                     SaveAndApplyImmediate(guid, mat, "Assign Metallic-Roughness");
-                }
-                ImGui.EndDragDropTarget();
-            }
-            if (mat.MetallicRoughnessTexture.HasValue && mat.MetallicRoughnessTexture.Value != Guid.Empty)
-            {
-                ImGui.SameLine();
-                if (ImGui.Button("X##ClearMetallicRoughness"))
-                {
-                    BeginEdit("Clear Metallic-Roughness");
-                    mat.MetallicRoughnessTexture = null;
-                    SaveAndApplyImmediate(guid, mat, "Clear Metallic-Roughness");
                 }
             }
 
-            mat.OcclusionTexture = DrawTextureField(guid, mat, "Occlusion Texture", mat.OcclusionTexture, "Assign Occlusion");
+            var newOcclusion = EditorWidgets.AssetField("Occlusion Texture", mat.OcclusionTexture, "Texture", "Assign Occlusion", showPreview: false);
+            if (newOcclusion != mat.OcclusionTexture)
+            {
+                BeginEdit("Assign Occlusion");
+                mat.OcclusionTexture = newOcclusion;
+                SaveAndApplyImmediate(guid, mat, "Assign Occlusion");
+            }
             if (mat.OcclusionTexture.HasValue && mat.OcclusionTexture.Value != Guid.Empty)
             {
                 float occStr = mat.OcclusionStrength;
@@ -224,7 +325,13 @@ namespace Editor.Inspector
                 CheckEndEdit();
             }
 
-            mat.EmissiveTexture = DrawTextureField(guid, mat, "Emissive Texture", mat.EmissiveTexture, "Assign Emissive");
+            var newEmissive = EditorWidgets.AssetField("Emissive Texture", mat.EmissiveTexture, "Texture", "Assign Emissive", showPreview: false);
+            if (newEmissive != mat.EmissiveTexture)
+            {
+                BeginEdit("Assign Emissive");
+                mat.EmissiveTexture = newEmissive;
+                SaveAndApplyImmediate(guid, mat, "Assign Emissive");
+            }
             if (mat.EmissiveTexture.HasValue && mat.EmissiveTexture.Value != Guid.Empty)
             {
                 mat.EmissiveColor ??= new float[] { 1f, 1f, 1f };
@@ -238,7 +345,13 @@ namespace Editor.Inspector
                 CheckEndEdit();
             }
 
-            mat.HeightTexture = DrawTextureField(guid, mat, "Height Texture", mat.HeightTexture, "Assign Height");
+            var newHeight = EditorWidgets.AssetField("Height Texture", mat.HeightTexture, "Texture", "Assign Height", showPreview: false);
+            if (newHeight != mat.HeightTexture)
+            {
+                BeginEdit("Assign Height");
+                mat.HeightTexture = newHeight;
+                SaveAndApplyImmediate(guid, mat, "Assign Height");
+            }
             if (mat.HeightTexture.HasValue && mat.HeightTexture.Value != Guid.Empty)
             {
                 float heightScale = mat.HeightScale;
@@ -252,11 +365,16 @@ namespace Editor.Inspector
             }
 
             // Detail Textures
-            if (ImGui.CollapsingHeader("Detail Textures (Advanced)"))
+            if (ThemedImGui.CollapsingHeader("Detail Textures (Advanced)"))
             {
-                mat.DetailMaskTexture = DrawTextureField(guid, mat, "Detail Mask", mat.DetailMaskTexture, "Assign Detail Mask");
-                mat.DetailAlbedoTexture = DrawTextureField(guid, mat, "Detail Albedo", mat.DetailAlbedoTexture, "Assign Detail Albedo");
-                mat.DetailNormalTexture = DrawTextureField(guid, mat, "Detail Normal", mat.DetailNormalTexture, "Assign Detail Normal");
+                var newDetailMask = EditorWidgets.AssetField("Detail Mask", mat.DetailMaskTexture, "Texture", "Assign Detail Mask", showPreview: false);
+                if (newDetailMask != mat.DetailMaskTexture) { BeginEdit("Assign Detail Mask"); mat.DetailMaskTexture = newDetailMask; SaveAndApplyImmediate(guid, mat, "Assign Detail Mask"); }
+
+                var newDetailAlbedo = EditorWidgets.AssetField("Detail Albedo", mat.DetailAlbedoTexture, "Texture", "Assign Detail Albedo", showPreview: false);
+                if (newDetailAlbedo != mat.DetailAlbedoTexture) { BeginEdit("Assign Detail Albedo"); mat.DetailAlbedoTexture = newDetailAlbedo; SaveAndApplyImmediate(guid, mat, "Assign Detail Albedo"); }
+
+                var newDetailNormal = EditorWidgets.AssetField("Detail Normal", mat.DetailNormalTexture, "Texture", "Assign Detail Normal", showPreview: false);
+                if (newDetailNormal != mat.DetailNormalTexture) { BeginEdit("Assign Detail Normal"); mat.DetailNormalTexture = newDetailNormal; SaveAndApplyImmediate(guid, mat, "Assign Detail Normal"); }
             }
 
             // === MATERIAL PROPERTIES ===
@@ -283,7 +401,31 @@ namespace Editor.Inspector
                     BeginEdit("Render Mode");
                     mat.TransparencyMode = Math.Clamp(mode, 0, 1);
                     SaveAndApplyImmediate(guid, mat, "Render Mode");
-                    try { Editor.Panels.EditorUI.MainViewport.Renderer?.UpdateMaterialTransparency(guid, mat.TransparencyMode); } catch { }
+                }
+            }
+
+            // Alpha Clipping (essential for foliage - discard pixels below threshold)
+            {
+                bool alphaClip = mat.AlphaClippingEnabled;
+                if (ImGui.Checkbox("Alpha Clipping", ref alphaClip))
+                {
+                    BeginEdit("Alpha Clipping");
+                    mat.AlphaClippingEnabled = alphaClip;
+                    SaveAndApplyImmediate(guid, mat, "Alpha Clipping");
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Discard pixels below threshold (essential for leaves/foliage).\nKeeps Back culling for performance while eliminating transparent pixels.");
+
+                if (mat.AlphaClippingEnabled)
+                {
+                    float threshold = mat.AlphaClipThreshold;
+                    if (ImGui.SliderFloat("Clip Threshold", ref threshold, 0.0f, 1.0f, "%.2f"))
+                    {
+                        BeginEdit("Alpha Clip Threshold");
+                        mat.AlphaClipThreshold = threshold;
+                        ApplyLiveUpdate(guid, mat);
+                    }
+                    CheckEndEdit();
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pixels with alpha below this value are discarded.\n0.5 is typical for foliage.");
                 }
             }
 
@@ -396,7 +538,10 @@ namespace Editor.Inspector
 
             // Stylization
             ImGui.Separator();
-            ImGui.Text("Stylization");
+            ImGui.Spacing();
+            if (ThemedImGui.CollapsingHeader("✨ Stylization", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.Indent();
 
             {
                 float sat = mat.Saturation;
@@ -455,21 +600,49 @@ namespace Editor.Inspector
                     ApplyLiveUpdate(guid, mat);
                 }
                 CheckEndEdit();
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip("0.0 = no emission, >0.0 = emissive/glow strength");
+                
+                // Visual indicator if emission is active
+                if (mat.Emission > 0.0f)
+                {
+                    ImGui.SameLine();
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.8f, 0.2f, 1f));
+                    ImGui.TextUnformatted("✨");
+                    ImGui.PopStyleColor();
+                }
+                
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.TextUnformatted("0.0 = no emission, >0.0 = emissive/glow strength");
+                    if (mat.EmissiveTexture.HasValue && mat.EmissiveTexture.Value != Guid.Empty)
+                    {
+                        ImGui.TextUnformatted("Emissive texture detected - emission will be multiplied with it");
+                    }
+                    else
+                    {
+                        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.7f, 0.3f, 1f));
+                        ImGui.TextUnformatted("⚠ Assign an Emissive Texture above for visible glow effect");
+                        ImGui.PopStyleColor();
+                    }
+                    ImGui.EndTooltip();
+                }
             }
 
-            ImGui.Spacing();
-            if (ImGui.Button("Reset Stylization"))
-            {
-                BeginEdit("Reset Stylization");
-                mat.Saturation = 1.0f;
-                mat.Brightness = 1.0f;
-                mat.Contrast = 1.0f;
-                mat.Hue = 0.0f;
-                mat.Emission = 0.0f;
-                SaveAndApplyImmediate(guid, mat, "Reset Stylization");
+                ImGui.Spacing();
+                if (ImGui.Button("Reset Stylization"))
+                {
+                    BeginEdit("Reset Stylization");
+                    mat.Saturation = 1.0f;
+                    mat.Brightness = 1.0f;
+                    mat.Contrast = 1.0f;
+                    mat.Hue = 0.0f;
+                    mat.Emission = 0.0f;
+                    SaveAndApplyImmediate(guid, mat, "Reset Stylization");
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset all stylization parameters to default values");
+                
+                ImGui.Unindent();
             }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset all stylization parameters to default values");
         }
 
         private static Guid? DrawTextureField(Guid guid, MaterialAsset mat, string label, Guid? textureGuid, string undoLabel)
@@ -513,7 +686,7 @@ namespace Editor.Inspector
         {
             if (!_isEditing && _current != null)
             {
-                _beforeEdit = Clone(_current);
+                _beforeEdit = Clone(_current!);
                 _isEditing = true;
                 _pendingUndoLabel = label;
             }
@@ -530,29 +703,49 @@ namespace Editor.Inspector
             }
         }
 
-        private static void ApplyLiveUpdate(Guid guid, MaterialAsset mat)
+        private static void ApplyLiveUpdate(Guid guid, MaterialAsset? mat)
         {
             try
             {
+                if (mat == null) return;
                 Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat);
             }
             catch { }
         }
 
-        private static void SaveAndApplyImmediate(Guid guid, MaterialAsset mat, string undoLabel)
+        private static void SaveAndApplyImmediate(Guid guid, MaterialAsset mat, string undoLabel, bool overwriteShader = false)
         {
             try
             {
-                // Save synchronously for immediate operations (texture changes, etc.)
+                Console.WriteLine($"[MaterialAssetInspector] SaveAndApplyImmediate: {undoLabel}");
+                Console.WriteLine($"[MaterialAssetInspector] BEFORE SAVE - AlbedoColor: [{mat.AlbedoColor[0]:F3}, {mat.AlbedoColor[1]:F3}, {mat.AlbedoColor[2]:F3}, {mat.AlbedoColor[3]:F3}]");
+
+                // Save synchronously for immediate operations (texture changes, render mode, etc.)
+                // This triggers MaterialSaved event and allows us to reload fresh values
                 if (AssetDatabase.TryGet(guid, out var rec))
                 {
-                    MaterialAsset.Save(rec.Path, mat);
-                    ApplyLiveUpdate(guid, mat);
+                    // Save synchronously so we can reload immediately
+                    AssetDatabase.SaveMaterial(mat, overwriteShader);
+
+                    // CRITICAL: Reload from disk to ensure inspector uses saved values
+                    // This prevents stale in-memory values from overwriting the cache on next edit
+                    try
+                    {
+                        _current = AssetDatabase.LoadMaterial(guid);
+                        Console.WriteLine($"[MaterialAssetInspector] AFTER RELOAD - AlbedoColor: [{_current.AlbedoColor[0]:F3}, {_current.AlbedoColor[1]:F3}, {_current.AlbedoColor[2]:F3}, {_current.AlbedoColor[3]:F3}]");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[MaterialAssetInspector] Failed to reload after immediate save: {ex.Message}");
+                    }
+
+                    // Update live preview with reloaded values
+                    ApplyLiveUpdate(guid, _current);
 
                     // Push undo
                     if (_beforeEdit != null)
                     {
-                        var after = Clone(mat);
+                        var after = Clone(_current!);
                         UndoRedo.Push(new MaterialEditAction(undoLabel, guid, _beforeEdit, after));
                         UndoRedo.RaiseAfterChange();
                     }
@@ -579,17 +772,31 @@ namespace Editor.Inspector
 
             try
             {
-                if (AssetDatabase.TryGet(_currentGuid, out var rec))
-                {
-                    MaterialAsset.Save(rec.Path, _current);
+                Console.WriteLine($"[MaterialAssetInspector] ProcessAutoSave: {_pendingUndoLabel}");
+                Console.WriteLine($"[MaterialAssetInspector] BEFORE AUTO-SAVE - AlbedoColor: [{_current.AlbedoColor[0]:F3}, {_current.AlbedoColor[1]:F3}, {_current.AlbedoColor[2]:F3}, {_current.AlbedoColor[3]:F3}]");
 
-                    // Push undo
-                    if (_beforeEdit != null)
-                    {
-                        var after = Clone(_current);
-                        UndoRedo.Push(new MaterialEditAction(_pendingUndoLabel, _currentGuid, _beforeEdit, after));
-                        UndoRedo.RaiseAfterChange();
-                    }
+                // CRITICAL: Use AssetDatabase.SaveMaterial instead of MaterialAsset.Save
+                // This ensures MaterialSaved event is fired and all caches are invalidated
+                AssetDatabase.SaveMaterial(_current);
+
+                // CRITICAL: Reload from AssetDatabase cache to get fresh copy with all properties
+                // This ensures inspector displays the actual saved values, not stale in-memory data
+                try
+                {
+                    _current = AssetDatabase.LoadMaterial(_currentGuid);
+                    Console.WriteLine($"[MaterialAssetInspector] AFTER AUTO-SAVE RELOAD - AlbedoColor: [{_current.AlbedoColor[0]:F3}, {_current.AlbedoColor[1]:F3}, {_current.AlbedoColor[2]:F3}, {_current.AlbedoColor[3]:F3}]");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[MaterialAssetInspector] Failed to reload after save: {ex.Message}");
+                }
+
+                // Push undo
+                if (_beforeEdit != null)
+                {
+                    var after = Clone(_current!);
+                    UndoRedo.Push(new MaterialEditAction(_pendingUndoLabel, _currentGuid, _beforeEdit, after));
+                    UndoRedo.RaiseAfterChange();
                 }
             }
             catch (Exception ex)

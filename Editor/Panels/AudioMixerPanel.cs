@@ -3,6 +3,8 @@ using System.Numerics;
 using ImGuiNET;
 using Engine.Audio.Mixing;
 using Engine.Audio.Core;
+using Editor.Themes;
+using Editor.UI;
 
 namespace Editor.Panels
 {
@@ -12,6 +14,8 @@ namespace Editor.Panels
     /// </summary>
     public class AudioMixerPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         private AudioMixer? _mixer;
         private bool _isOpen = true;
 
@@ -493,7 +497,7 @@ namespace Editor.Panels
                     var effect = group.Effects[i];
                     ImGui.PushID($"GroupEffect_{i}");
 
-                    bool isOpen = ImGui.TreeNode($"{effect.Type}###{i}");
+                    bool isOpen = ThemedImGui.TreeNode($"{effect.Type}###{i}");
 
                     ImGui.SameLine();
                     if (ImGui.SmallButton("Remove"))

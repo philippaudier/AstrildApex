@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using ImGuiNET;
 using Engine.Core;
+using Editor.UI;
 
 namespace Editor.Panels
 {
@@ -73,19 +74,19 @@ namespace Editor.Panels
             // System list grouped by phase
             if (ImGui.BeginTabBar("ProfilerTabs"))
             {
-                if (ImGui.BeginTabItem("By Phase"))
+                if (ThemedImGui.BeginTabItem("By Phase"))
                 {
                     DrawSystemsByPhase(pipeline);
                     ImGui.EndTabItem();
                 }
 
-                if (ImGui.BeginTabItem("All Systems"))
+                if (ThemedImGui.BeginTabItem("All Systems"))
                 {
                     DrawAllSystems(pipeline);
                     ImGui.EndTabItem();
                 }
 
-                if (ImGui.BeginTabItem("Performance"))
+                if (ThemedImGui.BeginTabItem("Performance"))
                 {
                     DrawPerformanceOverview(pipeline);
                     ImGui.EndTabItem();
@@ -104,7 +105,7 @@ namespace Editor.Panels
                 var systems = pipeline.GetSystemsInPhase(phase);
                 if (systems.Count == 0) continue;
 
-                if (ImGui.CollapsingHeader($"{phase} ({systems.Count} systems)", ImGuiTreeNodeFlags.DefaultOpen))
+                if (ThemedImGui.CollapsingHeader($"{phase} ({systems.Count} systems)", ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     ImGui.Indent();
 

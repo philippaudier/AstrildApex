@@ -107,6 +107,37 @@ namespace Engine.Assets.Import
         }
 
         /// <summary>
+        /// Extract a single material by index from Assimp scene.
+        /// Used when only specific materials need to be extracted.
+        /// </summary>
+        public MaterialAsset? ExtractMaterialByIndex(Assimp.Scene scene, Dictionary<string, Guid> textureMap, int index)
+        {
+            if (index < 0 || index >= scene.MaterialCount)
+            {
+                Engine.Utils.DebugLogger.Log($"[MaterialExtractor] Invalid material index {index}");
+                return null;
+            }
+
+            try
+            {
+                var assimpMaterial = scene.Materials[index];
+                var materialAsset = ExtractMaterial(assimpMaterial, index, textureMap);
+
+                if (materialAsset != null)
+                {
+                    _extractedMaterials[index] = materialAsset;
+                }
+
+                return materialAsset;
+            }
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[MaterialExtractor] Failed to extract material {index}: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Extract a single material following PBR metallic-roughness workflow.
         /// Based on glTF 2.0 specification and Assimp material property mapping.
         /// </summary>

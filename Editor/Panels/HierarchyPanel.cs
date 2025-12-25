@@ -9,6 +9,8 @@ using Engine.Scene;
 using Engine.Components;
 using Editor.Icons;
 using Editor.Logging;
+using Editor.Themes;
+using Editor.UI;
 // Résolution d'ambiguïté pour Vector3/Vector4 d'OpenTK :
 using Vec3 = OpenTK.Mathematics.Vector3;
 using Vec4 = OpenTK.Mathematics.Vector4;
@@ -17,6 +19,8 @@ namespace Editor.Panels
 {
     public static class HierarchyPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         // PERFORMANCE: Dirty flags to avoid redrawing when scene hasn't changed
         private static bool _isDirty = true;
         private static int _lastEntityCount = 0;
@@ -50,6 +54,11 @@ namespace Editor.Panels
         // --- Clic sur fond (vide) vs rectangle ---
         private static bool _mouseDownOnEmpty = false;
         private static Vector2 _windowMouseDownStart;
+        
+        // --- Copy/Paste & Rename ---
+        private static Entity? _copiedEntity = null;
+        private static uint _renamingEntityId = 0;
+        private static string _renameBuffer = "";
 
         /// <summary>Mark hierarchy as dirty - will force redraw next frame</summary>
         public static void MarkDirty() => _isDirty = true;
@@ -395,9 +404,9 @@ namespace Editor.Panels
                         if (ImGui.MenuItem("Cube"))
                         {
                             var go = scene.CreateCube("Cube", new Vec3(0, 0.5f, 0), Vec3.One, new Vec4(0.8f, 0.85f, 0.98f, 1));
-                            // Default collider
-                            if (!go.HasComponent<Engine.Components.BoxCollider>())
-                                go.AddComponent<Engine.Components.BoxCollider>();
+                            // Physics system removed - collider creation disabled
+                            // if (!go.HasComponent<Engine.Components.BoxCollider>())
+                            //     go.AddComponent<Engine.Components.BoxCollider>();
                             Selection.SetSingle(go.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
                         }
@@ -613,7 +622,7 @@ namespace Editor.Panels
                         (selected ? ImGuiTreeNodeFlags.Selected : 0);
 
             string label = string.IsNullOrEmpty(e.Name) ? $"Entity {e.Id}" : e.Name;
-            bool open = ImGui.TreeNodeEx($"{label}##{e.Id}", flags);
+            bool open = ThemedImGui.TreeNodeEx($"{label}##{e.Id}", flags);
 
             // Icône Light en overlay (facultatif)
             if (e.HasComponent<Engine.Components.LightComponent>())
@@ -713,38 +722,11 @@ namespace Editor.Panels
             // Menu contextuel (attaché à l’item courant)
             if (ImGui.BeginPopupContextItem())
             {
-                if (ImGui.MenuItem("Select")) { Selection.SetSingle(e.Id); FinalizeSelection(); }
-                bool canUnparent = e.Parent != null;
-                if (ImGui.MenuItem("Unparent", null, false, canUnparent))
+                if (DrawEntityContextMenu(e, scene, open))
                 {
-                    var old = e.Parent;
-                    e.SetParent(null, keepWorld: true); // Garder keepWorld=true pour unparent
-                    UndoRedo.Push(new ReparentAction("Unparent", e.Id, old?.Id, null));
-                }
-                if (ImGui.MenuItem("Delete"))
-                {
-                    if (scene != null)
-                    {
-                        DeleteRecursive(scene, e);
-                        Selection.Clear();
-                        FinalizeSelection();
-                        ImGui.EndPopup();
-                        if (open) ImGui.TreePop();
-                        return;
-                    }
-                }
-                if (ImGui.MenuItem("Duplicate"))
-                {
-                    if (scene != null)
-                    {
-                        var d = scene.CreateCube(e.Name + " (Copy)",
-                                                 e.Transform.Position + new Vec3(0.2f, 0, 0.2f),
-                                                 e.Transform.Scale, new Vec4(1, 1, 1, 1)); // Default white color
-                        d.Transform.Rotation = e.Transform.Rotation;
-                        d.SetParent(e.Parent, keepWorld: false);
-                        Selection.SetSingle(d.Id);
-                        FinalizeSelection();
-                    }
+                    ImGui.EndPopup();
+                    if (open) ImGui.TreePop();
+                    return;
                 }
                 ImGui.EndPopup();
             }
@@ -769,7 +751,7 @@ namespace Editor.Panels
                     _draggedGroup = new List<uint> { e.Id };
                     _draggedEntityId = e.Id;
                 }
-                // Payload unique, universel
+                // Payload unique pour reparent ET créer un prefab
                 unsafe
                 {
                     int id = (int)e.Id;
@@ -820,7 +802,7 @@ namespace Editor.Panels
             }
         }
 
-        private static void DeleteRecursive(Scene scene, Entity e)
+        public static void DeleteRecursive(Scene scene, Entity e)
         {
             foreach (var c in e.Children.ToArray())
                 DeleteRecursive(scene, c);
@@ -890,6 +872,275 @@ namespace Editor.Panels
             var draw = ImGui.GetForegroundDrawList();
             draw.AddRectFilled(r.min, r.max, fillCol);
             draw.AddRect(r.min, r.max, borderCol);
+        }
+
+        /// <summary>
+        /// Draws the context menu for an entity. Returns true if we need to early return (delete case).
+        /// </summary>
+        private static bool DrawEntityContextMenu(Entity e, Engine.Scene.Scene? scene, bool treeNodeOpen)
+        {
+            // === CREATE CHILD SUBMENU ===
+            if (ImGui.BeginMenu("Create Child"))
+            {
+                if (ImGui.MenuItem("Empty GameObject"))
+                {
+                    var child = new Engine.Scene.Entity 
+                    { 
+                        Id = scene!.GetNextEntityId(),
+                        Name = "GameObject"
+                    };
+                    scene.Entities.Add(child);
+                    child.SetParent(e, keepWorld: false);
+                    Selection.SetSingle(child.Id);
+                    FinalizeSelection();
+                }
+                ImGui.Separator();
+                if (ImGui.BeginMenu("3D Object"))
+                {
+                    if (ImGui.MenuItem("Cube"))
+                    {
+                        var child = scene!.CreateCube("Cube", Vec3.Zero, Vec3.One, new Vec4(0.8f, 0.85f, 0.98f, 1));
+                        child.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(child.Id);
+                        FinalizeSelection();
+                    }
+                    if (ImGui.MenuItem("Sphere"))
+                    {
+                        var child = scene!.CreateSphere("Sphere", Vec3.Zero, 0.5f, new Vec4(0.95f, 0.95f, 0.95f, 1));
+                        child.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(child.Id);
+                        FinalizeSelection();
+                    }
+                    if (ImGui.MenuItem("Capsule"))
+                    {
+                        var child = scene!.CreateCapsule("Capsule", Vec3.Zero, 2.0f, 0.5f, new Vec4(0.9f, 0.9f, 0.9f, 1));
+                        child.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(child.Id);
+                        FinalizeSelection();
+                    }
+                    if (ImGui.MenuItem("Plane"))
+                    {
+                        var child = scene!.CreatePlane("Plane", Vec3.Zero, new OpenTK.Mathematics.Vector2(10f, 10f), new Vec4(1,1,1,1));
+                        child.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(child.Id);
+                        FinalizeSelection();
+                    }
+                    if (ImGui.MenuItem("Quad"))
+                    {
+                        var child = scene!.CreateQuad("Quad", Vec3.Zero, new OpenTK.Mathematics.Vector2(1f, 1f), new Vec4(1,1,1,1));
+                        child.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(child.Id);
+                        FinalizeSelection();
+                    }
+                    ImGui.EndMenu();
+                }
+                if (ImGui.MenuItem("Camera"))
+                {
+                    var child = new Engine.Scene.Entity 
+                    { 
+                        Id = scene!.GetNextEntityId(),
+                        Name = "Camera"
+                    };
+                    scene.Entities.Add(child);
+                    child.AddComponent<Engine.Components.CameraComponent>();
+                    child.SetParent(e, keepWorld: false);
+                    Selection.SetSingle(child.Id);
+                    FinalizeSelection();
+                }
+                if (ImGui.MenuItem("Light"))
+                {
+                    var child = new Engine.Scene.Entity 
+                    { 
+                        Id = scene!.GetNextEntityId(),
+                        Name = "Light"
+                    };
+                    scene.Entities.Add(child);
+                    child.AddComponent<Engine.Components.LightComponent>();
+                    child.SetParent(e, keepWorld: false);
+                    Selection.SetSingle(child.Id);
+                    FinalizeSelection();
+                }
+                ImGui.EndMenu();
+            }
+            
+            ImGui.Separator();
+            
+            // === COPY/PASTE/DUPLICATE ===
+            if (ImGui.MenuItem("Duplicate", EditorSettings.ShortcutDuplicate))
+            {
+                if (scene != null)
+                {
+                    var duplicate = DuplicateEntity(scene, e);
+                    if (duplicate != null)
+                    {
+                        Selection.SetSingle(duplicate.Id);
+                        FinalizeSelection();
+                    }
+                }
+            }
+            
+            if (ImGui.MenuItem("Copy", "Ctrl+C"))
+            {
+                _copiedEntity = e;
+            }
+            
+            bool canPaste = _copiedEntity != null;
+            if (ImGui.MenuItem("Paste as Child", "Ctrl+V", false, canPaste))
+            {
+                if (scene != null && _copiedEntity != null)
+                {
+                    var duplicate = DuplicateEntity(scene, _copiedEntity);
+                    if (duplicate != null)
+                    {
+                        duplicate.SetParent(e, keepWorld: false);
+                        Selection.SetSingle(duplicate.Id);
+                        FinalizeSelection();
+                    }
+                }
+            }
+            
+            ImGui.Separator();
+            
+            // === RENAME ===
+            if (ImGui.MenuItem("Rename", EditorSettings.ShortcutRename))
+            {
+                _renamingEntityId = e.Id;
+                _renameBuffer = e.Name;
+            }
+            
+            ImGui.Separator();
+            
+            // === HIERARCHY OPERATIONS ===
+            bool canUnparent = e.Parent != null;
+            if (ImGui.MenuItem("Unparent", null, false, canUnparent))
+            {
+                var old = e.Parent;
+                e.SetParent(null, keepWorld: true);
+                UndoRedo.Push(new ReparentAction("Unparent", e.Id, old?.Id, null));
+            }
+            
+            if (ImGui.MenuItem("Move to Top"))
+            {
+                if (scene != null && e.Parent == null)
+                {
+                    scene.Entities.Remove(e);
+                    scene.Entities.Insert(0, e);
+                }
+                else if (e.Parent != null)
+                {
+                    e.Parent.Children.Remove(e);
+                    e.Parent.Children.Insert(0, e);
+                }
+            }
+            
+            if (ImGui.MenuItem("Move to Bottom"))
+            {
+                if (scene != null && e.Parent == null)
+                {
+                    scene.Entities.Remove(e);
+                    scene.Entities.Add(e);
+                }
+                else if (e.Parent != null)
+                {
+                    e.Parent.Children.Remove(e);
+                    e.Parent.Children.Add(e);
+                }
+            }
+            
+            ImGui.Separator();
+            
+            // === DELETE ===
+            if (ImGui.MenuItem("Delete", EditorSettings.ShortcutDelete))
+            {
+                if (scene != null)
+                {
+                    DeleteRecursive(scene, e);
+                    Selection.Clear();
+                    FinalizeSelection();
+                    return true; // Signal early return needed
+                }
+            }
+            
+            ImGui.Separator();
+            
+            // === UTILITY ===
+            if (ImGui.MenuItem("Copy Name"))
+            {
+                ImGui.SetClipboardText(e.Name);
+            }
+            
+            if (ImGui.BeginMenu("Create Prefab"))
+            {
+                ImGui.TextDisabled("Drag to Assets panel to create");
+                ImGui.EndMenu();
+            }
+            
+            return false; // No early return needed
+        }
+
+        /// <summary>
+        /// Duplicates an entity with all its components and children.
+        /// </summary>
+        public static Entity? DuplicateEntity(Engine.Scene.Scene scene, Entity source)
+        {
+            // Create duplicate with offset position
+            var duplicate = new Entity
+            {
+                Id = scene.GetNextEntityId(),
+                Name = source.Name + " (Copy)",
+                Active = source.Active
+            };
+            
+            // Copy transform
+            duplicate.Transform.Position = source.Transform.Position + new Vec3(0.2f, 0, 0.2f);
+            duplicate.Transform.Rotation = source.Transform.Rotation;
+            duplicate.Transform.Scale = source.Transform.Scale;
+            
+            // Copy MeshRenderer if present
+            if (source.HasComponent<MeshRendererComponent>())
+            {
+                var mr = source.GetComponent<MeshRendererComponent>()!;
+                var newMr = duplicate.AddComponent<MeshRendererComponent>();
+                newMr.Mesh = mr.Mesh;
+                newMr.MaterialGuid = mr.MaterialGuid;
+                newMr.CustomMeshGuid = mr.CustomMeshGuid;
+                newMr.SubmeshIndex = mr.SubmeshIndex;
+                newMr.Culling = mr.Culling;
+            }
+            
+            // Copy Light if present
+            if (source.HasComponent<LightComponent>())
+            {
+                var light = source.GetComponent<LightComponent>()!;
+                var newLight = duplicate.AddComponent<LightComponent>();
+                newLight.Type = light.Type;
+                newLight.Color = light.Color;
+                newLight.Intensity = light.Intensity;
+                newLight.Range = light.Range;
+                newLight.SpotAngle = light.SpotAngle;
+                newLight.SpotInnerAngle = light.SpotInnerAngle;
+                newLight.CastShadows = light.CastShadows;
+            }
+            
+            // Copy Camera if present (excluding TransformComponent which is auto-added)
+            if (source.HasComponent<CameraComponent>())
+            {
+                duplicate.AddComponent<CameraComponent>();
+            }
+            
+            // Add other component types as needed (Terrain, etc.)
+            
+            scene.Entities.Add(duplicate);
+            duplicate.SetParent(source.Parent, keepWorld: false);
+            
+            // Recursively duplicate children
+            foreach (var child in source.Children.ToList())
+            {
+                var duplicatedChild = DuplicateEntity(scene, child);
+                duplicatedChild?.SetParent(duplicate, keepWorld: false);
+            }
+            
+            return duplicate;
         }
     }
 }

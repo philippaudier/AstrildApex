@@ -4,6 +4,7 @@ using ImGuiNET;
 using Engine.Components;
 using Engine.Assets;
 using Editor.Logging;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
@@ -17,7 +18,7 @@ namespace Editor.Inspector
 
         public static void DrawTerrainLayers(Terrain terrain)
         {
-            if (!ImGui.CollapsingHeader("Terrain Layers", ImGuiTreeNodeFlags.DefaultOpen))
+            if (!ThemedImGui.CollapsingHeader("Terrain Layers", ImGuiTreeNodeFlags.DefaultOpen))
                 return;
 
             ImGui.TextDisabled("Materials will be blended based on height and slope (layers live on the Terrain component)");
@@ -82,7 +83,7 @@ namespace Editor.Inspector
                 var layer = terrain.TerrainLayers[i];
                 bool changed = false;
 
-                bool nodeOpen = ImGui.TreeNodeEx($"{layer.Name}##layer{i}", ImGuiTreeNodeFlags.DefaultOpen);
+                bool nodeOpen = ThemedImGui.TreeNodeEx($"{layer.Name}##layer{i}", ImGuiTreeNodeFlags.DefaultOpen);
 
                 ImGui.SameLine();
                 ImGui.SetCursorPosX(ImGui.GetContentRegionAvail().X - 100);

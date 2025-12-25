@@ -2241,4 +2241,92 @@ namespace Engine.Rendering
             if (_blurFBO != 0) GL.DeleteFramebuffer(_blurFBO);
         }
     }
+
+    /// <summary>
+    /// Image Sharpening Effect (AMD FidelityFX CAS)
+    /// Contrast Adaptive Sharpening with edge detection
+    /// </summary>
+    public class ImageSharpeningEffect : PostProcessEffect
+    {
+        public override string EffectName => "Image Sharpening";
+
+        [Engine.Serialization.SerializableAttribute("sharpness")]
+        public float Sharpness { get; set; } = 0.5f; // 0.0 = no sharpening, 1.0 = maximum
+
+        public ImageSharpeningEffect()
+        {
+            Priority = 25; // After FXAA/TAA, final sharpening pass
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // Rendered by ImageSharpeningRenderer
+        }
+    }
+
+    /// <summary>
+    /// Renderer for Image Sharpening Effect
+    /// </summary>
+    public class ImageSharpeningRenderer : IPostProcessRenderer
+    {
+        private ShaderProgram? _sharpeningShader;
+
+        public void Initialize()
+        {
+            try
+            {
+                var baseDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var vertPath = System.IO.Path.Combine(baseDir, "image_sharpening.vert");
+                var fragPath = System.IO.Path.Combine(baseDir, "image_sharpening.frag");
+
+                if (System.IO.File.Exists(vertPath) && System.IO.File.Exists(fragPath))
+                {
+                    // Load shader sources
+                    string vertexSource = System.IO.File.ReadAllText(vertPath);
+                    string fragmentSource = System.IO.File.ReadAllText(fragPath);
+                    _sharpeningShader = ShaderProgram.FromSource(vertexSource, fragmentSource);
+                    Console.WriteLine("[ImageSharpeningRenderer] Initialized successfully");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ImageSharpeningRenderer] Failed to initialize: {ex.Message}");
+                _sharpeningShader = null;
+            }
+        }
+
+        public void Render(PostProcessEffect effect, PostProcessContext context)
+        {
+            if (_sharpeningShader == null)
+            {
+                Initialize();
+            }
+
+            if (_sharpeningShader == null || effect is not ImageSharpeningEffect sharpeningEffect)
+                return;
+
+            if (!sharpeningEffect.Enabled || sharpeningEffect.Sharpness < 0.01f)
+                return;
+
+            _sharpeningShader.Use();
+
+            // Bind source texture
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
+            _sharpeningShader.SetInt("u_InputTexture", 0);
+
+            // Set parameters
+            _sharpeningShader.SetFloat("u_Sharpness", sharpeningEffect.Sharpness * sharpeningEffect.Intensity);
+            _sharpeningShader.SetVec2("u_TexelSize", new OpenTK.Mathematics.Vector2(1.0f / context.Width, 1.0f / context.Height));
+
+            // Draw fullscreen triangle (project convention - no VAO needed)
+            GL.DrawArrays(OpenTK.Graphics.OpenGL4.PrimitiveType.Triangles, 0, 3);
+        }
+
+        public void Dispose()
+        {
+            _sharpeningShader?.Dispose();
+            _sharpeningShader = null;
+        }
+    }
 }

@@ -10,41 +10,24 @@ namespace Editor.UI;
 /// <summary>
 /// Modern UI helpers for ViewportPanel and GamePanel following the HTML design
 /// Features: glassmorphism, backdrop blur effects, rounded corners, hover states
+/// All colors and sizes now come from ThemeManager.UI for consistency
 /// </summary>
 public static class ModernUIHelpers
 {
-    // === Color Constants (matching HTML design) ===
-    private static readonly Vector4 ToolbarBg = new Vector4(0f, 0f, 0f, 0.7f); // Fond noir semi-transparent
-    private static readonly Vector4 ToolbarBorder = new Vector4(1f, 1f, 1f, 0.3f);
-    private static readonly Vector4 ButtonBg = new Vector4(1f, 1f, 1f, 0.05f);
-    private static readonly Vector4 ButtonBgHover = new Vector4(1f, 1f, 1f, 0.15f);
-    private static readonly Vector4 ButtonBorder = new Vector4(1f, 1f, 1f, 0.1f);
-    private static readonly Vector4 ButtonBorderActive = new Vector4(1f, 1f, 1f, 0.3f);
-    private static readonly Vector4 ActiveGradientStart = new Vector4(0.4f, 0.5f, 0.92f, 1f); // #667eea
-    private static readonly Vector4 ActiveGradientEnd = new Vector4(0.46f, 0.3f, 0.64f, 1f);  // #764ba2
-    private static readonly Vector4 SeparatorColor = new Vector4(1f, 1f, 1f, 0.2f);
-    
-    // === Sizing Constants ===
-    public const float ToolbarButtonSize = 36f;
-    public const float IconButtonSize = 28f;
-    public const float CamButtonSize = 32f;
-    public const float PlayButtonSize = 40f;
-    public const float ToolbarRounding = 12f;
-    public const float ButtonRounding = 8f;
-    public const float Spacing = 8f;
-    public const float SmallSpacing = 4f;
+    // Quick access to unified theme
+    private static UITheme UI => ThemeManager.UI;
     
     /// <summary>
     /// Begin a toolbar group with glassmorphism effect
     /// </summary>
     public static void BeginToolbarGroup()
     {
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, ToolbarBg);
-        ImGui.PushStyleColor(ImGuiCol.Border, ToolbarBorder);
-        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, ToolbarRounding);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, UI.ToolbarBg);
+        ImGui.PushStyleColor(ImGuiCol.Border, UI.ToolbarBorder);
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, UI.RoundingToolbar);
         ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 1f);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(Spacing, Spacing));
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(SmallSpacing, SmallSpacing));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(UI.SpacingMedium, UI.SpacingMedium));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(UI.SpacingSmall, UI.SpacingSmall));
     }
     
     /// <summary>
@@ -59,32 +42,32 @@ public static class ModernUIHelpers
     /// <summary>
     /// Draw a modern tool button with icon
     /// </summary>
-    public static bool ToolButton(string icon, bool isActive, string tooltip = "", float size = ToolbarButtonSize)
+    public static bool ToolButton(string icon, bool isActive, string tooltip = "", float size = 36f)
     {
         var io = ImGui.GetIO();
         bool clicked = false;
         
-        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, ButtonRounding);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, UI.RoundingButton);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 1f);
         ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8, 6)); // Better padding for text buttons
         
         if (isActive)
         {
             // Active state: gradient background
-            ImGui.PushStyleColor(ImGuiCol.Button, ActiveGradientStart);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ActiveGradientStart);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ActiveGradientEnd);
-            ImGui.PushStyleColor(ImGuiCol.Border, ButtonBorderActive);
+            ImGui.PushStyleColor(ImGuiCol.Button, UI.GradientStart);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, UI.GradientStart);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, UI.GradientEnd);
+            ImGui.PushStyleColor(ImGuiCol.Border, UI.ToolbarButtonBorderActive);
         }
         else
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, ButtonBg);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ButtonBgHover);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, ButtonBgHover);
-            ImGui.PushStyleColor(ImGuiCol.Border, ButtonBorder);
+            ImGui.PushStyleColor(ImGuiCol.Button, UI.ToolbarButton);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, UI.ToolbarButtonHovered);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, UI.ToolbarButtonActive);
+            ImGui.PushStyleColor(ImGuiCol.Border, UI.ToolbarButtonBorder);
         }
         
-        clicked = ImGui.Button(icon, new Vector2(size, ToolbarButtonSize));
+        clicked = ImGui.Button(icon, new Vector2(size, UI.ToolbarButtonSize));
         
         ImGui.PopStyleColor(4);
         ImGui.PopStyleVar(3);
@@ -102,20 +85,20 @@ public static class ModernUIHelpers
     /// <summary>
     /// Draw a vertical separator
     /// </summary>
-    public static void ToolbarSeparator(float height = ToolbarButtonSize)
+    public static void ToolbarSeparator(float height = 36f)
     {
         var drawList = ImGui.GetWindowDrawList();
         var pos = ImGui.GetCursorScreenPos();
-        var col = ImGui.ColorConvertFloat4ToU32(SeparatorColor);
+        var col = ImGui.ColorConvertFloat4ToU32(UI.Separator);
         
         drawList.AddLine(
-            new Vector2(pos.X + 2, pos.Y + SmallSpacing),
-            new Vector2(pos.X + 2, pos.Y + height - SmallSpacing),
+            new Vector2(pos.X + 2, pos.Y + UI.SpacingSmall),
+            new Vector2(pos.X + 2, pos.Y + height - UI.SpacingSmall),
             col,
             1f
         );
         
-        ImGui.Dummy(new Vector2(SmallSpacing, height));
+        ImGui.Dummy(new Vector2(UI.SpacingSmall, height));
     }
     
     /// <summary>
@@ -137,7 +120,7 @@ public static class ModernUIHelpers
     /// <summary>
     /// Draw a small icon button
     /// </summary>
-    public static bool IconButton(string icon, string tooltip = "", float size = IconButtonSize)
+    public static bool IconButton(string icon, string tooltip = "", float size = 28f)
     {
         return ToolButton(icon, false, tooltip, size);
     }
@@ -291,7 +274,7 @@ public static class ModernUIHelpers
     /// <summary>
     /// Add horizontal spacing
     /// </summary>
-    public static void HSpace(float width = Spacing)
+    public static void HSpace(float width = 8f)
     {
         ImGui.SameLine();
         ImGui.Dummy(new Vector2(width, 0));
@@ -301,7 +284,7 @@ public static class ModernUIHelpers
     /// <summary>
     /// Add vertical spacing
     /// </summary>
-    public static void VSpace(float height = Spacing)
+    public static void VSpace(float height = 8f)
     {
         ImGui.Dummy(new Vector2(0, height));
     }
@@ -309,7 +292,7 @@ public static class ModernUIHelpers
     /// <summary>
     /// Begin a horizontal flex layout with proper spacing
     /// </summary>
-    public static void BeginHorizontalLayout(float spacing = Spacing)
+    public static void BeginHorizontalLayout(float spacing = 8f)
     {
         ImGui.BeginGroup();
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(spacing, spacing));

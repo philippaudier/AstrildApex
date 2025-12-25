@@ -1,5 +1,6 @@
 using System.Numerics;
 using ImGuiNET;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
@@ -41,7 +42,7 @@ namespace Editor.Inspector
             ImGui.Text("Rect Transform");
 
             // Anchor Presets (like Unity)
-            if (ImGui.CollapsingHeader("Anchor Presets"))
+            if (ThemedImGui.CollapsingHeader("Anchor Presets"))
             {
                 DrawAnchorPresets(rt);
             }
@@ -210,7 +211,7 @@ namespace Editor.Inspector
 
         public static void DrawFlexLayout(Engine.UI.FlexLayout flex)
         {
-            if (ImGui.CollapsingHeader("Flexbox Layout", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Flexbox Layout", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.Indent();
                 ImGui.PushItemWidth(180f);

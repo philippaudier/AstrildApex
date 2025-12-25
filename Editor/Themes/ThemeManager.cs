@@ -12,6 +12,7 @@ namespace Editor.Themes
     public static class ThemeManager
     {
         private static EditorTheme? _currentTheme;
+        private static UITheme _uiTheme = new UITheme();
         
         /// <summary>
         /// Currently active theme
@@ -21,8 +22,49 @@ namespace Editor.Themes
             get
             {
                 if (_currentTheme == null)
-                    _currentTheme = BuiltInThemes.DarkUnity();
+                    _currentTheme = BuiltInThemes.AstrildLight();
                 return _currentTheme;
+            }
+        }
+        
+        /// <summary>
+        /// Unified UI theme for all editor widgets
+        /// THIS is where you tweak the entire editor look and feel!
+        /// </summary>
+        public static UITheme UI => _uiTheme;
+        
+        /// <summary>
+        /// Calculate relative luminance (WCAG formula)
+        /// </summary>
+        private static float GetLuminance(Vector4 color)
+        {
+            // Convert sRGB to linear RGB
+            float r = color.X <= 0.03928f ? color.X / 12.92f : MathF.Pow((color.X + 0.055f) / 1.055f, 2.4f);
+            float g = color.Y <= 0.03928f ? color.Y / 12.92f : MathF.Pow((color.Y + 0.055f) / 1.055f, 2.4f);
+            float b = color.Z <= 0.03928f ? color.Z / 12.92f : MathF.Pow((color.Z + 0.055f) / 1.055f, 2.4f);
+            
+            return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+        }
+        
+        /// <summary>
+        /// Calculate appropriate text color for given background
+        /// </summary>
+        private static Vector4 CalculateTextColorForBackground(Vector4 backgroundColor)
+        {
+            float luminance = GetLuminance(backgroundColor);
+            
+            // WCAG threshold: 0.5 is the sweet spot
+            // For luminance > 0.179, use dark text (better contrast on bright backgrounds)
+            // This ensures readable text on even moderately bright backgrounds
+            if (luminance > 0.179f)
+            {
+                // Light background → Dark text (near black)
+                return new Vector4(0.05f, 0.05f, 0.05f, 1f);
+            }
+            else
+            {
+                // Dark background → Light text (near white)
+                return new Vector4(0.98f, 0.98f, 0.98f, 1f);
             }
         }
         
@@ -36,7 +78,7 @@ namespace Editor.Themes
             var style = ImGui.GetStyle();
             var colors = style.Colors;
             
-            // Apply all colors
+            // Apply all colors from theme (use theme.Text directly, not calculated)
             colors[(int)ImGuiCol.Text] = theme.Text;
             colors[(int)ImGuiCol.TextDisabled] = theme.TextDisabled;
             colors[(int)ImGuiCol.TextSelectedBg] = theme.TextSelectedBg;
@@ -85,8 +127,8 @@ namespace Editor.Themes
             
             colors[(int)ImGuiCol.Tab] = theme.Tab;
             colors[(int)ImGuiCol.TabHovered] = theme.TabHovered;
-            // Note: TabActive, TabUnfocused, TabUnfocusedActive not available in this ImGui version
-            // Using Tab and TabHovered colors instead
+            // Note: TabActive, TabUnfocused, TabUnfocusedActive not available in this ImGui.NET version
+            // ImGui will use Tab for inactive and TabHovered for active tabs
             
             colors[(int)ImGuiCol.DockingPreview] = theme.DockingPreview;
             colors[(int)ImGuiCol.DockingEmptyBg] = theme.DockingEmptyBg;
@@ -110,7 +152,11 @@ namespace Editor.Themes
             
             colors[(int)ImGuiCol.ModalWindowDimBg] = theme.ModalWindowDimBg;
             
-            // Apply style variables (rounding, spacing, etc.)
+            // Apply extended style variables from theme
+            style.Alpha = theme.Alpha;
+            style.DisabledAlpha = theme.DisabledAlpha;
+            
+            // Rounding
             style.WindowRounding = theme.WindowRounding;
             style.ChildRounding = theme.ChildRounding;
             style.FrameRounding = theme.FrameRounding;
@@ -119,22 +165,35 @@ namespace Editor.Themes
             style.GrabRounding = theme.GrabRounding;
             style.TabRounding = theme.TabRounding;
             
-            style.WindowBorderSize = 1.0f;
-            style.ChildBorderSize = 1.0f;
-            style.PopupBorderSize = 1.0f;
-            style.FrameBorderSize = 0.0f;
-            style.TabBorderSize = 0.0f;
+            // Borders
+            style.WindowBorderSize = theme.WindowBorderSize;
+            style.ChildBorderSize = theme.ChildBorderSize;
+            style.PopupBorderSize = theme.PopupBorderSize;
+            style.FrameBorderSize = theme.FrameBorderSize;
+            style.TabBorderSize = theme.TabBorderSize;
             
-            style.WindowPadding = new Vector2(12, 12);
-            style.FramePadding = new Vector2(8, 4);
-            style.ItemSpacing = new Vector2(8, 4);
-            style.ItemInnerSpacing = new Vector2(4, 4);
-            style.IndentSpacing = 21.0f;
-            style.ScrollbarSize = 16.0f;
-            style.GrabMinSize = 10.0f;
+            // Padding & Spacing
+            style.WindowPadding = theme.WindowPadding;
+            style.FramePadding = theme.FramePadding;
+            style.ItemSpacing = theme.ItemSpacing;
+            style.ItemInnerSpacing = theme.ItemInnerSpacing;
+            style.CellPadding = theme.CellPadding;
             
-            style.Alpha = theme.Alpha;
-            style.DisabledAlpha = theme.DisabledAlpha;
+            // Sizes
+            style.WindowMinSize = theme.WindowMinSize;
+            style.IndentSpacing = theme.IndentSpacing;
+            style.ScrollbarSize = theme.ScrollbarSize;
+            style.GrabMinSize = theme.GrabMinSize;
+            
+            // Alignment
+            style.WindowTitleAlign = theme.WindowTitleAlign;
+            style.ButtonTextAlign = theme.ButtonTextAlign;
+            style.SelectableTextAlign = theme.SelectableTextAlign;
+            
+            // Misc
+            style.LogSliderDeadzone = theme.LogSliderDeadzone;
+            style.TabMinWidthForCloseButton = theme.TabMinWidthForCloseButton;
+            style.ColorButtonPosition = (ImGuiDir)((int)theme.ColorButtonPosition);
             
             // Update InspectorStyles to use current theme colors
             UpdateInspectorStyles();
@@ -162,8 +221,28 @@ namespace Editor.Themes
         /// </summary>
         private static void UpdateInspectorStyles()
         {
+            // FIXED: Sync UITheme with EditorTheme for complete consistency
+            // UI.Section should match Header colors (used for collapsible sections)
+            _uiTheme.Section = CurrentTheme.Header;
+            _uiTheme.SectionHovered = CurrentTheme.HeaderHovered;
+            _uiTheme.SectionActive = CurrentTheme.HeaderActive;
+            
+            // Semantic colors
+            _uiTheme.Primary = CurrentTheme.AccentColor;
+            _uiTheme.Success = CurrentTheme.InspectorSuccess;
+            _uiTheme.Warning = CurrentTheme.InspectorWarning;
+            _uiTheme.Error = CurrentTheme.InspectorError;
+            _uiTheme.Info = CurrentTheme.InspectorInfo;
+            
+            // Text colors
+            _uiTheme.TextLabel = CurrentTheme.InspectorLabel;
+            _uiTheme.TextValue = CurrentTheme.InspectorValue;
+            
+            // Gradients
+            _uiTheme.GradientStart = CurrentTheme.GradientStart;
+            _uiTheme.GradientEnd = CurrentTheme.GradientEnd;
+            
             // Update InspectorColors to match current theme
-            // This will be called after theme change to update inspector widgets
             InspectorColors.Label = CurrentTheme.InspectorLabel;
             InspectorColors.LabelDisabled = new Vector4(
                 CurrentTheme.InspectorLabel.X * 0.6f,
@@ -245,9 +324,15 @@ namespace Editor.Themes
                 colStart
             );
             
-            // Add text centered
+            // Use the left gradient color (GradientStart) for text contrast since text is on the left
+            // This ensures better readability as the text aligns with the start of the gradient
+            var textColor = CalculateTextColorForBackground(CurrentTheme.GradientStart);
+            
+            // Add text centered with dynamic color
             ImGui.SetCursorScreenPos(new Vector2(pos.X + 10, pos.Y + (size.Y - ImGui.GetTextLineHeight()) * 0.5f));
+            ImGui.PushStyleColor(ImGuiCol.Text, textColor);
             ImGui.TextUnformatted(label);
+            ImGui.PopStyleColor();
             
             // Advance cursor
             ImGui.SetCursorScreenPos(new Vector2(pos.X, pos.Y + size.Y));

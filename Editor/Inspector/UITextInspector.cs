@@ -1,10 +1,13 @@
 using ImGuiNET;
 using System.Numerics;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     public static class UITextInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         public static void Draw(Engine.Components.UI.UITextComponent txt)
         {
             ImGui.Text("UIText");

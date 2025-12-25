@@ -34,6 +34,7 @@ namespace Engine.Rendering
             RegisterRenderer<GTAOEffect>(new GTAORenderer());
             RegisterRenderer<DepthOfFieldEffect>(new DepthOfFieldRenderer());
             RegisterRenderer<MotionBlurEffect>(new MotionBlurRenderer());
+            RegisterRenderer<ImageSharpeningEffect>(new ImageSharpeningRenderer());
 
 
             // Initialiser tous les renderers

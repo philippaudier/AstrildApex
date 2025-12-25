@@ -331,20 +331,18 @@ namespace Editor.Serialization
                         var lightData = ComponentSerializer.Serialize(light);
                         components["Light"] = JsonSerializer.SerializeToElement(lightData);
                         break;
-                        
-                    case CharacterController characterController:
-                        // Garder le format existant pour CharacterController pour compatibilité
-                        var ccData = new Dictionary<string, object>
-                        {
-                            ["height"] = characterController.Height,
-                            ["radius"] = characterController.Radius,
-                            // useGravity is always true in the new simple system
-                            ["gravity"] = characterController.Gravity,
-                            ["isGrounded"] = characterController.IsGrounded
-                        };
-                        components["CharacterController"] = JsonSerializer.SerializeToElement(ccData);
-                        break;
-                        
+
+                    // Physics system removed - serialization disabled
+                    // case CharacterController characterController:
+                    //     var ccData = ComponentSerializer.Serialize(characterController);
+                    //     components["CharacterController"] = JsonSerializer.SerializeToElement(ccData);
+                    //     break;
+                    //
+                    // case KinematicBody kinematicBody:
+                    //     var kbData = ComponentSerializer.Serialize(kinematicBody);
+                    //     components["KinematicBody"] = JsonSerializer.SerializeToElement(kbData);
+                    //     break;
+
                     case Engine.Scripting.MonoBehaviour script:
                         // Garder le format existant pour MonoBehaviour pour compatibilité
                         var scriptData = new Dictionary<string, object>
@@ -929,32 +927,77 @@ namespace Editor.Serialization
                 catch { }
             }
 
-            // Load CharacterController component if present
-            if (components.TryGetValue("CharacterController", out var ccElement))
+            // Load physics components
+            // KinematicCharacterController
+            if (components.TryGetValue("KinematicCharacterController", out var kccElement))
             {
                 try
                 {
-                    var ccData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(ccElement);
-                    if (ccData != null)
+                    var kcc = entity.AddComponent<Engine.Physics.KinematicCharacterController>();
+                    var kccData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(kccElement);
+                    if (kccData != null)
                     {
-                        var characterController = entity.AddComponent<CharacterController>();
-                        
-                        if (ccData.TryGetValue("height", out var heightEl))
-                            characterController.Height = heightEl.GetSingle();
-                            
-                        if (ccData.TryGetValue("radius", out var radiusEl))
-                            characterController.Radius = radiusEl.GetSingle();
-                            
-                        // useGravity is always true in the new simple system
-                        // Skip loading this property
-                            
-                        if (ccData.TryGetValue("gravity", out var gravEl))
-                            characterController.Gravity = gravEl.GetSingle();
-                            
-                        // Note: IsGrounded is read-only, no need to deserialize
+                        ComponentSerializer.Deserialize(kcc, kccData);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SceneSerializer] Failed to load KinematicCharacterController: {ex.Message}");
+                }
+            }
+
+            // BoxCollider
+            if (components.TryGetValue("BoxCollider", out var boxElement))
+            {
+                try
+                {
+                    var box = entity.AddComponent<Engine.Physics.BoxCollider>();
+                    var boxData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(boxElement);
+                    if (boxData != null)
+                    {
+                        ComponentSerializer.Deserialize(box, boxData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SceneSerializer] Failed to load BoxCollider: {ex.Message}");
+                }
+            }
+
+            // SphereCollider
+            if (components.TryGetValue("SphereCollider", out var sphereElement))
+            {
+                try
+                {
+                    var sphere = entity.AddComponent<Engine.Physics.SphereCollider>();
+                    var sphereData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(sphereElement);
+                    if (sphereData != null)
+                    {
+                        ComponentSerializer.Deserialize(sphere, sphereData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SceneSerializer] Failed to load SphereCollider: {ex.Message}");
+                }
+            }
+
+            // CapsuleCollider
+            if (components.TryGetValue("CapsuleCollider", out var capsuleElement))
+            {
+                try
+                {
+                    var capsule = entity.AddComponent<Engine.Physics.CapsuleCollider>();
+                    var capsuleData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(capsuleElement);
+                    if (capsuleData != null)
+                    {
+                        ComponentSerializer.Deserialize(capsule, capsuleData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SceneSerializer] Failed to load CapsuleCollider: {ex.Message}");
+                }
             }
 
             // Load MonoBehaviour scripts if present

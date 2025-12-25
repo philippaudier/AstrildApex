@@ -70,6 +70,39 @@ namespace Editor.State
             public int ViewportCustomHeight { get; set; } = 720;
             public bool ViewportLockAspect { get; set; } = true;
             public int ViewportAspectIndex { get; set; } = 0; // 0=16:9,1=4:3,2=Custom
+            
+            // Editor shortcuts (keyboard bindings)
+            public EditorShortcutsData Shortcuts { get; set; } = new EditorShortcutsData();
+        }
+        
+        public class EditorShortcutsData
+        {
+            // File operations
+            public string NewScene { get; set; } = "Ctrl+N";
+            public string OpenScene { get; set; } = "Ctrl+O";
+            public string SaveScene { get; set; } = "Ctrl+S";
+            public string SaveSceneAs { get; set; } = "Ctrl+Shift+S";
+            
+            // Edit operations  
+            public string Undo { get; set; } = "Ctrl+Z";
+            public string Redo { get; set; } = "Ctrl+Y";
+            public string Duplicate { get; set; } = "Ctrl+D";
+            public string Delete { get; set; } = "Del";
+            public string SelectAll { get; set; } = "Ctrl+A";
+            public string DeselectAll { get; set; } = "Ctrl+Shift+A";
+            
+            // GameObject operations
+            public string CreateEmpty { get; set; } = "Ctrl+Shift+N";
+            public string Rename { get; set; } = "F2";
+            
+            // View operations
+            public string FrameSelected { get; set; } = "F";
+            
+            // Play mode
+            public string PlayPause { get; set; } = "Ctrl+P";
+            
+            // Options
+            public bool DisableInPlayMode { get; set; } = false;
         }
 
         public class UIPositionsData
@@ -1021,6 +1054,107 @@ namespace Editor.State
             var lastScene = LastOpenedScene;
             return !string.IsNullOrEmpty(lastScene) && 
                    File.Exists(Path.IsPathRooted(lastScene) ? lastScene : Path.Combine(ProjectPaths.ProjectRoot, lastScene));
+        }
+        
+        // Editor Shortcuts properties
+        public static bool ShortcutsDisableInPlayMode
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.DisableInPlayMode ?? false; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.DisableInPlayMode = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutNewScene
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.NewScene ?? "Ctrl+N"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.NewScene = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutOpenScene
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.OpenScene ?? "Ctrl+O"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.OpenScene = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutSaveScene
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.SaveScene ?? "Ctrl+S"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.SaveScene = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutSaveSceneAs
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.SaveSceneAs ?? "Ctrl+Shift+S"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.SaveSceneAs = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutUndo
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Undo ?? "Ctrl+Z"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Undo = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutRedo
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Redo ?? "Ctrl+Y"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Redo = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutDuplicate
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Duplicate ?? "Ctrl+D"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Duplicate = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutDelete
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Delete ?? "Del"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Delete = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutSelectAll
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.SelectAll ?? "Ctrl+A"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.SelectAll = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutDeselectAll
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.DeselectAll ?? "Ctrl+Shift+A"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.DeselectAll = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutCreateEmpty
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.CreateEmpty ?? "Ctrl+Shift+N"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.CreateEmpty = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutRename
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Rename ?? "F2"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Rename = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutFrameSelected
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.FrameSelected ?? "F"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.FrameSelected = value; SaveSettings(); } }
+        }
+        
+        public static string ShortcutPlayPause
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.PlayPause ?? "Ctrl+P"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.PlayPause = value; SaveSettings(); } }
+        }
+        
+        public static void ResetShortcutsToDefaults()
+        {
+            LoadSettingsIfNeeded();
+            if (_currentSettings != null)
+            {
+                _currentSettings.Shortcuts = new EditorShortcutsData();
+                SaveSettings();
+            }
         }
     }
 }

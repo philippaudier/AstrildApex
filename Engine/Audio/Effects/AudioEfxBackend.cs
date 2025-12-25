@@ -221,11 +221,11 @@ namespace Engine.Audio.Effects
 
                 if (_efxSupported)
                 {
-                    Log.Information("[AudioEfxBackend] ✓ ALC_EXT_EFX extension detected and enabled");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[AudioEfxBackend] ✓ ALC_EXT_EFX extension detected and enabled");
                 }
                 else
                 {
-                    Log.Warning("[AudioEfxBackend] ALC_EXT_EFX extension not supported - effects will be disabled");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[AudioEfxBackend] ALC_EXT_EFX extension not supported - effects will be disabled");
                 }
 
                 _initialized = true;

@@ -85,19 +85,40 @@ namespace Engine.Assets.Import
                 Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Extracted {textureMap.Count} texture(s)");
 
                 // ═══════════════════════════════════════════════════════════
-                // STAGE 3: Extract materials
-                // ═══════════════════════════════════════════════════════════
-                var materialsDir = Path.Combine(_modelFolderPath, "Materials");
-                var materialExtractor = new MaterialExtractor(_modelName, materialsDir, textureExtractor, extension, _sourceFilePath);
-                var materials = materialExtractor.ExtractMaterials(scene, textureMap);
-
-                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Extracted {materials.Count} material(s)");
-
-                // ═══════════════════════════════════════════════════════════
-                // STAGE 4: Convert mesh geometry
+                // STAGE 3: Convert mesh geometry FIRST to determine which materials are actually used
                 // ═══════════════════════════════════════════════════════════
                 var meshConverter = new MeshConverter(scene, _modelName, extension);
                 var meshAsset = meshConverter.ConvertToMeshAsset();
+
+                // Determine which material indices are actually used by submeshes
+                var usedMaterialIndices = new HashSet<int>();
+                foreach (var submesh in meshAsset.SubMeshes)
+                {
+                    if (submesh.MaterialIndex >= 0 && submesh.MaterialIndex < scene.MaterialCount)
+                        usedMaterialIndices.Add(submesh.MaterialIndex);
+                }
+                
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Mesh uses {usedMaterialIndices.Count} material(s) out of {scene.MaterialCount} in scene");
+
+                // ═══════════════════════════════════════════════════════════
+                // STAGE 4: Extract ONLY the materials that are actually used by submeshes
+                // ═══════════════════════════════════════════════════════════
+                var materialsDir = Path.Combine(_modelFolderPath, "Materials");
+                var materialExtractor = new MaterialExtractor(_modelName, materialsDir, textureExtractor, extension, _sourceFilePath);
+                
+                // Extract only used materials
+                var materials = new List<MaterialAsset>();
+                foreach (var materialIndex in usedMaterialIndices.OrderBy(x => x))
+                {
+                    if (materialIndex < scene.MaterialCount)
+                    {
+                        var mat = materialExtractor.ExtractMaterialByIndex(scene, textureMap, materialIndex);
+                        if (mat != null)
+                            materials.Add(mat);
+                    }
+                }
+
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Extracted {materials.Count} material(s)");
 
                 // Assign material GUIDs to mesh asset
                 for (int i = 0; i < materials.Count && i < meshAsset.MaterialGuids.Count; i++)

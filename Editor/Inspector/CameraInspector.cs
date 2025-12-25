@@ -3,15 +3,18 @@ using Engine.Components;
 using OpenTK.Mathematics;
 using Editor.Panels;
 using Editor.Inspector;
+using Editor.UI;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Professional inspector for the unified CameraComponent
-    /// Supports all camera modes: FPS, Third Person, Top Down, Isometric, 2D Side Scroller, Orbit
+    /// Modern inspector for the unified CameraComponent
+    /// Uses unified EditorWidgets system for consistent UX
     /// </summary>
     public static class CameraInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         public static void Draw(CameraComponent cam)
         {
             if (cam?.Entity == null) return;
@@ -101,10 +104,11 @@ namespace Editor.Inspector
                     InspectorWidgets.EndSection();
                 }
 
-                // === MOUSE/LOOK CONTROLS (FPS, ThirdPerson, Orbit) ===
+                // === MOUSE/LOOK CONTROLS (FPS, ThirdPerson, Orbit, FreeCam) ===
                 if (cam.Mode == CameraComponent.ControlMode.FirstPerson ||
                     cam.Mode == CameraComponent.ControlMode.ThirdPerson ||
-                    cam.Mode == CameraComponent.ControlMode.Orbit)
+                    cam.Mode == CameraComponent.ControlMode.Orbit ||
+                    cam.Mode == CameraComponent.ControlMode.FreeCam)
                 {
                     if (InspectorWidgets.Section("Mouse Controls", defaultOpen: false))
                     {
@@ -255,6 +259,37 @@ namespace Editor.Inspector
 
                         InspectorWidgets.SliderFloat("Dead Zone", ref cam.SideScrollerDeadZone, 0f, 5f, "%.2f",
                             entityId, "SideScrollerDeadZone");
+
+                        InspectorWidgets.EndSection();
+                    }
+                }
+
+                // === FREE CAM SPECIFIC ===
+                if (cam.Mode == CameraComponent.ControlMode.FreeCam)
+                {
+                    if (InspectorWidgets.Section("Free Camera Settings", defaultOpen: true))
+                    {
+                        InspectorWidgets.SliderFloat("Move Speed", ref cam.FreeCamMoveSpeed, 0.5f, 100f, "%.1f",
+                            entityId, "FreeCamMoveSpeed",
+                            tooltip: "Camera movement speed (WASD + Space/Ctrl)");
+
+                        InspectorWidgets.Checkbox("Enable Sprint", ref cam.FreeCamEnableFastMode, entityId, "FreeCamEnableFastMode",
+                            tooltip: "Hold Shift to move faster");
+
+                        if (cam.FreeCamEnableFastMode)
+                        {
+                            InspectorWidgets.SliderFloat("Sprint Multiplier", ref cam.FreeCamSprintMultiplier, 1f, 10f, "%.2f",
+                                entityId, "FreeCamSprintMultiplier",
+                                tooltip: "Speed multiplier when holding Shift");
+                        }
+
+                        ImGui.Spacing();
+                        ImGui.TextColored(UI.TextDisabled, "Controls:");
+                        ImGui.BulletText("WASD - Move forward/back/left/right");
+                        ImGui.BulletText("Space - Move up");
+                        ImGui.BulletText("Left Ctrl - Move down");
+                        ImGui.BulletText("Mouse - Look around");
+                        ImGui.BulletText("Shift - Sprint (if enabled)");
 
                         InspectorWidgets.EndSection();
                     }

@@ -4,12 +4,14 @@ using ImGuiNET;
 using Engine.Components.UI;
 using Engine.Scene;
 using Editor.State;
+using Editor.Themes;
 using NumVector3 = System.Numerics.Vector3;
 
 namespace Editor.Inspector
 {
     public static class UIElementInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         public static void DrawInspector(Entity entity, UIElementComponent elem)
         {
             uint entityId = entity.Id;

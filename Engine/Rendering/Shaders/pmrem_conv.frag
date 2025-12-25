@@ -65,7 +65,7 @@ void main()
     uint sampleCount = uint(max(1, u_SampleCount));
 
     // CRITICAL: Sample at VERY HIGH LOD to eliminate sun/bright light spots
-    // Use 95% of max LOD for ULTRA-smooth irradiance (e.g., LOD 10 → sample at LOD 9.5)
+    // Use 95% of max LOD for ULTRA-smooth irradiance (e.g., LOD 10 -> sample at LOD 9.5)
     // This samples at almost the smallest mip (2x2 or 1x1) for maximum blur
     float sampleLod = u_PrefilterMaxLod * 0.95;
 

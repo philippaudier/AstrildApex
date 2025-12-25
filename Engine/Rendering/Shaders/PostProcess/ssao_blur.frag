@@ -16,7 +16,7 @@ void main()
     
     int halfSize = u_BlurSize / 2;
     
-    // Flou gaussien bilatéral
+    // Bilateral Gaussian blur
     for (int x = -halfSize; x <= halfSize; x++)
     {
         for (int y = -halfSize; y <= halfSize; y++)

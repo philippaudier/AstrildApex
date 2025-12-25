@@ -3,6 +3,7 @@ using System.Numerics;
 using Engine.Audio.Components;
 using Engine.Audio.Effects;
 using ImGuiNET;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
@@ -53,7 +54,7 @@ namespace Editor.Inspector
 
             // Advanced settings (collapsible)
             ImGui.Spacing();
-            if (ImGui.CollapsingHeader("Advanced Reverb Settings"))
+            if (ThemedImGui.CollapsingHeader("Advanced Reverb Settings"))
             {
                 var settings = zone.ReverbSettings;
 

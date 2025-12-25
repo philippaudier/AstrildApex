@@ -5,6 +5,7 @@ using System.Numerics;
 using ImGuiNET;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using Editor.State;
+using Editor.UI;
 using Engine.Input;
 
 namespace Editor.Panels
@@ -331,7 +332,7 @@ namespace Editor.Panels
             var headerText = $"{category.Name} ({totalActionsInCategory})##{category.Name}";
             
             // CollapsingHeader retourne true quand la section est ouverte
-            var headerOpen = ImGui.CollapsingHeader(headerText, ImGuiTreeNodeFlags.DefaultOpen);
+            var headerOpen = ThemedImGui.CollapsingHeader(headerText, ImGuiTreeNodeFlags.DefaultOpen);
             
             // Mettre à jour l'état d'expansion
             _categoryExpanded[category.Name] = headerOpen;

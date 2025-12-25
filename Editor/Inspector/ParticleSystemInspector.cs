@@ -2,12 +2,15 @@ using System;
 using ImGuiNET;
 using Engine.Components;
 using Editor.Icons;
+using Editor.UI;
+using Editor.Themes;
 using System.Numerics;
 
 namespace Editor.Inspector
 {
     public static class ParticleSystemInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         public static void Draw(ParticleSystem ps)
         {
             if (ps == null) return;
@@ -19,61 +22,61 @@ namespace Editor.Inspector
             ImGui.Separator();
 
             // Core settings
-            if (ImGui.CollapsingHeader("Core Settings", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Core Settings", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 DrawCoreSettings(ps);
             }
 
             // Emission module
-            if (ImGui.CollapsingHeader("Emission", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Emission", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 DrawEmissionModule(ps);
             }
 
             // Shape module
-            if (ImGui.CollapsingHeader("Shape", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Shape", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 DrawShapeModule(ps);
             }
 
             // Particle properties
-            if (ImGui.CollapsingHeader("Particle Properties", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Particle Properties", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 DrawParticleProperties(ps);
             }
 
             // Velocity over lifetime
-            if (ImGui.CollapsingHeader("Velocity Over Lifetime"))
+            if (ThemedImGui.CollapsingHeader("Velocity Over Lifetime"))
             {
                 DrawVelocityOverLifetime(ps);
             }
 
             // Color over lifetime
-            if (ImGui.CollapsingHeader("Color Over Lifetime"))
+            if (ThemedImGui.CollapsingHeader("Color Over Lifetime"))
             {
                 DrawColorOverLifetime(ps);
             }
 
             // Size over lifetime
-            if (ImGui.CollapsingHeader("Size Over Lifetime"))
+            if (ThemedImGui.CollapsingHeader("Size Over Lifetime"))
             {
                 DrawSizeOverLifetime(ps);
             }
 
             // Rotation over lifetime
-            if (ImGui.CollapsingHeader("Rotation Over Lifetime"))
+            if (ThemedImGui.CollapsingHeader("Rotation Over Lifetime"))
             {
                 DrawRotationOverLifetime(ps);
             }
 
             // Renderer settings
-            if (ImGui.CollapsingHeader("Renderer"))
+            if (ThemedImGui.CollapsingHeader("Renderer"))
             {
                 DrawRendererSettings(ps);
             }
 
             // Statistics
-            if (ImGui.CollapsingHeader("Statistics"))
+            if (ThemedImGui.CollapsingHeader("Statistics"))
             {
                 DrawStatistics(ps);
             }

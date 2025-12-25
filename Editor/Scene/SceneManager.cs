@@ -77,8 +77,9 @@ namespace Editor.SceneManagement
                     oldRenderer.GridVisible = Editor.State.EditorSettings.ShowGrid;
                     oldRenderer.SetGameMode(false);
 
-                    // Clear caches and framebuffers to avoid stale textures
-                    try { oldRenderer.ClearMaterialCache(); } catch { }
+                    // Clear framebuffers to avoid stale render
+                    // NOTE: DO NOT clear material cache here - let it persist to avoid white materials
+                    // try { oldRenderer.ClearMaterialCache(); } catch { }
                     try { oldRenderer.ClearFramebuffers(); } catch { }
 
                     // Force a resize using the main window client size so FBOs are created
@@ -111,23 +112,22 @@ namespace Editor.SceneManagement
                 try { Engine.Assets.AssetDatabase.MaterialSaved += renderer.OnMaterialSaved; } catch { }
 
                 renderer.SetScene(newScene);
-                try { renderer.ClearMaterialCache(); } catch { }
+                // NOTE: DO NOT clear material cache here - causes white materials during async texture loading
+                // try { renderer.ClearMaterialCache(); } catch { }
                 try { renderer.ClearFramebuffers(); } catch { }
             }
 
             // Determine which renderer instance to operate on
             var rendererToUse = EditorUI.MainViewport.Renderer;
 
-            // Clear collision system to remove orphaned colliders
-            Engine.Physics.CollisionSystem.ClearAll();
+            // Physics system removed
+            // Engine.Physics.CollisionSystem.ClearAll();
 
-            // Clear global caches to fully reset render state
-            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+            // CENTRALIZED: Clear all material caches using unified method
+            Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
+
+            // Clear texture cache to free GPU memory
             Engine.Rendering.TextureCache.ClearCache();
-
-            // Force clear viewport and game panel material caches to invalidate cached textures
-            try { rendererToUse?.ClearMaterialCache(); } catch { }
-            try { GamePanel.ClearMaterialCache(); } catch { }
 
             // Clear GL framebuffers to avoid showing stale render data
             try { rendererToUse?.ClearFramebuffers(); } catch { }
@@ -306,9 +306,8 @@ namespace Editor.SceneManagement
             var sc = EditorUI.MainViewport.Renderer?.Scene;
             if (sc == null) return;
 
-            // CRITICAL FIX: Clear all collision system data BEFORE loading scene
-            // This removes phantom/orphaned colliders from deleted meshes that persist across scenes
-            Engine.Physics.CollisionSystem.ClearAll();
+            // Physics system removed
+            // Engine.Physics.CollisionSystem.ClearAll();
 
             ProgressManager.StepTracker? tracker = null;
             try
@@ -414,8 +413,20 @@ namespace Editor.SceneManagement
                         try { Engine.Utils.DebugLogger.Log($"[SceneManager] Exception while logging EnvironmentSettings: {ex.Message}"); } catch { }
                     }
 
-                    // Clear material cache to force reload with fresh texture handles
-                    Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                    // NOTE: DO NOT clear material caches here!
+                    // Clearing during scene load causes white materials because:
+                    // 1. Textures load asynchronously
+                    // 2. First render calls MaterialRuntime.FromAsset() → TextureCache.GetOrLoad() → returns White1x1
+                    // 3. MaterialRuntime caches the White1x1 handles
+                    // 4. Even when textures finish loading, the cache still contains White1x1
+                    //
+                    // Solution: Let caches persist. TextureCache will load textures automatically.
+                    // MaterialRuntime.OnMaterialSaved will update entries if materials change.
+                    //
+                    // Only clear caches in specific cases:
+                    // - Entering Play Mode (SystemHandlers.OnEnterPlayMode)
+                    // - New empty scene (NewScene method)
+                    // - User explicitly refreshes assets
 
                     // CRITICAL FIX: Reset IBL cache to force regeneration with new scene's skybox
                     // Without this, IBL from the previous scene persists and creates incorrect reflections

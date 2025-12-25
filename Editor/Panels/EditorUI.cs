@@ -11,11 +11,15 @@ using Editor.UI;
 using Editor.Tasks;
 using Editor.Logging;
 using Editor.UIManager.Profiling;
+using Editor.Themes;
+using Editor.Utils;
 
 namespace Editor.Panels;
 
 public static class EditorUI
 {
+    private static UITheme UI => ThemeManager.UI;
+
     // Panel instances
     // Using the modern ViewportPanel for iterative work
     public static ViewportPanelModern MainViewport = new ViewportPanelModern();
@@ -62,63 +66,279 @@ public static class EditorUI
         // Barre de menu globale
         if (ImGui.BeginMainMenuBar())
         {
+            // ===== FILE MENU =====
             if (ImGui.BeginMenu("File"))
             {
-                if (ImGui.MenuItem("New Scene", "Ctrl+N")) SceneManager.NewScene();
-                if (ImGui.MenuItem("Open Scene...", "Ctrl+O")) SceneManager.OpenScene();
+                if (ImGui.MenuItem("New Scene", EditorSettings.ShortcutNewScene)) SceneManager.NewScene();
+                if (ImGui.MenuItem("Open Scene...", EditorSettings.ShortcutOpenScene)) SceneManager.OpenScene();
                 ImGui.Separator();
-                if (ImGui.MenuItem("Save Scene", "Ctrl+S")) SceneManager.SaveScene();
-                if (ImGui.MenuItem("Save Scene As...", "Ctrl+Shift+S")) SceneManager.SaveSceneAs();
+                if (ImGui.MenuItem("Save Scene", EditorSettings.ShortcutSaveScene)) SceneManager.SaveScene();
+                if (ImGui.MenuItem("Save Scene As...", EditorSettings.ShortcutSaveSceneAs)) SceneManager.SaveSceneAs();
                 ImGui.Separator();
                 if (ImGui.MenuItem("Import 3D Model...", "Ctrl+Shift+I")) ImportModel();
+                ImGui.Separator();
+                
+                // New Project submenu
+                if (ImGui.BeginMenu("New Project"))
+                {
+                    ImGui.TextDisabled("Create new project (Coming Soon)");
+                    if (ImGui.MenuItem("Empty Project"))
+                    {
+                        LogManager.LogInfo("📦 New Project: Feature coming soon!", "EditorUI");
+                    }
+                    if (ImGui.MenuItem("3D Project Template"))
+                    {
+                        LogManager.LogInfo("📦 3D Template: Feature coming soon!", "EditorUI");
+                    }
+                    if (ImGui.MenuItem("2D Project Template"))
+                    {
+                        LogManager.LogInfo("📦 2D Template: Feature coming soon!", "EditorUI");
+                    }
+                    ImGui.EndMenu();
+                }
+                
                 ImGui.Separator();
                 if (ImGui.MenuItem("Exit")) System.Environment.Exit(0);
                 ImGui.EndMenu();
             }
 
-            if (ImGui.BeginMenu("View"))
-            {
-                var sa = ShowAssets; if (ImGui.MenuItem("Assets", null, sa)) ShowAssets = !ShowAssets;
-                var sh = ShowHierarchy; if (ImGui.MenuItem("Hierarchy", null, sh)) ShowHierarchy = !ShowHierarchy;
-                var si = ShowInspector; if (ImGui.MenuItem("Inspector", null, si)) ShowInspector = !ShowInspector;
-                var se = ShowEnvironment; if (ImGui.MenuItem("Environment", null, se)) ShowEnvironment = !ShowEnvironment;
-                var sr = ShowRenderingSettings; if (ImGui.MenuItem("Rendering Settings", null, sr)) { ShowRenderingSettings = !ShowRenderingSettings; SaveUIPreference("ShowRenderingSettings", ShowRenderingSettings); }
-                var sc = ShowConsole; if (ImGui.MenuItem("Console", null, sc)) ShowConsole = !ShowConsole;
-                var sg = ShowGame; if (ImGui.MenuItem("Game", null, sg)) ShowGame = !ShowGame;
-                var sam = ShowAudioMixer; if (ImGui.MenuItem("🎵 Audio Mixer", null, sam)) { ShowAudioMixer = !ShowAudioMixer; SaveUIPreference("ShowAudioMixer", ShowAudioMixer); }
-                ImGui.Separator();
-                var sd = ShowDemoWindow; if (ImGui.MenuItem("ImGui Demo Window", null, sd)) ShowDemoWindow = !ShowDemoWindow;
-                var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
-                ImGui.Separator();
-                var spo = ShowPerformanceOverlay; if (ImGui.MenuItem("⚡ Performance Overlay", null, spo)) ShowPerformanceOverlay = !ShowPerformanceOverlay;
-                var ssp = SystemsProfilerPanel.IsOpen; if (ImGui.MenuItem("🔧 Systems Profiler", null, ssp)) SystemsProfilerPanel.IsOpen = !SystemsProfilerPanel.IsOpen;
-                ImGui.EndMenu();
-            }
-
-            if (ImGui.BeginMenu("Help"))
-            {
-                ImGui.TextDisabled("AstrildApex Editor");
-                ImGui.EndMenu();
-            }
-
+            // ===== EDIT MENU =====
             if (ImGui.BeginMenu("Edit"))
             {
-                if (ImGui.MenuItem("Undo", "Ctrl+Z"))
+                if (ImGui.MenuItem("Undo", EditorSettings.ShortcutUndo))
                 {
                     var sc = MainViewport.Renderer?.Scene;
                     if (sc != null) UndoRedo.Undo(sc);
                 }
-                if (ImGui.MenuItem("Redo", "Ctrl+Shift+Z / Ctrl+Y"))
+                if (ImGui.MenuItem("Redo", EditorSettings.ShortcutRedo))
                 {
                     var sc = MainViewport.Renderer?.Scene;
                     if (sc != null) UndoRedo.Redo(sc);
                 }
                 ImGui.Separator();
+
+                if (ImGui.MenuItem("Duplicate", EditorSettings.ShortcutDuplicate))
+                {
+                    var sc = MainViewport.Renderer?.Scene;
+                    if (sc != null && Selection.Selected.Count > 0)
+                    {
+                        var duplicatedIds = new HashSet<uint>();
+                        foreach (var id in Selection.Selected.ToArray())
+                        {
+                            var entity = sc.GetById(id);
+                            if (entity != null)
+                            {
+                                var duplicate = HierarchyPanel.DuplicateEntity(sc, entity);
+                                if (duplicate != null)
+                                    duplicatedIds.Add(duplicate.Id);
+                            }
+                        }
+                        if (duplicatedIds.Count > 0)
+                            Selection.ReplaceMany(duplicatedIds);
+                    }
+                }
+
+                if (ImGui.MenuItem("Delete", EditorSettings.ShortcutDelete))
+                {
+                    var sc = MainViewport.Renderer?.Scene;
+                    if (sc != null && Selection.Selected.Count > 0)
+                    {
+                        foreach (var id in Selection.Selected.ToArray())
+                        {
+                            var entity = sc.GetById(id);
+                            if (entity != null)
+                                HierarchyPanel.DeleteRecursive(sc, entity);
+                        }
+                        Selection.Clear();
+                    }
+                }
+                
+                ImGui.Separator();
+                
+                // Selection operations
+                if (ImGui.MenuItem("Select All", EditorSettings.ShortcutSelectAll))
+                {
+                    var scene = MainViewport.Renderer?.Scene;
+                    if (scene != null)
+                    {
+                        Selection.Clear();
+                        Selection.AddMany(scene.Entities.Select(e => e.Id));
+                    }
+                }
+                if (ImGui.MenuItem("Deselect All", EditorSettings.ShortcutDeselectAll))
+                {
+                    Selection.Clear();
+                }
+                
+                ImGui.Separator();
                 if (ImGui.MenuItem("Preferences...", "Ctrl+,"))
                 {
                     Preferences.Open();
                 }
+                ImGui.EndMenu();
+            }
+
+            // ===== ASSETS MENU =====
+            if (ImGui.BeginMenu("Assets"))
+            {
+                if (ImGui.MenuItem("Create Material"))
+                {
+                    LogManager.LogInfo("➕ Create Material: Use Assets panel right-click menu", "EditorUI");
+                }
+                if (ImGui.MenuItem("Create Skybox Material"))
+                {
+                    LogManager.LogInfo("➕ Create Skybox: Use Assets panel right-click menu", "EditorUI");
+                }
                 ImGui.Separator();
+                
+                if (ImGui.MenuItem("Import Package..."))
+                {
+                    LogManager.LogInfo("📦 Import Package: Feature coming soon!", "EditorUI");
+                }
+                if (ImGui.MenuItem("Export Package..."))
+                {
+                    LogManager.LogInfo("📦 Export Package: Feature coming soon!", "EditorUI");
+                }
+                
+                ImGui.Separator();
+                if (ImGui.MenuItem("Refresh Asset Database", "Ctrl+R"))
+                {
+                    try
+                    {
+                        AssetDatabase.Refresh();
+                        LogManager.LogInfo("✅ Asset database refreshed!", "EditorUI");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogError($"❌ Failed to refresh assets: {ex.Message}", "EditorUI");
+                    }
+                }
+                ImGui.EndMenu();
+            }
+
+            // ===== GAMEOBJECT MENU =====
+            if (ImGui.BeginMenu("GameObject"))
+            {
+                if (ImGui.BeginMenu("3D Object"))
+                {
+                    if (ImGui.MenuItem("Cube"))
+                    {
+                        // Create cube entity
+                        var scene = MainViewport.Renderer?.Scene;
+                        if (scene != null)
+                        {
+                            var cube = new Engine.Scene.Entity
+                            {
+                                Id = scene.GetNextEntityId(),
+                                Name = "Cube",
+                                Guid = Guid.NewGuid(),
+                                Active = true
+                            };
+                            // TransformComponent already added by Entity constructor
+                            // TODO: Add MeshRenderer with cube mesh
+                            LogManager.LogInfo("➕ Created Cube", "EditorUI");
+                            scene.Entities.Add(cube);
+                            Selection.SetSingle(cube.Id);
+                            SceneManager.MarkSceneAsModified();
+                        }
+                    }
+                    if (ImGui.MenuItem("Sphere")) LogManager.LogInfo("➕ Create Sphere: Coming soon!", "EditorUI");
+                    if (ImGui.MenuItem("Plane")) LogManager.LogInfo("➕ Create Plane: Coming soon!", "EditorUI");
+                    if (ImGui.MenuItem("Cylinder")) LogManager.LogInfo("➕ Create Cylinder: Coming soon!", "EditorUI");
+                    ImGui.EndMenu();
+                }
+                
+                if (ImGui.BeginMenu("Light"))
+                {
+                    if (ImGui.MenuItem("Directional Light")) LogManager.LogInfo("➕ Create Directional Light: Coming soon!", "EditorUI");
+                    if (ImGui.MenuItem("Point Light")) LogManager.LogInfo("➕ Create Point Light: Coming soon!", "EditorUI");
+                    if (ImGui.MenuItem("Spot Light")) LogManager.LogInfo("➕ Create Spot Light: Coming soon!", "EditorUI");
+                    ImGui.EndMenu();
+                }
+                
+                if (ImGui.BeginMenu("Audio"))
+                {
+                    if (ImGui.MenuItem("Audio Source")) LogManager.LogInfo("➕ Create Audio Source: Coming soon!", "EditorUI");
+                    if (ImGui.MenuItem("Audio Listener")) LogManager.LogInfo("➕ Create Audio Listener: Coming soon!", "EditorUI");
+                    ImGui.EndMenu();
+                }
+                
+                if (ImGui.BeginMenu("Camera"))
+                {
+                    if (ImGui.MenuItem("Camera")) LogManager.LogInfo("➕ Create Camera: Coming soon!", "EditorUI");
+                    ImGui.EndMenu();
+                }
+                
+                ImGui.Separator();
+                if (ImGui.MenuItem("Create Empty", EditorSettings.ShortcutCreateEmpty))
+                {
+                    var scene = MainViewport.Renderer?.Scene;
+                    if (scene != null)
+                    {
+                        var empty = new Engine.Scene.Entity
+                        {
+                            Id = scene.GetNextEntityId(),
+                            Name = "Empty",
+                            Guid = Guid.NewGuid(),
+                            Active = true
+                        };
+                        // TransformComponent already added by Entity constructor
+                        scene.Entities.Add(empty);
+                        Selection.SetSingle(empty.Id);
+                        SceneManager.MarkSceneAsModified();
+                        LogManager.LogInfo("➕ Created Empty GameObject", "EditorUI");
+                    }
+                }
+                ImGui.EndMenu();
+            }
+
+            // ===== WINDOW MENU =====
+            if (ImGui.BeginMenu("Window"))
+            {
+                ImGui.TextDisabled("Panels:");
+                var sa = ShowAssets; if (ImGui.MenuItem("Assets", null, sa)) ShowAssets = !ShowAssets;
+                var sh = ShowHierarchy; if (ImGui.MenuItem("Hierarchy", null, sh)) ShowHierarchy = !ShowHierarchy;
+                var si = ShowInspector; if (ImGui.MenuItem("Inspector", null, si)) ShowInspector = !ShowInspector;
+                var sc = ShowConsole; if (ImGui.MenuItem("Console", null, sc)) ShowConsole = !ShowConsole;
+                var sg = ShowGame; if (ImGui.MenuItem("Game", null, sg)) ShowGame = !ShowGame;
+                
+                ImGui.Separator();
+                ImGui.TextDisabled("Settings:");
+                var se = ShowEnvironment; if (ImGui.MenuItem("Environment", null, se)) ShowEnvironment = !ShowEnvironment;
+                var sr = ShowRenderingSettings; if (ImGui.MenuItem("Rendering Settings", null, sr)) { ShowRenderingSettings = !ShowRenderingSettings; SaveUIPreference("ShowRenderingSettings", ShowRenderingSettings); }
+                var sam = ShowAudioMixer; if (ImGui.MenuItem("🎵 Audio Mixer", null, sam)) { ShowAudioMixer = !ShowAudioMixer; SaveUIPreference("ShowAudioMixer", ShowAudioMixer); }
+                
+                ImGui.Separator();
+                ImGui.TextDisabled("Debug Tools:");
+                var sd = ShowDemoWindow; if (ImGui.MenuItem("ImGui Demo Window", null, sd)) ShowDemoWindow = !ShowDemoWindow;
+                var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
+                var spo = ShowPerformanceOverlay; if (ImGui.MenuItem("⚡ Performance Overlay", null, spo)) ShowPerformanceOverlay = !ShowPerformanceOverlay;
+                var ssp = SystemsProfilerPanel.IsOpen; if (ImGui.MenuItem("🔧 Systems Profiler", null, ssp)) SystemsProfilerPanel.IsOpen = !SystemsProfilerPanel.IsOpen;
+                ImGui.EndMenu();
+            }
+
+            // ===== BUILD MENU =====
+            if (ImGui.BeginMenu("Build"))
+            {
+                if (ImGui.MenuItem("Build Settings..."))
+                {
+                    LogManager.LogInfo("🔨 Build Settings: Feature coming soon!", "EditorUI");
+                }
+                if (ImGui.MenuItem("Build and Run", "Ctrl+B"))
+                {
+                    LogManager.LogInfo("🔨 Build and Run: Feature coming soon!", "EditorUI");
+                }
+                ImGui.Separator();
+                if (ImGui.MenuItem("Player Settings..."))
+                {
+                    LogManager.LogInfo("🔨 Player Settings: Feature coming soon!", "EditorUI");
+                }
+                ImGui.EndMenu();
+            }
+
+            // ===== TOOLS MENU =====
+            if (ImGui.BeginMenu("Tools"))
+            {
                 if (ImGui.MenuItem("Reload Water Shader", "F5"))
                 {
                     try
@@ -131,6 +351,11 @@ public static class EditorUI
                         LogManager.LogWarning($"❌ Failed to reload Water shader: {ex.Message}", "EditorUI");
                     }
                 }
+                if (ImGui.MenuItem("Reload All Shaders"))
+                {
+                    LogManager.LogInfo("🔄 Reload All Shaders: Feature coming soon!", "EditorUI");
+                }
+                
                 ImGui.Separator();
                 if (ImGui.BeginMenu("Project Settings"))
                 {
@@ -138,13 +363,61 @@ public static class EditorUI
                     {
                         InputSettingsPanel.Open();
                     }
+                    if (ImGui.MenuItem("Collision Layers..."))
+                    {
+                        CollisionLayersPanel.Open();
+                    }
+                    if (ImGui.MenuItem("Quality Settings..."))
+                    {
+                        LogManager.LogInfo("⚙️ Quality Settings: Feature coming soon!", "EditorUI");
+                    }
                     ImGui.EndMenu();
+                }
+                
+                ImGui.Separator();
+                if (ImGui.MenuItem("Package Manager..."))
+                {
+                    LogManager.LogInfo("📦 Package Manager: Feature coming soon!", "EditorUI");
+                }
+                ImGui.EndMenu();
+            }
+
+            // ===== HELP MENU =====
+            if (ImGui.BeginMenu("Help"))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, UI.Primary);
+                ImGui.Text($"AstrildApex Engine v{Engine.Core.EngineInfo.Version}");
+                ImGui.PopStyleColor();
+                
+                ImGui.Separator();
+                if (ImGui.MenuItem("Documentation"))
+                {
+                    LogManager.LogInfo("📚 Documentation: Opening browser...", "EditorUI");
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "https://github.com/philippaudier/AstrildApex",
+                        UseShellExecute = true
+                    });
+                }
+                if (ImGui.MenuItem("Report Bug"))
+                {
+                    LogManager.LogInfo("🐛 Report Bug: Opening GitHub Issues...", "EditorUI");
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "https://github.com/philippaudier/AstrildApex/issues",
+                        UseShellExecute = true
+                    });
+                }
+                ImGui.Separator();
+                if (ImGui.MenuItem("About AstrildApex"))
+                {
+                    LogManager.LogInfo($"ℹ️ AstrildApex Engine v{Engine.Core.EngineInfo.Version}", "EditorUI");
                 }
                 ImGui.EndMenu();
             }
             
             // Play Mode Controls - centered in menu bar
-                DrawPlayModeControls();
+            DrawPlayModeControls();
             
             ImGui.EndMainMenuBar();
         }
@@ -159,32 +432,113 @@ public static class EditorUI
         // Ne pas voler le clavier si on tape du texte dans un InputText/Drag
         bool typingText = io.WantTextInput;
 
-        // On lit les modifieurs fournis par le backend (AddKeyEvent ModCtrl/ModShift)
-        bool ctrl  = io.KeyCtrl;
-        bool shift = io.KeyShift;
+        // Skip editor shortcuts if in play mode and setting is enabled
+        if (EditorSettings.ShortcutsDisableInPlayMode && PlayMode.IsPlaying)
+            return;
 
         var sc2 = MainViewport.Renderer?.Scene;
+        
+        // Undo/Redo shortcuts
         if (!typingText && sc2 != null)
         {
-            // UNDO : Ctrl+Z
-            if (ctrl && ImGui.IsKeyPressed(ImGuiKey.W))
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutUndo))
                 UndoRedo.Undo(sc2);
 
-            // REDO : Ctrl+Shift+Z  (standard Adobe)  OU  Ctrl+Y (standard Windows)
-            bool redoChord = (ctrl && shift && ImGui.IsKeyPressed(ImGuiKey.W))
-                          || (ctrl && ImGui.IsKeyPressed(ImGuiKey.Y));
-
-            if (redoChord)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutRedo))
                 UndoRedo.Redo(sc2);
         }
 
-        // Raccourcis de scène
+        // Scene shortcuts
         if (!typingText)
         {
-            if (ctrl && ImGui.IsKeyPressed(ImGuiKey.N)) SceneManager.NewScene();
-            if (ctrl && ImGui.IsKeyPressed(ImGuiKey.O)) SceneManager.OpenScene();
-            if (ctrl && ImGui.IsKeyPressed(ImGuiKey.S)) SceneManager.SaveScene();
-            if (ctrl && shift && ImGui.IsKeyPressed(ImGuiKey.S)) SceneManager.SaveSceneAs();
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutNewScene))
+                SceneManager.NewScene();
+            
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutOpenScene))
+                SceneManager.OpenScene();
+            
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutSaveScene))
+                SceneManager.SaveScene();
+            
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutSaveSceneAs))
+                SceneManager.SaveSceneAs();
+
+            // Duplicate selected entities (Ctrl+D)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutDuplicate))
+            {
+                if (sc2 != null && Selection.Selected.Count > 0)
+                {
+                    var duplicatedIds = new HashSet<uint>();
+                    foreach (var id in Selection.Selected.ToArray())
+                    {
+                        var entity = sc2.GetById(id);
+                        if (entity != null)
+                        {
+                            var duplicate = HierarchyPanel.DuplicateEntity(sc2, entity);
+                            if (duplicate != null)
+                                duplicatedIds.Add(duplicate.Id);
+                        }
+                    }
+                    // Select the duplicates
+                    if (duplicatedIds.Count > 0)
+                        Selection.ReplaceMany(duplicatedIds);
+                }
+            }
+
+            // Delete selected entities (Del key)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutDelete))
+            {
+                if (sc2 != null && Selection.Selected.Count > 0)
+                {
+                    foreach (var id in Selection.Selected.ToArray())
+                    {
+                        var entity = sc2.GetById(id);
+                        if (entity != null)
+                            HierarchyPanel.DeleteRecursive(sc2, entity);
+                    }
+                    Selection.Clear();
+                }
+            }
+
+            // Select all entities (Ctrl+A)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutSelectAll))
+            {
+                if (sc2 != null)
+                {
+                    var allIds = sc2.Entities.Select(e => e.Id).ToList();
+                    Selection.ReplaceMany(allIds);
+                }
+            }
+
+            // Deselect all (Ctrl+Shift+A)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutDeselectAll))
+            {
+                Selection.Clear();
+            }
+
+            // Create empty entity (Ctrl+Shift+N)
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutCreateEmpty))
+            {
+                if (sc2 != null)
+                {
+                    var newEntity = new Engine.Scene.Entity
+                    {
+                        Id = sc2.GetNextEntityId()
+                    };
+                    newEntity.Name = "Empty Entity";
+                    sc2.Entities.Add(newEntity);
+                    Selection.SetSingle(newEntity.Id);
+                }
+            }
+
+            // Play/Pause toggle
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutPlayPause))
+            {
+                if (PlayMode.State == PlayMode.PlayState.Edit)
+                    PlayMode.Play();
+                else if (PlayMode.State == PlayMode.PlayState.Playing)
+                    PlayMode.Stop();
+            }
         }
     }
 
@@ -216,6 +570,10 @@ public static class EditorUI
         PanelProfiler.BeginPanel("InputSettings");
         InputSettingsPanel.Draw();
         PanelProfiler.EndPanel("InputSettings");
+
+        PanelProfiler.BeginPanel("CollisionLayers");
+        CollisionLayersPanel.Draw();
+        PanelProfiler.EndPanel("CollisionLayers");
 
         PanelProfiler.BeginPanel("Preferences");
         Preferences.Draw();

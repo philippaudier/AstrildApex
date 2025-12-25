@@ -4,6 +4,8 @@ using Engine.Components;
 using Editor.Logging;
 using Engine.Scene;
 using Engine.Assets;
+using Editor.UI;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
@@ -77,199 +79,60 @@ namespace Editor.Inspector
             ImGui.Separator();
 
             // === HEIGHTMAP TEXTURE ===
-            ImGui.Text("Heightmap Texture");
-            ImGui.TextDisabled("16-bit grayscale PNG recommended");
-
-            // Display current heightmap with drag-drop zone
-            if (terrain.HeightmapTextureGuid.HasValue)
+            var newHeightmap = EditorWidgets.AssetField(
+                "Heightmap Texture",
+                terrain.HeightmapTextureGuid,
+                "Texture2D",
+                "16-bit grayscale PNG recommended",
+                showPreview: true,
+                dragDropHeight: ThemeManager.UI.DragDropLargeHeight);
+            
+            if (newHeightmap != terrain.HeightmapTextureGuid)
             {
-                if (AssetDatabase.TryGet(terrain.HeightmapTextureGuid.Value, out var record))
+                terrain.HeightmapTextureGuid = newHeightmap;
+                if (newHeightmap.HasValue)
                 {
-                        ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), $"\u2713 {System.IO.Path.GetFileName(record.Path)}");
-
-                        // Show a small preview of the heightmap texture
-                        try
-                        {
-                            Engine.Rendering.TextureCache.Initialize();
-                            int handle = Engine.Rendering.TextureCache.GetOrLoad(terrain.HeightmapTextureGuid.Value, g => AssetDatabase.TryGet(g, out var r) ? r.Path : null);
-                            var size = new System.Numerics.Vector2(200, 120);
-                            // If texture not yet uploaded, handle may be White1x1 - that's OK
-                            ImGui.Image((IntPtr)handle, size, new System.Numerics.Vector2(0, 1), new System.Numerics.Vector2(1, 0));
-                        }
-                        catch { }
-                }
-                else
-                {
-                    ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Heightmap asset not found!");
-                }
-
-                if (ImGui.Button("Clear Heightmap", new System.Numerics.Vector2(-1, 0)))
-                {
-                    terrain.HeightmapTextureGuid = null;
-                }
-            }
-            else
-            {
-                // Large clickable drag-drop zone
-                ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.2f, 0.3f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.3f, 0.4f, 1f));
-                ImGui.Button("Drag & Drop Heightmap Here", new System.Numerics.Vector2(-1, 50));
-                ImGui.PopStyleColor(2);
-
-                // Drag-drop target on the button
-                if (ImGui.BeginDragDropTarget())
-                {
-                    // Accept the multi-asset payload produced by the Assets panel and take the first GUID
-                    unsafe
-                    {
-                        var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
-                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
-                        {
-                            var span = new ReadOnlySpan<byte>((void*)payload.Data, (int)payload.DataSize);
-                            var assetGuid = new Guid(span.Slice(0, 16));
-
-                            if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Texture2D")
-                            {
-                                terrain.HeightmapTextureGuid = assetGuid;
-                                LogManager.LogInfo($"Heightmap texture assigned: {rec.Path}", "TerrainInspector");
-                            }
-                        }
-                    }
-                    ImGui.EndDragDropTarget();
+                    LogManager.LogInfo($"Heightmap texture assigned: {AssetDatabase.GetName(newHeightmap.Value)}", "TerrainInspector");
                 }
             }
 
             ImGui.Separator();
 
             // === MATERIAL ===
-            ImGui.Text("Material");
-            ImGui.TextDisabled("Use TerrainForward shader");
-
-            // Display current material with drag-drop zone
-            if (terrain.TerrainMaterialGuid.HasValue)
+            var newMaterial = EditorWidgets.AssetField(
+                "Material",
+                terrain.TerrainMaterialGuid,
+                "Material",
+                "Use TerrainForward shader",
+                showPreview: false);
+            
+            if (newMaterial != terrain.TerrainMaterialGuid)
             {
-                if (AssetDatabase.TryGet(terrain.TerrainMaterialGuid.Value, out var record))
+                terrain.TerrainMaterialGuid = newMaterial;
+                if (newMaterial.HasValue)
                 {
-                    ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), $"✓ {System.IO.Path.GetFileName(record.Path)}");
-                }
-                else
-                {
-                    ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Material asset not found!");
-                }
-
-                if (ImGui.Button("Clear Material", new System.Numerics.Vector2(-1, 0)))
-                {
-                    terrain.TerrainMaterialGuid = null;
-                }
-            }
-            else
-            {
-                // Large clickable drag-drop zone
-                ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.2f, 0.3f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.3f, 0.4f, 1f));
-                ImGui.Button("Drag & Drop Material Here", new System.Numerics.Vector2(-1, 50));
-                ImGui.PopStyleColor(2);
-
-                // Drag-drop target on the button
-                if (ImGui.BeginDragDropTarget())
-                {
-                    // Accept the multi-asset payload produced by the Assets panel and take the first GUID
-                    unsafe
-                    {
-                        var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
-                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
-                        {
-                            var span = new ReadOnlySpan<byte>((void*)payload.Data, (int)payload.DataSize);
-                            var assetGuid = new Guid(span.Slice(0, 16));
-
-                            if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Material")
-                            {
-                                terrain.TerrainMaterialGuid = assetGuid;
-                                LogManager.LogInfo($"Material assigned: {rec.Path}", "TerrainInspector");
-                            }
-                        }
-                    }
-                    ImGui.EndDragDropTarget();
+                    LogManager.LogInfo($"Material assigned: {AssetDatabase.GetName(newMaterial.Value)}", "TerrainInspector");
                 }
             }
 
             ImGui.Separator();
 
-            // === WATER ===
-            ImGui.Text("Water");
-            ImGui.TextDisabled("Add a water plane to the terrain");
-
-            bool enableWater = terrain.EnableWater;
-            if (ImGui.Checkbox("Enable Water", ref enableWater))
-            {
-                terrain.EnableWater = enableWater;
-                terrain.UpdateWaterPlane();
-            }
-
-            if (terrain.EnableWater)
-            {
-                // Water height slider
-                float waterHeight = terrain.WaterHeight;
-                if (ImGui.SliderFloat("Water Height", ref waterHeight, 0f, terrain.TerrainHeight))
-                {
-                    terrain.WaterHeight = waterHeight;
-                    terrain.UpdateWaterPlane();
-                }
-
-                // Water material drag-drop
-                ImGui.Text("Water Material");
-                if (terrain.WaterMaterialGuid.HasValue)
-                {
-                    if (AssetDatabase.TryGet(terrain.WaterMaterialGuid.Value, out var record))
-                    {
-                        ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), $"✓ {System.IO.Path.GetFileName(record.Path)}");
-                    }
-                    else
-                    {
-                        ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Material asset not found!");
-                    }
-
-                    if (ImGui.Button("Clear Water Material", new System.Numerics.Vector2(-1, 0)))
-                    {
-                        terrain.WaterMaterialGuid = null;
-                    }
-                }
-                else
-                {
-                    // Large clickable drag-drop zone
-                    ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.2f, 0.3f, 1f));
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.3f, 0.4f, 1f));
-                    ImGui.Button("Drag & Drop Water Material", new System.Numerics.Vector2(-1, 40));
-                    ImGui.PopStyleColor(2);
-
-                    // Drag-drop target on the button
-                    if (ImGui.BeginDragDropTarget())
-                    {
-                        // Accept the multi-asset payload produced by the Assets panel and take the first GUID
-                        unsafe
-                        {
-                            var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
-                            if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize >= 16)
-                            {
-                                var span = new ReadOnlySpan<byte>((void*)payload.Data, (int)payload.DataSize);
-                                var assetGuid = new Guid(span.Slice(0, 16));
-
-                                if (AssetDatabase.TryGet(assetGuid, out var rec) && rec.Type == "Material")
-                                {
-                                    terrain.WaterMaterialGuid = assetGuid;
-                                    LogManager.LogInfo($"Water material assigned: {rec.Path}", "TerrainInspector");
-                                }
-                            }
-                        }
-                        ImGui.EndDragDropTarget();
-                    }
-                }
-            }
+            // Water feature removed: terrain no longer manages a water plane.
 
             ImGui.Separator();
 
             // === TERRAIN LAYERS ===
             TerrainLayersUI.DrawTerrainLayers(terrain);
+
+            ImGui.Separator();
+
+            // === VEGETATION ===
+            TerrainVegetationUI.DrawVegetationSection(terrain);
+
+            ImGui.Separator();
+
+            // === WEATHER SYSTEM ===
+            DrawWeatherSection(terrain);
 
             ImGui.Separator();
 
@@ -360,7 +223,7 @@ namespace Editor.Inspector
             ImGui.Separator();
 
             // === INFO ===
-            if (ImGui.TreeNode("Terrain Info"))
+            if (ThemedImGui.TreeNode("Terrain Info"))
             {
                 ImGui.TextDisabled($"Width: {terrain.TerrainWidth}m");
                 ImGui.TextDisabled($"Length: {terrain.TerrainLength}m");
@@ -372,6 +235,27 @@ namespace Editor.Inspector
             }
 
             ImGui.PopID();
+        }
+
+        private static void DrawWeatherSection(Terrain terrain)
+        {
+            // Weather has been moved to the WeatherComponent
+            // Show a helpful message to guide users
+            bool weatherOpen = ThemedImGui.CollapsingHeader("🌤️ Weather & Environment (MOVED)");
+            if (!weatherOpen) return;
+
+            ImGui.Indent();
+            ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.8f, 0.2f, 1.0f), "⚠️ Weather system has been migrated!");
+            ImGui.Spacing();
+            ImGui.TextWrapped("Weather parameters (wind, rain, snow) have been moved to the new WeatherComponent system.");
+            ImGui.Spacing();
+            ImGui.TextWrapped("To control weather:");
+            ImGui.BulletText("Create a new Entity");
+            ImGui.BulletText("Add WeatherComponent to it");
+            ImGui.BulletText("Configure weather in the Inspector");
+            ImGui.Spacing();
+            ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f), "This provides better separation of concerns and allows scene-wide weather control.");
+            ImGui.Unindent();
         }
     }
 }

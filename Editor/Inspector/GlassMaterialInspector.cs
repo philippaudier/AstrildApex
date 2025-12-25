@@ -1,6 +1,7 @@
 using System;
 using ImGuiNET;
 using Engine.Assets;
+using Editor.UI;
 using Numerics = System.Numerics;
 
 namespace Editor.Inspector
@@ -21,7 +22,7 @@ namespace Editor.Inspector
             ImGui.Spacing();
 
             // === PRESETS ===
-            if (ImGui.CollapsingHeader("Presets", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Presets", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.TextDisabled("Quick presets for common glass types");
                 ImGui.Spacing();
@@ -64,7 +65,7 @@ namespace Editor.Inspector
             }
 
             // === REFRACTION ===
-            if (ImGui.CollapsingHeader("Refraction", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Refraction", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 bool changed = false;
 
@@ -105,7 +106,7 @@ namespace Editor.Inspector
             }
 
             // === APPEARANCE ===
-            if (ImGui.CollapsingHeader("Appearance", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Appearance", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 bool changed = false;
 
@@ -158,7 +159,7 @@ namespace Editor.Inspector
             }
 
             // === REFLECTIONS ===
-            if (ImGui.CollapsingHeader("Reflections (Fresnel)", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Reflections (Fresnel)", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 bool changed = false;
 

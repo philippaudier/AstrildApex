@@ -10,15 +10,15 @@ namespace Engine.Scene
         
         /// <summary>ID minimum pour une entité valide</summary>
         public const uint MinEntityId = 1000;
-        
+
         /// <summary>ID maximum pour une entité valide (exclusif)</summary>
-        public const uint MaxEntityId = 10000;
-        
+        public const uint MaxEntityId = 1000000; // Increased from 10000 to support vegetation and large scenes
+
         /// <summary>ID de début pour la plage des gizmos</summary>
-        public const uint GizmoIdStart = 900000;
-        
+        public const uint GizmoIdStart = 10000000; // Increased to avoid conflict with entity IDs
+
         /// <summary>ID réservé spécial pour tous les gizmos (compatibilité)</summary>
-        public const uint GizmoReservedId = 999999;
+        public const uint GizmoReservedId = 99999999;
         
         // === Utilitaires de validation ===
         

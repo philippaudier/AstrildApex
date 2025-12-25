@@ -10,12 +10,15 @@ using MeshRendererComponent = Engine.Components.MeshRendererComponent;
 using Engine.Mathx;
 using Editor.Inspector;
 using Editor.Icons;
+using Editor.Themes;
 using Numerics = System.Numerics;
 
 namespace Editor.Panels
 {
     public static class InspectorPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         // --- State édition transform (composite Undo/Redo) ---
         static bool _trEditing = false;
         static Xform _trBefore;
@@ -42,6 +45,9 @@ namespace Editor.Panels
         private static System.Collections.Generic.List<Engine.Components.Component>? _cachedComponents = null;
         private static TransformComponent? _cachedTransform = null;
         private static System.Collections.Generic.List<Engine.Components.Component>? _cachedOtherComponents = null;
+        
+        // Inspector instances
+        private static Editor.Inspector.PrefabAssetInspector? _prefabAssetInspector = null;
 
         static InspectorPanel()
         {
@@ -53,14 +59,20 @@ namespace Editor.Panels
                 _forceRefreshUI = true;
 
                 // PERFORMANCE: Invalidate component cache on undo/redo
-                _cachedComponentsEntityId = 0;
-                _cachedComponents = null;
-                _cachedTransform = null;
-                _cachedOtherComponents = null;
+                InvalidateComponentCache();
 
                 // ► recaler le gizmo après Undo/Redo ou toute action
                 EditorUI.MainViewport.UpdateGizmoPivot();
             };
+        }
+
+        /// <summary>Invalidate the component cache to force refresh on next frame.</summary>
+        public static void InvalidateComponentCache()
+        {
+            _cachedComponentsEntityId = 0;
+            _cachedComponents = null;
+            _cachedTransform = null;
+            _cachedOtherComponents = null;
         }
 
         /// <summary>Abort current edit and force UI to reload values from the entity.</summary>
@@ -142,7 +154,9 @@ namespace Editor.Panels
                 // juste une réévaluation des sections repliées/états de widgets si tu en as besoin.
             }
 
-            var scene = EditorUI.MainViewport.Renderer?.Scene;
+            // CRITICAL FIX: Use PlayMode.PlayScene in Play Mode, otherwise use editor scene
+            // This ensures inspector shows live values from the runtime scene during Play Mode
+            var scene = PlayMode.IsInPlayMode ? PlayMode.PlayScene : EditorUI.MainViewport.Renderer?.Scene;
             if (scene == null) { ImGui.TextDisabled("Scene not available."); ImGui.End(); return; }
 
             // Déterminer la cible à afficher selon lock/selection
@@ -225,6 +239,11 @@ namespace Editor.Panels
                 {
                     Editor.Inspector.MaterialAssetInspector.Draw(assetGuidToShow);
                 }
+                else if (string.Equals(type, "Prefab", StringComparison.OrdinalIgnoreCase))
+                {
+                    _prefabAssetInspector ??= new Editor.Inspector.PrefabAssetInspector();
+                    _prefabAssetInspector.Draw(assetGuidToShow);
+                }
                 else if (string.Equals(type, "SkyboxMaterial", StringComparison.OrdinalIgnoreCase))
                 {
                     Editor.Inspector.SkyboxMaterialInspector.Draw(assetGuidToShow);
@@ -302,8 +321,7 @@ namespace Editor.Panels
 
             // --- En-tête & propriétés de base ---
             FieldWidgets.DrawEntityBasic(entToShow);
-            ReflectionInspector.DrawForEntity(entToShow);
-
+            // Removed ReflectionInspector.DrawForEntity - not needed anymore
 
             // ================= Unity-like Component Inspector =================
             DrawUnityLikeInspector(entToShow);
@@ -764,23 +782,15 @@ namespace Editor.Panels
                 case CameraComponent cam:
                     Editor.Inspector.CameraInspector.Draw(cam);
                     break;
-                case CharacterController cc:
-                    Editor.Inspector.CharacterControllerInspector.Draw(cc);
-                    break;
-                case BoxCollider bc:
+                // Physics components
+                case Engine.Physics.BoxCollider bc:
                     Editor.Inspector.BoxColliderInspector.Draw(bc);
                     break;
-                case SphereCollider sc:
+                case Engine.Physics.SphereCollider sc:
                     Editor.Inspector.SphereColliderInspector.Draw(sc);
                     break;
-                case CapsuleCollider capsule:
+                case Engine.Physics.CapsuleCollider capsule:
                     Editor.Inspector.CapsuleColliderInspector.Draw(capsule);
-                    break;
-                case MeshCollider meshCollider:
-                    Editor.Inspector.MeshColliderInspector.Draw(meshCollider);
-                    break;
-                case HeightfieldCollider heightfield:
-                    Editor.Inspector.HeightfieldColliderInspector.Draw(heightfield);
                     break;
                 case EnvironmentSettings env:
                     DrawEnvironmentSettingsComponent(env);
@@ -788,6 +798,9 @@ namespace Editor.Panels
                 case Engine.Components.Terrain tg:
                     // Use new terrain inspector
                     Editor.Inspector.TerrainInspector.Draw(entity, tg);
+                    break;
+                case Engine.Components.WeatherComponent weather:
+                    Editor.Inspector.WeatherInspector.Draw(weather);
                     break;
                 case Engine.Components.GlobalEffects globalEffects:
                     Editor.Inspector.GlobalEffectsInspector.DrawInspector(globalEffects);
@@ -816,7 +829,11 @@ namespace Editor.Panels
                 case Engine.Components.ParticleSystem particleSystem:
                     Editor.Inspector.ParticleSystemInspector.Draw(particleSystem);
                     break;
+                case Engine.Components.MissingComponent missing:
+                    Editor.Inspector.MissingComponentInspector.Draw(missing);
+                    break;
                 case Engine.Scripting.MonoBehaviour script:
+                    // Use reflection inspector for all MonoBehaviour scripts
                     Editor.Inspector.ReflectionInspector.DrawMembers(script, script.GetType(), "");
                     break;
                 default:
@@ -855,6 +872,7 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Light") && !entity.HasComponent<LightComponent>())
                     {
                         entity.AddComponent<LightComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -863,39 +881,28 @@ namespace Editor.Panels
                 // Physics category
                 if (ImGui.BeginMenu("Physics"))
                 {
-                    if (ImGui.MenuItem("Box Collider") && !entity.HasComponent<BoxCollider>())
+                    if (ImGui.MenuItem("Box Collider") && !entity.HasComponent<Engine.Physics.BoxCollider>())
                     {
-                        entity.AddComponent<BoxCollider>();
+                        entity.AddComponent<Engine.Physics.BoxCollider>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
-                    if (ImGui.MenuItem("Sphere Collider") && !entity.HasComponent<SphereCollider>())
+                    if (ImGui.MenuItem("Sphere Collider") && !entity.HasComponent<Engine.Physics.SphereCollider>())
                     {
-                        entity.AddComponent<SphereCollider>();
+                        entity.AddComponent<Engine.Physics.SphereCollider>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
-                    if (ImGui.MenuItem("Capsule Collider") && !entity.HasComponent<CapsuleCollider>())
+                    if (ImGui.MenuItem("Capsule Collider") && !entity.HasComponent<Engine.Physics.CapsuleCollider>())
                     {
-                        entity.AddComponent<CapsuleCollider>();
+                        entity.AddComponent<Engine.Physics.CapsuleCollider>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
-                    if (ImGui.MenuItem("Mesh Collider") && !entity.HasComponent<MeshCollider>())
+                    if (ImGui.MenuItem("Kinematic Character Controller") && !entity.HasComponent<Engine.Physics.KinematicCharacterController>())
                     {
-                        var meshCollider = entity.AddComponent<MeshCollider>();
-                        // Auto-configure si l'entité a un MeshRenderer
-                        if (entity.HasComponent<MeshRendererComponent>())
-                        {
-                            meshCollider.UseMeshRendererMesh = true;
-                        }
-                        ImGui.CloseCurrentPopup();
-                    }
-                    if (ImGui.MenuItem("Character Controller") && !entity.HasComponent<CharacterController>())
-                    {
-                        entity.AddComponent<CharacterController>();
-                        ImGui.CloseCurrentPopup();
-                    }
-                    if (ImGui.MenuItem("Heightfield Collider") && !entity.HasComponent<HeightfieldCollider>())
-                    {
-                        entity.AddComponent<HeightfieldCollider>();
+                        entity.AddComponent<Engine.Physics.KinematicCharacterController>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -907,6 +914,7 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Mesh Renderer") && !entity.HasComponent<MeshRendererComponent>())
                     {
                         entity.AddComponent<MeshRendererComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -918,6 +926,7 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Camera") && !entity.HasComponent<CameraComponent>())
                     {
                         entity.AddComponent<CameraComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -929,38 +938,13 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Environment Settings") && !entity.HasComponent<EnvironmentSettings>())
                     {
                         entity.AddComponent<EnvironmentSettings>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
-                    ImGui.EndMenu();
-                }
-
-                // Audio category
-                if (ImGui.BeginMenu("Audio"))
-                {
-                    if (ImGui.MenuItem("Audio Source") && !entity.HasComponent<Engine.Audio.Components.AudioSource>())
+                    if (ImGui.MenuItem("Weather") && !entity.HasComponent<Engine.Components.WeatherComponent>())
                     {
-                        entity.AddComponent<Engine.Audio.Components.AudioSource>();
-                        ImGui.CloseCurrentPopup();
-                    }
-                    if (ImGui.MenuItem("Audio Listener") && !entity.HasComponent<Engine.Audio.Components.AudioListenerComponent>())
-                    {
-                        entity.AddComponent<Engine.Audio.Components.AudioListenerComponent>();
-                        ImGui.CloseCurrentPopup();
-                    }
-                    if (ImGui.MenuItem("Reverb Zone") && !entity.HasComponent<Engine.Audio.Components.ReverbZoneComponent>())
-                    {
-                        entity.AddComponent<Engine.Audio.Components.ReverbZoneComponent>();
-                        ImGui.CloseCurrentPopup();
-                    }
-                    ImGui.EndMenu();
-                }
-
-                // Generation category
-                if (ImGui.BeginMenu("Generation"))
-                {
-                    if (ImGui.MenuItem("Terrain") && !entity.HasComponent<Engine.Components.Terrain>())
-                    {
-                        entity.AddComponent<Engine.Components.Terrain>();
+                        entity.AddComponent<Engine.Components.WeatherComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -972,6 +956,7 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Global Effects") && !entity.HasComponent<Engine.Components.GlobalEffects>())
                     {
                         entity.AddComponent<Engine.Components.GlobalEffects>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -983,6 +968,7 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Particle System") && !entity.HasComponent<Engine.Components.ParticleSystem>())
                     {
                         entity.AddComponent<Engine.Components.ParticleSystem>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -994,21 +980,25 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Canvas") && !entity.HasComponent<Engine.Components.UI.CanvasComponent>())
                     {
                         entity.AddComponent<Engine.Components.UI.CanvasComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     if (ImGui.MenuItem("UI Text") && !entity.HasComponent<Engine.Components.UI.UITextComponent>())
                     {
                         entity.AddComponent<Engine.Components.UI.UITextComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     if (ImGui.MenuItem("UI Image") && !entity.HasComponent<Engine.Components.UI.UIImageComponent>())
                     {
                         entity.AddComponent<Engine.Components.UI.UIImageComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     if (ImGui.MenuItem("UI Button") && !entity.HasComponent<Engine.Components.UI.UIButtonComponent>())
                     {
                         entity.AddComponent<Engine.Components.UI.UIButtonComponent>();
+                        InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
                     ImGui.EndMenu();
@@ -1027,6 +1017,7 @@ namespace Editor.Panels
                             if (ImGui.MenuItem(t.Name))
                             {
                                 host.AddScriptToEntity(entity, t);
+                                InvalidateComponentCache();
                                 ImGui.CloseCurrentPopup();
                             }
                         }

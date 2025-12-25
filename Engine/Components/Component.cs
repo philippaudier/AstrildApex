@@ -69,14 +69,5 @@ namespace Engine.Components
         /// Called when the component is being destroyed (removed from entity or scene unload)
         /// </summary>
         public virtual void OnDestroy() { }
-
-        // ---- Collision/Trigger Callbacks (Unity-like, no-op by default) ----
-        // NOTE: Old collision system removed - these are kept for backward compatibility
-        public virtual void OnCollisionEnter(Engine.Physics.Collision collision) { }
-        public virtual void OnCollisionStay(Engine.Physics.Collision collision) { }
-        public virtual void OnCollisionExit(Engine.Physics.Collision collision) { }
-        public virtual void OnTriggerEnter(Engine.Physics.Collision collision) { }
-        public virtual void OnTriggerStay(Engine.Physics.Collision collision) { }
-        public virtual void OnTriggerExit(Engine.Physics.Collision collision) { }
     }
 }

@@ -4,6 +4,16 @@ using Engine.Scene;
 namespace Engine.Components
 {
     /// <summary>
+    /// Face culling mode for mesh rendering
+    /// </summary>
+    public enum CullingMode
+    {
+        Back = 0,   // Cull back faces (default, most common)
+        Front = 1,  // Cull front faces (for inside-out geometry)
+        None = 2    // No culling (render both sides)
+    }
+
+    /// <summary>
     /// MeshRenderer component - handles mesh rendering and material assignment
     /// </summary>
     public sealed class MeshRendererComponent : Component
@@ -27,6 +37,12 @@ namespace Engine.Components
 
         [Engine.Serialization.Serializable("materialGuid")]
         public Guid? MaterialGuid { get; set; } = null;
+
+        /// <summary>
+        /// Face culling mode - determines which faces are culled during rendering
+        /// </summary>
+        [Engine.Serialization.Serializable("cullingMode")]
+        public CullingMode Culling { get; set; } = CullingMode.Back;
         
         public override void OnAttached()
         {

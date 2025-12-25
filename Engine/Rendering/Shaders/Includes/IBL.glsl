@@ -22,9 +22,8 @@ vec3 sampleIrradiance(vec3 N)
     // Sample at LOD 0 directly using texture() or textureLod(..., 0.0)
     // The irradiance map is already blurred/convolved for diffuse lighting
 
-    // FIX: Flip X coordinate to match skybox orientation with scene lighting
-    vec3 correctedN = vec3(-N.x, N.y, N.z);
-    vec3 irr = texture(u_IrradianceMap, correctedN).rgb;
+    // Sample directly without X-flip - let the cubemap orientation match the scene
+    vec3 irr = texture(u_IrradianceMap, N).rgb;
 
     // Apply environment tint/exposure from Global UBO so editor sky tint/exposure affect IBL
     irr *= uSkyboxTint * uSkyboxExposure;
@@ -50,10 +49,9 @@ vec3 samplePrefilteredEnv(vec3 R, float roughness)
 
     float mipHigh = min(mipFloor + 1.0, maxMapLod);
 
-    // FIX: Flip X coordinate to match skybox orientation with scene lighting
-    vec3 correctedR = vec3(-R.x, R.y, R.z);
-    vec3 preLo = textureLod(u_PrefilteredEnvMap, correctedR, mipFloor).rgb;
-    vec3 preHi = textureLod(u_PrefilteredEnvMap, correctedR, mipHigh).rgb;
+    // Sample directly without X-flip - let the cubemap orientation match the scene
+    vec3 preLo = textureLod(u_PrefilteredEnvMap, R, mipFloor).rgb;
+    vec3 preHi = textureLod(u_PrefilteredEnvMap, R, mipHigh).rgb;
 
     vec3 pre = mix(preLo, preHi, mipFrac);
 
@@ -105,7 +103,7 @@ vec3 calculateIBL(vec3 N, vec3 V, float roughness, vec3 F0, vec3 baseColor, floa
     // Standard split-sum: specular = prefiltered * (F0 * brdf.x + brdf.y)
     vec3 specular = prefiltered * (F0 * brdf.x + brdf.y);
 
-    // CRITICAL FIX: For non-metals at high roughness, specular should fade to ZERO
+    // Gentler specular fade for non-metals to preserve reflections on rough dielectrics (like snow)
     // Calculate average F0 to detect metal vs dielectric
     float avgF0 = (F0.r + F0.g + F0.b) / 3.0;
 
@@ -115,9 +113,11 @@ vec3 calculateIBL(vec3 N, vec3 V, float roughness, vec3 F0, vec3 baseColor, floa
     // Smoothness factor: 0.0 at roughness=1, 1.0 at roughness=0
     float smoothnessFactor = 1.0 - roughness;
 
-    // For dielectrics, fade specular with roughness
-    // For metals, keep specular even at high roughness (they always reflect)
-    float specularFade = mix(smoothnessFactor, 1.0, metallicFactor);
+    // For dielectrics, use gentler fade curve (sqrt) to preserve more specular at mid-roughness
+    // This is important for materials like snow that should still reflect environment even when rough
+    // Examples: roughness 0.5 keeps ~71% specular (was 50%), roughness 0.7 keeps ~55% (was 30%)
+    // For metals, keep full specular at all roughness levels (they always reflect)
+    float specularFade = mix(pow(smoothnessFactor, 0.5), 1.0, metallicFactor);
 
     specular *= specularFade;
 

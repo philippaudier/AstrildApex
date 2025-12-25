@@ -23,7 +23,7 @@ uniform float u_PulseMaxAlpha;       // Maximum alpha during pulse
 
 // Entity ID range (defined in EntityIdRange.cs)
 const uint MIN_ENTITY_ID = 1000u;
-const uint MAX_ENTITY_ID = 10000u;
+const uint MAX_ENTITY_ID = 1000000u; // Updated to match EntityIdRange.MaxEntityId
 
 // Check if an ID is a valid entity (not a gizmo, grid, or special object)
 bool isEntityId(uint id)

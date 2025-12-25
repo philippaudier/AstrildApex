@@ -6,6 +6,8 @@ using Engine.Components;
 using Engine.Scene;
 using Editor.State;
 using Editor.Icons;
+using Editor.Themes;
+using Editor.UI;
 using Numerics = System.Numerics;
 
 namespace Editor.Panels
@@ -15,6 +17,8 @@ namespace Editor.Panels
     /// </summary>
     public static class EnvironmentPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         private static bool _showAdvanced = false;
         
         public static void Draw()
@@ -77,7 +81,7 @@ namespace Editor.Panels
             ImGui.PushItemWidth(150f);
 
             // === SKYBOX SECTION ===
-            if (ImGui.CollapsingHeader("Skybox", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Skybox", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.Indent();
                 
@@ -105,7 +109,7 @@ namespace Editor.Panels
             }
 
             // === ENVIRONMENT LIGHTING SECTION ===
-            if (ImGui.CollapsingHeader("Environment Lighting", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Environment Lighting", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.Indent();
                 
@@ -149,7 +153,7 @@ namespace Editor.Panels
             }
 
             // === AMBIENT LIGHTING SECTION ===
-            if (ImGui.CollapsingHeader("Ambient Lighting"))
+            if (ThemedImGui.CollapsingHeader("Ambient Lighting"))
             {
                 ImGui.Indent();
                 
@@ -185,64 +189,24 @@ namespace Editor.Panels
                 ImGui.Spacing();
             }
 
-            // === FOG SECTION ===
-            if (ImGui.CollapsingHeader("Fog"))
+            // === FOG SECTION - MIGRATED TO WEATHER COMPONENT ===
+            if (ThemedImGui.CollapsingHeader("Fog"))
             {
                 ImGui.Indent();
-                
-                var fogEnabled = env.FogEnabled;
-                if (ImGui.Checkbox("Enabled", ref fogEnabled))
-                {
-                    env.FogEnabled = fogEnabled;
-                    Editor.SceneManagement.SceneManager.MarkSceneAsModified();
-                }
-                
-                if (env.FogEnabled)
-                {
-                    // Fog color
-                    var fogColor = new Numerics.Vector3(env.FogColor.X, env.FogColor.Y, env.FogColor.Z);
-                    if (ImGui.ColorEdit3("Color", ref fogColor))
-                    {
-                        env.FogColor = new Vector3(fogColor.X, fogColor.Y, fogColor.Z);
-                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
-                    }
-                    
-                    // Fog mode (for future: Linear, Exponential, ExponentialSquared)
-                    ImGui.Text("Mode: Linear"); // TODO: Add fog modes
-                    
-                    // Fog start/end
-                    var fogStart = env.FogStart;
-                    if (ImGui.DragFloat("Start", ref fogStart, 0.1f, 0.0f, env.FogEnd - 0.1f))
-                    {
-                        env.FogStart = fogStart;
-                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
-                    }
-                    
-                    var fogEnd = env.FogEnd;
-                    if (ImGui.DragFloat("End", ref fogEnd, 0.1f, env.FogStart + 0.1f, 1000.0f))
-                    {
-                        env.FogEnd = fogEnd;
-                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
-                    }
-
-                    // Fog density (exponential fog control)
-                    var fogDensity = env.FogDensity;
-                    // Allow larger densities (0..5) with finer step 0.01
-                    if (ImGui.DragFloat("Density", ref fogDensity, 0.01f, 0.0f, 5.0f))
-                    {
-                        // Clamp to reasonable values
-                        fogDensity = Math.Max(0.0f, Math.Min(5.0f, fogDensity));
-                        env.FogDensity = fogDensity;
-                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
-                    }
-                }
-                
+                ImGui.TextColored(new Numerics.Vector4(1.0f, 0.6f, 0.0f, 1.0f), "⚠️ Fog settings moved to WeatherComponent");
+                ImGui.Spacing();
+                ImGui.TextWrapped("Fog is now controlled by the Weather system for better integration with weather effects.");
+                ImGui.Spacing();
+                ImGui.TextWrapped("To use fog:");
+                ImGui.BulletText("Add a WeatherComponent (Add Component → Environment → Weather)");
+                ImGui.BulletText("Enable fog in the Weather inspector");
+                ImGui.BulletText("Configure fog density, color, and distance");
                 ImGui.Unindent();
                 ImGui.Spacing();
             }
 
             // === ADVANCED SETTINGS ===
-            _showAdvanced = ImGui.CollapsingHeader("Advanced Settings");
+            _showAdvanced = ThemedImGui.CollapsingHeader("Advanced Settings");
             if (_showAdvanced)
             {
                 ImGui.Indent();

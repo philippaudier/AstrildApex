@@ -87,13 +87,25 @@ namespace Engine.Assets.Import
             meshAsset.TotalVertexCount = totalVertices;
             meshAsset.TotalTriangleCount = totalTriangles;
 
+            // Create material slots only for materials that are actually used by submeshes
+            // Find the maximum MaterialIndex used by submeshes
+            int maxMaterialIndex = -1;
+            foreach (var submesh in meshAsset.SubMeshes)
+            {
+                if (submesh.MaterialIndex > maxMaterialIndex)
+                    maxMaterialIndex = submesh.MaterialIndex;
+            }
+
             // Create material slots (will be filled by MaterialExtractor)
-            for (int i = 0; i < _scene.MaterialCount; i++)
+            // Add +1 because MaterialIndex is 0-based
+            int materialSlotCount = maxMaterialIndex + 1;
+            for (int i = 0; i < materialSlotCount; i++)
             {
                 meshAsset.MaterialGuids.Add(null);
             }
 
             Engine.Utils.DebugLogger.Log($"[MeshConverter] Converted {meshAsset.SubMeshes.Count} submesh(es): {totalVertices} vertices, {totalTriangles} triangles");
+            Engine.Utils.DebugLogger.Log($"[MeshConverter] Created {materialSlotCount} material slot(s) (max MaterialIndex = {maxMaterialIndex})");
 
             return meshAsset;
         }

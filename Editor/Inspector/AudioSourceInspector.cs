@@ -4,15 +4,20 @@ using System.Numerics;
 using ImGuiNET;
 using Engine.Audio.Components;
 using Engine.Audio.Assets;
+using Editor.UI;
+using Editor.Themes;
 using Serilog;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Inspecteur pour le composant AudioSource
+    /// Modern inspector for AudioSource component
+    /// Uses unified EditorWidgets system for consistent UX
     /// </summary>
     public static class AudioSourceInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         // Track previous playing state to avoid false clicks when buttons appear/disappear
         private static readonly Dictionary<int, bool> _previousPlayingState = new();
 
@@ -27,14 +32,14 @@ namespace Editor.Inspector
 
             string clipName = audioSource.Clip?.Name ?? "None (Audio Clip)";
 
-            // Create a button that looks like an assignment field (similar to Material field)
+            // Create a button that looks like an assignment field
             var buttonColor = audioSource.Clip != null
-                ? new Vector4(0.3f, 0.7f, 0.4f, 1.0f)  // Green for assigned clip
-                : new Vector4(0.4f, 0.4f, 0.4f, 1.0f);  // Gray for none
+                ? UI.Success  // Green for assigned clip
+                : UI.Background;  // Gray for none
 
             ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, buttonColor * 1.2f);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, buttonColor * 0.8f);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, UI.Brighten(buttonColor, 0.2f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, UI.Darken(buttonColor, 0.2f));
 
             bool clipClicked = ImGui.Button($"{clipName}##ClipField", new Vector2(-1, 24));
 
@@ -397,7 +402,7 @@ namespace Editor.Inspector
                     ImGui.PushID($"Filter_{i}");
 
                     // Header
-                    bool isOpen = ImGui.CollapsingHeader($"{filter.Type} Filter ###{i}");
+                    bool isOpen = ThemedImGui.CollapsingHeader($"{filter.Type} Filter ###{i}");
 
                     // Remove button will be shown inside the panel content so it is clickable
 

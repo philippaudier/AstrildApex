@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using ImGuiNET;
+using Editor.Themes;
 
 namespace Editor.UI;
 
@@ -41,7 +42,7 @@ public class ViewportTopRightControls
         {
                 // Camera selector overlay removed; show current camera name instead
                 ModernUIHelpers.BeginToolbarGroup();
-                ImGui.BeginChild("##CameraSelector", new Vector2(130, ModernUIHelpers.ToolbarButtonSize + 16), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
+                ImGui.BeginChild("##CameraSelector", new Vector2(130, ThemeManager.UI.ToolbarButtonSize + 16), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
                 ImGui.Text("Camera");
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(0.9f,0.9f,0.9f,1f), selectedCameraIndex == 0 ? "Main" : "Scene");
@@ -65,7 +66,7 @@ public class ViewportTopRightControls
     {
         ModernUIHelpers.BeginToolbarGroup();
 
-        ImGui.BeginChild("##ActionsGroup", new Vector2(90, ModernUIHelpers.ToolbarButtonSize + 16), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
+        ImGui.BeginChild("##ActionsGroup", new Vector2(90, ThemeManager.UI.ToolbarButtonSize + 16), ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar);
 
         // Fullscreen button
         if (ModernUIHelpers.ToolButton("[ ]", IsFullscreen, "Fullscreen", 32f))

@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.IO.Compression;
@@ -35,15 +36,15 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("terrainLayers")]
         public Engine.Assets.TerrainLayer[]? TerrainLayers { get; set; } = null;
 
-        // Water properties
-        [Engine.Serialization.SerializableAttribute("enableWater")]
-        public bool EnableWater { get; set; } = false;
+        // Water features removed: water plane is no longer managed by Terrain component
 
-        [Engine.Serialization.SerializableAttribute("waterMaterialGuid")]
-        public Guid? WaterMaterialGuid { get; set; } = null;
+        // Vegetation properties
+        [Engine.Serialization.SerializableAttribute("vegetationLayers")]
+        public Engine.Assets.VegetationLayer[]? VegetationLayers { get; set; } = null;
 
-        [Engine.Serialization.SerializableAttribute("waterHeight")]
-        public float WaterHeight { get; set; } = 0f;
+        // === WEATHER SYSTEM MOVED TO WeatherComponent ===
+        // Weather parameters are now controlled by the global WeatherComponent
+        // See Engine.Components.WeatherComponent and Engine.Systems.WeatherSystem
 
         // Runtime fields
         private float[,]? _heightData; // [x,z] heightmap data normalized [0,1]
@@ -56,8 +57,23 @@ namespace Engine.Components
         public int IndexCount => _indexCount;
         public bool HasMesh() => _meshGenerated && _vao != 0 && _indexCount > 0;
 
-        // Water plane rendering
-        private int _waterVao = 0, _waterVbo = 0, _waterEbo = 0;
+        // (Removed) Water plane rendering resources
+
+        // Vegetation rendering
+        private System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? _vegetationInstances = null;
+        public System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? VegetationInstances => _vegetationInstances;
+
+        // Event fired when vegetation is regenerated
+        public event Action? VegetationRegenerated;
+
+        /// <summary>
+        /// Notify listeners that vegetation data has changed (e.g., inspector edits).
+        /// This triggers batch updates in the renderer without regenerating geometry.
+        /// </summary>
+        public void NotifyVegetationChanged()
+        {
+            VegetationRegenerated?.Invoke();
+        }
 
         public Terrain()
         {
@@ -135,31 +151,7 @@ namespace Engine.Components
 
                 Console.WriteLine($"[Terrain] Terrain generated successfully: {MeshResolution}x{MeshResolution} vertices, {_indexCount} indices");
 
-                // Generate water plane if enabled
-                GenerateWaterPlane();
-
-                // OBSOLETE: HeightfieldCollider removed - old collision system
-                // TODO: Re-implement terrain collision using new physics system
-                /*
-                // Notify HeightfieldCollider to update its bounds
-                if (Entity != null)
-                {
-                    var heightfieldCollider = Entity.GetComponent<HeightfieldCollider>();
-                    if (heightfieldCollider != null)
-                    {
-                        // First sync resolution/spacing so the collider uses the same mesh resolution
-                        try
-                        {
-                            heightfieldCollider.SyncResolutionWithTerrain(this);
-                        }
-                        catch { }
-
-                        // Then update bounds (broadphase)
-                        heightfieldCollider.UpdateWorldBounds();
-                        Console.WriteLine("[Terrain] Updated HeightfieldCollider bounds and resolution after terrain regeneration");
-                    }
-                }
-                */
+                // Water plane generation removed
             }
             catch (Exception ex)
             {
@@ -739,8 +731,9 @@ namespace Engine.Components
                     var tangentX = new System.Numerics.Vector3(1.0f, dHeightDx, 0.0f);
                     var tangentZ = new System.Numerics.Vector3(0.0f, dHeightDz, 1.0f);
 
-                    // Normal is cross product: tangentZ × tangentX (reversed order to point upward)
-                    // This ensures correct orientation (pointing upward for CCW winding)
+                    // Normal is cross product: tangentZ × tangentX 
+                    // This creates upward-pointing normals for proper lighting (Y-up right-handed system)
+                    // For terrain with X-right, Y-up, Z-forward: Cross(tangentZ, tangentX) points upward
                     var normal = System.Numerics.Vector3.Cross(tangentZ, tangentX);
                     normal = System.Numerics.Vector3.Normalize(normal);
 
@@ -874,103 +867,7 @@ namespace Engine.Components
             }
         }
 
-        /// <summary>
-        /// Update or regenerate water plane (call when water settings change).
-        /// </summary>
-        public void UpdateWaterPlane()
-        {
-            GenerateWaterPlane();
-        }
-
-        /// <summary>
-        /// Generate water plane mesh (simple quad at water height).
-        /// </summary>
-        private void GenerateWaterPlane()
-        {
-            // Clear existing water plane
-            if (_waterVao != 0) { GL.DeleteVertexArray(_waterVao); _waterVao = 0; }
-            if (_waterVbo != 0) { GL.DeleteBuffer(_waterVbo); _waterVbo = 0; }
-            if (_waterEbo != 0) { GL.DeleteBuffer(_waterEbo); _waterEbo = 0; }
-
-            if (!EnableWater) return;
-
-            // Create a simple quad covering the terrain area at water height
-            float halfWidth = TerrainWidth * 0.5f;
-            float halfLength = TerrainLength * 0.5f;
-            float y = WaterHeight;
-
-            // Vertices: position(3) + normal(3) + uv(2) = 8 floats per vertex
-            float[] vertices = new float[]
-            {
-                // Position                      // Normal        // UV
-                -halfWidth, y, -halfLength,      0f, 1f, 0f,      0f, 0f,  // Bottom-left
-                 halfWidth, y, -halfLength,      0f, 1f, 0f,      1f, 0f,  // Bottom-right
-                 halfWidth, y,  halfLength,      0f, 1f, 0f,      1f, 1f,  // Top-right
-                -halfWidth, y,  halfLength,      0f, 1f, 0f,      0f, 1f,  // Top-left
-            };
-
-            uint[] indices = new uint[]
-            {
-                0, 1, 2,  // First triangle
-                2, 3, 0   // Second triangle
-            };
-
-            // Upload to GPU
-            _waterVao = GL.GenVertexArray();
-            _waterVbo = GL.GenBuffer();
-            _waterEbo = GL.GenBuffer();
-
-            GL.BindVertexArray(_waterVao);
-
-            GL.BindBuffer(BufferTarget.ArrayBuffer, _waterVbo);
-            GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
-
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _waterEbo);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
-
-            // Position attribute (location 0)
-            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), 0);
-            GL.EnableVertexAttribArray(0);
-
-            // Normal attribute (location 1)
-            GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), 3 * sizeof(float));
-            GL.EnableVertexAttribArray(1);
-
-            // UV attribute (location 2)
-            GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, 8 * sizeof(float), 6 * sizeof(float));
-            GL.EnableVertexAttribArray(2);
-
-            GL.BindVertexArray(0);
-
-            Console.WriteLine($"[Terrain] Water plane generated at height {WaterHeight}");
-        }
-
-        /// <summary>
-        /// Render the water plane if enabled.
-        /// </summary>
-        public void RenderWater()
-        {
-            if (!EnableWater || _waterVao == 0) return;
-
-            GL.Enable(EnableCap.Blend);
-            GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-
-            // Water needs double-sided rendering since it's a flat plane
-            // Temporarily disable culling for water only
-            bool cullingWasEnabled = GL.IsEnabled(EnableCap.CullFace);
-            if (cullingWasEnabled)
-                GL.Disable(EnableCap.CullFace);
-
-            GL.BindVertexArray(_waterVao);
-            GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, 0);
-            GL.BindVertexArray(0);
-
-            // Restore culling state
-            if (cullingWasEnabled)
-                GL.Enable(EnableCap.CullFace);
-
-            GL.Disable(EnableCap.Blend);
-        }
+        // Water plane support removed from Terrain component.
 
         /// <summary>
         /// Clear terrain and release GPU resources.
@@ -980,9 +877,7 @@ namespace Engine.Components
             if (_vao != 0) { GL.DeleteVertexArray(_vao); _vao = 0; }
             if (_vbo != 0) { GL.DeleteBuffer(_vbo); _vbo = 0; }
             if (_ebo != 0) { GL.DeleteBuffer(_ebo); _ebo = 0; }
-            if (_waterVao != 0) { GL.DeleteVertexArray(_waterVao); _waterVao = 0; }
-            if (_waterVbo != 0) { GL.DeleteBuffer(_waterVbo); _waterVbo = 0; }
-            if (_waterEbo != 0) { GL.DeleteBuffer(_waterEbo); _waterEbo = 0; }
+            // Water GPU resources removed
             _heightData = null;
             _meshGenerated = false;
             _indexCount = 0;
@@ -1028,6 +923,680 @@ namespace Engine.Components
 
             // Return world-space height (local height + terrain Y position)
             return terrainWorldY + SampleHeightBilinear(u, v) * TerrainHeight;
+        }
+
+        // === VEGETATION GENERATION ===
+
+        /// <summary>
+        /// Generate vegetation instances based on vegetation layers.
+        /// Uses Poisson disk sampling for natural distribution.
+        /// Creates actual entities with MeshRendererComponent for each vegetation instance.
+        /// </summary>
+        public void GenerateVegetation(Engine.Scene.Scene scene)
+        {
+            if (scene == null || VegetationLayers == null || VegetationLayers.Length == 0 || _heightData == null)
+            {
+                return;
+            }
+
+            try
+            {
+                try { Console.WriteLine($"[Terrain] GenerateVegetation START: Terrain={Entity?.Name ?? "(unnamed)"}, layers={VegetationLayers.Length}"); } catch { }
+                // Initialize vegetation instances dictionary (kept for compatibility)
+                _vegetationInstances = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
+
+                // Remove old vegetation entities
+                RemoveOldVegetationEntities(scene);
+
+                // Generate instances for each layer
+                for (int layerIndex = 0; layerIndex < VegetationLayers.Length; layerIndex++)
+                {
+                    var layer = VegetationLayers[layerIndex];
+                    // Skip if layer is disabled or has neither prefab nor model assigned
+                    if (!layer.Enabled || (!layer.PrefabGuid.HasValue && !layer.ModelGuid.HasValue)) continue;
+
+                    // Find or create layer parent entity
+                    string layerParentName = $"{Entity?.Name ?? "Terrain"}_Vegetation_{layer.Name}";
+                    var layerParent = Entity?.Children.FirstOrDefault(e => e.Name == layerParentName);
+
+                    if (layerParent != null)
+                    {
+                        // Reuse existing layer - clear its children
+                        var entitiesToRemove = new System.Collections.Generic.List<Engine.Scene.Entity>();
+                        var childrenToRemove = layerParent.Children.ToList();
+                        foreach (var child in childrenToRemove)
+                        {
+                            CollectDescendantsForRemoval(child, entitiesToRemove);
+                        }
+
+                        // Remove collected entities safely
+                        foreach (var entity in entitiesToRemove)
+                        {
+                            entity.Active = false;
+                            entity.SetParent(null, keepWorld: false);
+                            scene.Entities.Remove(entity);
+                            scene.RecycleEntityId(entity.Id);
+                        }
+                    }
+                    else
+                    {
+                        // Create new layer parent
+                        layerParent = new Engine.Scene.Entity
+                        {
+                            Id = scene.GetNextEntityId(),
+                            Name = layerParentName,
+                            Guid = Guid.NewGuid(),
+                            Active = true
+                        };
+                        layerParent.SetParent(Entity, keepWorld: false);
+                        scene.Entities.Add(layerParent);
+                    }
+
+                    var instances = GenerateLayerInstances(layer);
+                    _vegetationInstances[layerIndex] = instances;
+
+                    try { Console.WriteLine($"[Terrain] Layer {layerIndex} ('{layer.Name}') generated {instances?.Count ?? 0} instance(s)"); } catch { }
+
+                    // Create entities for each instance
+                    CreateVegetationEntities(scene, layer, instances, layerParent);
+                }
+                
+                // Notify listeners that vegetation has been regenerated
+                try { VegetationRegenerated?.Invoke(); } catch { }
+                try { Console.WriteLine($"[Terrain] VegetationRegenerated invoked for Terrain={Entity?.Name ?? "(unnamed)"}"); } catch { }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Terrain] ERROR during vegetation generation: {ex.Message}");
+                Console.WriteLine($"[Terrain] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Remove old vegetation entities from previous generation.
+        /// Keeps the layer parent entities, only removes the tree instances (children).
+        /// </summary>
+        private void RemoveOldVegetationEntities(Engine.Scene.Scene scene)
+        {
+            if (scene == null || Entity == null) return;
+
+            string searchPattern = $"{Entity.Name}_Vegetation";
+
+            // Find vegetation layer parents
+            var vegetationLayers = Entity.Children.Where(e => e.Name.StartsWith(searchPattern)).ToList();
+            if (vegetationLayers.Count == 0) {
+                try { Console.WriteLine($"[Terrain] RemoveOldVegetationEntities: no vegetation layer parents found for '{Entity.Name}'"); } catch { }
+                return;
+            }
+
+            // Deactivate and queue for removal (thread-safe approach)
+            var entitiesToRemove = new System.Collections.Generic.List<Engine.Scene.Entity>();
+
+            foreach (var layerParent in vegetationLayers)
+            {
+                var children = layerParent.Children.ToList();
+                foreach (var child in children)
+                {
+                    CollectDescendantsForRemoval(child, entitiesToRemove);
+                }
+            }
+
+            // Now safely remove all collected entities
+            foreach (var entity in entitiesToRemove)
+            {
+                entity.Active = false;
+                entity.SetParent(null, keepWorld: false);
+                scene.Entities.Remove(entity);
+                scene.RecycleEntityId(entity.Id);
+            }
+            try { Console.WriteLine($"[Terrain] RemoveOldVegetationEntities: removed {entitiesToRemove.Count} entities from '{Entity.Name}'"); } catch { }
+        }
+
+        /// <summary>
+        /// Recursively collect entity and its descendants into a list for batch removal.
+        /// </summary>
+        private void CollectDescendantsForRemoval(Engine.Scene.Entity entity, System.Collections.Generic.List<Engine.Scene.Entity> list)
+        {
+            if (entity == null || entity == Entity) return;
+            if (entity.HasComponent<Terrain>()) return;
+
+            // Collect children first (depth-first)
+            var children = entity.Children.ToList();
+            foreach (var child in children)
+            {
+                CollectDescendantsForRemoval(child, list);
+            }
+
+            // Add this entity to removal list
+            list.Add(entity);
+        }
+
+
+        /// <summary>
+        /// Create actual entities for vegetation instances.
+        /// </summary>
+        private void CreateVegetationEntities(Engine.Scene.Scene scene, Engine.Assets.VegetationLayer layer, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>? instances, Engine.Scene.Entity parent)
+        {
+            if (scene == null) return;
+            // Guard: instances may be null in some call paths; treat as no instances to create
+            if (instances == null || instances.Count == 0) return;
+            
+            // Check if using prefab or model
+            bool usingPrefab = layer.PrefabGuid.HasValue;
+            bool usingModel = layer.ModelGuid.HasValue;
+            
+            if (!usingPrefab && !usingModel) return;
+
+            // If using prefab, load it
+            Engine.Assets.PrefabAsset? prefabAsset = null;
+            if (usingPrefab)
+            {
+                try
+                {
+                    prefabAsset = Engine.Assets.AssetDatabase.LoadPrefab(layer.PrefabGuid!.Value);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Terrain] Failed to load prefab {layer.PrefabGuid}: {ex.Message}");
+                    return;
+                }
+            }
+
+            // If using model, load the mesh asset to get material info
+            Engine.Assets.MeshAsset? meshAsset = null;
+            if (usingModel)
+            {
+                meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(layer.ModelGuid!.Value);
+                if (meshAsset == null) return;
+            }
+
+            // If using prefab, instantiate prefab for each instance
+            if (usingPrefab && prefabAsset != null && prefabAsset.RootEntity != null)
+            {
+                for (int i = 0; i < instances.Count; i++)
+                {
+                    var matrix = instances[i];
+
+                    // Extract position, rotation, scale from matrix
+                    var position = new OpenTK.Mathematics.Vector3(matrix.M41, matrix.M42, matrix.M43);
+
+                    // Extract scale from matrix columns
+                    var scaleX = new OpenTK.Mathematics.Vector3(matrix.M11, matrix.M12, matrix.M13).Length;
+                    var scaleY = new OpenTK.Mathematics.Vector3(matrix.M21, matrix.M22, matrix.M23).Length;
+                    var scaleZ = new OpenTK.Mathematics.Vector3(matrix.M31, matrix.M32, matrix.M33).Length;
+                    var scale = new OpenTK.Mathematics.Vector3(scaleX, scaleY, scaleZ);
+
+                    // Extract rotation (normalize the matrix columns to remove scale)
+                    var rotMatrix = new OpenTK.Mathematics.Matrix3(
+                        matrix.M11 / scaleX, matrix.M12 / scaleX, matrix.M13 / scaleX,
+                        matrix.M21 / scaleY, matrix.M22 / scaleY, matrix.M23 / scaleY,
+                        matrix.M31 / scaleZ, matrix.M32 / scaleZ, matrix.M33 / scaleZ
+                    );
+                    var rotation = OpenTK.Mathematics.Quaternion.FromMatrix(rotMatrix);
+
+                    // Instantiate prefab
+                    try
+                    {
+                        var prefabInstance = InstantiatePrefabData(prefabAsset.RootEntity, scene, parent);
+                        if (prefabInstance != null)
+                        {
+                            prefabInstance.Name = $"{layer.Name}_{i}";
+                            prefabInstance.Transform.Position = position;
+                            prefabInstance.Transform.Rotation = rotation;
+                            prefabInstance.Transform.Scale = scale;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Terrain] Failed to instantiate prefab instance {i}: {ex.Message}");
+                    }
+                }
+                return; // Done with prefab instantiation
+            }
+
+            // Otherwise, use legacy model-based system
+            if (!usingModel || meshAsset == null) return;
+
+            // Determine which submeshes to render
+            var submeshesToRender = new System.Collections.Generic.List<int>();
+            if (layer.SubmeshIndex == -1)
+            {
+                // Render all submeshes
+                int submeshCount = meshAsset.MaterialGuids?.Count ?? 0;
+                for (int s = 0; s < submeshCount; s++)
+                {
+                    submeshesToRender.Add(s);
+                }
+                if (submeshesToRender.Count == 0)
+                {
+                    submeshesToRender.Add(0); // Fallback
+                }
+            }
+            else
+            {
+                // Render specific submesh
+                submeshesToRender.Add(layer.SubmeshIndex);
+            }
+
+            // Create entities - no arbitrary limit, let the user control density
+            // Performance is managed by the density slider itself
+            int createdInstances = 0;
+            int totalEntitiesCreated = 0;
+
+            for (int i = 0; i < instances.Count; i++)
+            {
+                var matrix = instances[i];
+
+                // Extract position, rotation, scale from matrix
+                var position = new OpenTK.Mathematics.Vector3(matrix.M41, matrix.M42, matrix.M43);
+
+                // Extract scale from matrix columns
+                var scaleX = new OpenTK.Mathematics.Vector3(matrix.M11, matrix.M12, matrix.M13).Length;
+                var scaleY = new OpenTK.Mathematics.Vector3(matrix.M21, matrix.M22, matrix.M23).Length;
+                var scaleZ = new OpenTK.Mathematics.Vector3(matrix.M31, matrix.M32, matrix.M33).Length;
+                var scale = new OpenTK.Mathematics.Vector3(scaleX, scaleY, scaleZ);
+
+                // Extract rotation (normalize the matrix columns to remove scale)
+                var rotMatrix = new OpenTK.Mathematics.Matrix3(
+                    matrix.M11 / scaleX, matrix.M12 / scaleX, matrix.M13 / scaleX,
+                    matrix.M21 / scaleY, matrix.M22 / scaleY, matrix.M23 / scaleY,
+                    matrix.M31 / scaleZ, matrix.M32 / scaleZ, matrix.M33 / scaleZ
+                );
+                var rotation = OpenTK.Mathematics.Quaternion.FromMatrix(rotMatrix);
+
+                // OPTIMIZED: Create entities directly without intermediate parent
+                // This saves 1 entity per tree instance
+                foreach (var submeshIndex in submeshesToRender)
+                {
+                    // Get material GUID for this submesh
+                    Guid materialGuid = Guid.Empty;
+                    if (meshAsset.MaterialGuids != null && submeshIndex < meshAsset.MaterialGuids.Count)
+                    {
+                        materialGuid = meshAsset.MaterialGuids[submeshIndex] ?? Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial();
+                    }
+                    if (materialGuid == Guid.Empty)
+                    {
+                        materialGuid = Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial();
+                    }
+
+                    var vegEntity = new Engine.Scene.Entity
+                    {
+                        Id = scene.GetNextEntityId(),
+                        Name = submeshesToRender.Count > 1 ? $"{layer.Name}_{i}_SM{submeshIndex}" : $"{layer.Name}_{i}",
+                        Guid = Guid.NewGuid(),
+                        Active = true
+                    };
+                    vegEntity.SetParent(parent, keepWorld: false);
+                    vegEntity.Transform.Position = position;
+                    vegEntity.Transform.Rotation = rotation;
+                    vegEntity.Transform.Scale = scale;
+                    scene.Entities.Add(vegEntity);
+
+                    // Add MeshRenderer component
+                    var meshRenderer = vegEntity.AddComponent<MeshRendererComponent>();
+                    meshRenderer.CustomMeshGuid = layer.ModelGuid!.Value;
+                    meshRenderer.SubmeshIndex = submeshIndex;
+                    meshRenderer.MaterialGuid = materialGuid;
+
+                    // Apply culling from material
+                    meshRenderer.Culling = GetCullingModeFromMaterial(materialGuid);
+
+                    totalEntitiesCreated++;
+                }
+
+                createdInstances++;
+            }
+            try { Console.WriteLine($"[Terrain] CreateVegetationEntities: layer='{layer.Name}', createdInstances={createdInstances}, totalEntitiesCreated={totalEntitiesCreated}"); } catch { }
+        }
+
+        /// <summary>
+        /// Generate instances for a single vegetation layer.
+        /// </summary>
+        private System.Collections.Generic.List<OpenTK.Mathematics.Matrix4> GenerateLayerInstances(Engine.Assets.VegetationLayer layer)
+        {
+            var instances = new System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>();
+            var random = new Random(layer.Seed);
+
+            // Calculate number of attempts based on density
+            // Density is "instances per 100x100 area"
+            float terrainArea = TerrainWidth * TerrainLength;
+            float referenceArea = 100f * 100f; // 100x100 reference area
+            int targetInstances = (int)((terrainArea / referenceArea) * layer.Density);
+
+            // Scale limits based on density - no hard caps!
+            // Estimate rejection rate at ~50%, so multiply by 3x for safety
+            int numAttempts = targetInstances * 3;
+            int maxInstances = Math.Max(targetInstances, 10000); // Allow up to target or 10k minimum
+
+            // Get terrain transform
+            var terrainPos = Entity?.Transform?.Position ?? OpenTK.Mathematics.Vector3.Zero;
+            var terrainRot = Entity?.Transform?.Rotation ?? OpenTK.Mathematics.Quaternion.Identity;
+
+            // Poisson disk sampling with rejection
+            for (int i = 0; i < numAttempts; i++)
+            {
+                // Random position on terrain (in local space)
+                float localX = ((float)random.NextDouble() - 0.5f) * TerrainWidth;
+                float localZ = ((float)random.NextDouble() - 0.5f) * TerrainLength;
+
+                // Convert to UV coordinates for heightmap sampling
+                float u = (localX + TerrainWidth * 0.5f) / TerrainWidth;
+                float v = (localZ + TerrainLength * 0.5f) / TerrainLength;
+
+                // Sample height and normal
+                float normalizedHeight = SampleHeightBilinear(u, v);
+                var normal = SampleNormalBilinear(u, v);
+
+                // Calculate slope angle (angle between normal and up vector)
+                float slopeAngle = (float)(Math.Acos(Math.Clamp(normal.Y, -1f, 1f)) * (180.0 / Math.PI));
+
+                // Check if we've reached the maximum number of instances
+                if (instances.Count >= maxInstances) break;
+
+                // Apply filters
+                if (!layer.PassesHeightFilter(normalizedHeight)) continue;
+                if (!layer.PassesSlopeFilter(slopeAngle)) continue;
+
+                // Random scale
+                float scale = layer.MinScale + (float)random.NextDouble() * (layer.MaxScale - layer.MinScale);
+
+                // Random rotation
+                float rotationY = layer.RandomRotation ? (float)(random.NextDouble() * Math.PI * 2.0) : 0f;
+
+                // Calculate world position
+                float worldY = normalizedHeight * TerrainHeight;
+                var localPosition = new OpenTK.Mathematics.Vector3(localX, worldY, localZ);
+
+                // Transform to world space
+                var worldPosition = terrainPos + OpenTK.Mathematics.Vector3.Transform(localPosition, terrainRot);
+
+                // Build transform matrix
+                var rotation = OpenTK.Mathematics.Quaternion.FromAxisAngle(OpenTK.Mathematics.Vector3.UnitY, rotationY);
+
+                // Align to normal if requested
+                if (layer.AlignToNormal)
+                {
+                    var up = OpenTK.Mathematics.Vector3.UnitY;
+                    var normalOTK = new OpenTK.Mathematics.Vector3(normal.X, normal.Y, normal.Z);
+                    var alignmentRotation = CalculateAlignmentRotation(up, normalOTK);
+
+                    // Apply alignment strength (0-100%)
+                    float strength = Math.Clamp(layer.AlignmentStrength / 100f, 0f, 1f);
+                    if (strength < 1f)
+                    {
+                        // Lerp between identity (no alignment) and full alignment
+                        alignmentRotation = OpenTK.Mathematics.Quaternion.Slerp(
+                            OpenTK.Mathematics.Quaternion.Identity,
+                            alignmentRotation,
+                            strength);
+                    }
+
+                    rotation = alignmentRotation * rotation;
+                }
+
+                // Build transform matrix using OpenTK native functions
+                // This ensures correct layout for both row-major and column-major conventions
+                var scaleMatrix = OpenTK.Mathematics.Matrix4.CreateScale(scale);
+                var rotationMatrix = OpenTK.Mathematics.Matrix4.CreateFromQuaternion(rotation);
+                var translationMatrix = OpenTK.Mathematics.Matrix4.CreateTranslation(worldPosition);
+
+                // Combine: Scale * Rotation * Translation (standard TRS order)
+                var matrix = scaleMatrix * rotationMatrix * translationMatrix;
+
+                instances.Add(matrix);
+            }
+
+            try { Console.WriteLine($"[Terrain] GenerateLayerInstances: layer={layer?.Name ?? "(unnamed)"} produced {instances.Count} instance(s) (targetAttempts={numAttempts})"); } catch { }
+            return instances;
+        }
+
+        /// <summary>
+        /// Calculate rotation to align one vector to another.
+        /// </summary>
+        private OpenTK.Mathematics.Quaternion CalculateAlignmentRotation(OpenTK.Mathematics.Vector3 from, OpenTK.Mathematics.Vector3 to)
+        {
+            from = OpenTK.Mathematics.Vector3.Normalize(from);
+            to = OpenTK.Mathematics.Vector3.Normalize(to);
+
+            float dot = OpenTK.Mathematics.Vector3.Dot(from, to);
+
+            // Vectors are parallel
+            if (dot >= 0.999999f)
+            {
+                return OpenTK.Mathematics.Quaternion.Identity;
+            }
+
+            // Vectors are opposite
+            if (dot <= -0.999999f)
+            {
+                var axis = OpenTK.Mathematics.Vector3.Cross(OpenTK.Mathematics.Vector3.UnitX, from);
+                if (axis.LengthSquared < 0.000001f)
+                {
+                    axis = OpenTK.Mathematics.Vector3.Cross(OpenTK.Mathematics.Vector3.UnitZ, from);
+                }
+                axis = OpenTK.Mathematics.Vector3.Normalize(axis);
+                return OpenTK.Mathematics.Quaternion.FromAxisAngle(axis, (float)Math.PI);
+            }
+
+            // General case
+            var cross = OpenTK.Mathematics.Vector3.Cross(from, to);
+            float s = (float)Math.Sqrt((1 + dot) * 2);
+            float invS = 1f / s;
+
+            return new OpenTK.Mathematics.Quaternion(
+                cross.X * invS,
+                cross.Y * invS,
+                cross.Z * invS,
+                s * 0.5f
+            );
+        }
+
+        /// <summary>
+        /// Sample terrain normal at UV coordinates (bilinear interpolation).
+        /// </summary>
+        private OpenTK.Mathematics.Vector3 SampleNormalBilinear(float u, float v)
+        {
+            if (_heightData == null) return OpenTK.Mathematics.Vector3.UnitY;
+
+            int width = _heightData.GetLength(0);
+            int height = _heightData.GetLength(1);
+
+            // Convert UV to heightmap coordinates
+            float fx = u * (width - 1);
+            float fz = v * (height - 1);
+
+            int x0 = (int)fx;
+            int z0 = (int)fz;
+            int x1 = Math.Min(x0 + 1, width - 1);
+            int z1 = Math.Min(z0 + 1, height - 1);
+
+            // Calculate normal using finite differences
+            float hL = (x0 > 0) ? _heightData[x0 - 1, z0] : _heightData[x0, z0];
+            float hR = (x1 < width - 1) ? _heightData[x1 + 1, z0] : _heightData[x1, z0];
+            float hD = (z0 > 0) ? _heightData[x0, z0 - 1] : _heightData[x0, z0];
+            float hU = (z1 < height - 1) ? _heightData[x0, z1 + 1] : _heightData[x0, z1];
+
+            float dx = hR - hL;
+            float dz = hU - hD;
+
+            var normal = new OpenTK.Mathematics.Vector3(-dx * TerrainHeight, 2f, -dz * TerrainHeight);
+            return OpenTK.Mathematics.Vector3.Normalize(normal);
+        }
+
+        /// <summary>
+        /// Clear vegetation by regenerating with empty layers.
+        /// This is safe and doesn't cause viewport corruption.
+        /// </summary>
+        public void ClearVegetation(Engine.Scene.Scene scene)
+        {
+            if (scene == null || Entity == null) return;
+
+            // Clear the vegetation instances data
+            _vegetationInstances?.Clear();
+            _vegetationInstances = null;
+
+            // Remove old vegetation entities using the same safe method as regeneration
+            RemoveOldVegetationEntities(scene);
+
+            // Notify that vegetation has been cleared
+            VegetationRegenerated?.Invoke();
+        }
+
+        /// <summary>
+        /// Recursively deactivate entity and all its descendants.
+        /// Safe to call from any thread - doesn't modify scene.Entities list.
+        /// </summary>
+        private void DeactivateDescendants(Engine.Scene.Entity entity)
+        {
+            if (entity == null) return;
+
+            // Deactivate this entity
+            entity.Active = false;
+
+            // Deactivate all children
+            var children = entity.Children.ToList();
+            foreach (var child in children)
+            {
+                DeactivateDescendants(child);
+            }
+        }
+
+        /// <summary>
+        /// Instantiate a prefab data structure into the scene
+        /// </summary>
+        private Engine.Scene.Entity? InstantiatePrefabData(Engine.Assets.PrefabEntityData prefabData, Engine.Scene.Scene scene, Engine.Scene.Entity? parent = null)
+        {
+            if (prefabData == null || scene == null) return null;
+
+            try
+            {
+                // Create entity
+                var entity = new Engine.Scene.Entity
+                {
+                    Id = scene.GetNextEntityId(),
+                    Guid = System.Guid.NewGuid(),
+                    Active = true
+                };
+                
+                entity.Name = prefabData.Name;
+
+                // Set local transform
+                entity.Transform.Position = new OpenTK.Mathematics.Vector3(
+                    prefabData.LocalPosition[0],
+                    prefabData.LocalPosition[1],
+                    prefabData.LocalPosition[2]
+                );
+
+                entity.Transform.Rotation = OpenTK.Mathematics.Quaternion.FromEulerAngles(
+                    OpenTK.Mathematics.MathHelper.DegreesToRadians(prefabData.LocalRotation[0]),
+                    OpenTK.Mathematics.MathHelper.DegreesToRadians(prefabData.LocalRotation[1]),
+                    OpenTK.Mathematics.MathHelper.DegreesToRadians(prefabData.LocalRotation[2])
+                );
+
+                entity.Transform.Scale = new OpenTK.Mathematics.Vector3(
+                    prefabData.LocalScale[0],
+                    prefabData.LocalScale[1],
+                    prefabData.LocalScale[2]
+                );
+
+                // Deserialize and attach components
+                foreach (var (componentType, componentData) in prefabData.Components)
+                {
+                    try
+                    {
+                        // Try to find the type in Engine assembly first
+                        var type = System.Type.GetType($"Engine.Components.{componentType}, Engine");
+                        
+                        // If not found, try Audio components
+                        if (type == null)
+                            type = System.Type.GetType($"Engine.Audio.Components.{componentType}, Engine");
+                        
+                        if (type == null)
+                        {
+                            Console.WriteLine($"[Terrain] Unknown component type: {componentType}");
+                            continue;
+                        }
+                        
+                        // Create component instance using reflection
+                        var addComponentMethod = typeof(Engine.Scene.Entity).GetMethod("AddComponent", new System.Type[] { })?.MakeGenericMethod(type);
+                        if (addComponentMethod == null)
+                        {
+                            Console.WriteLine($"[Terrain] Failed to find AddComponent method for {componentType}");
+                            continue;
+                        }
+                        
+                        var component = addComponentMethod.Invoke(entity, null) as Engine.Components.Component;
+                        if (component == null)
+                        {
+                            Console.WriteLine($"[Terrain] Failed to create component instance for {componentType}");
+                            continue;
+                        }
+                        
+                        // Deserialize component data using ComponentSerializer
+                        var dataDict = System.Text.Json.JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>>(componentData.GetRawText());
+                        if (dataDict != null)
+                        {
+                            Engine.Serialization.ComponentSerializer.Deserialize(component, dataDict);
+                            
+                            // Resolve references (critical for MeshRenderer)
+                            try
+                            {
+                                Engine.Serialization.ComponentSerializer.ResolveReferences(component, dataDict, scene);
+                            }
+                            catch (System.Exception ex)
+                            {
+                                Console.WriteLine($"[Terrain] Failed to resolve references for {componentType}: {ex.Message}");
+                            }
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Console.WriteLine($"[Terrain] Failed to deserialize component {componentType}: {ex.Message}");
+                    }
+                }
+
+                // Add to scene BEFORE setting parent (so children can reference it)
+                scene.Entities.Add(entity);
+                
+                // Set parent after adding to scene
+                if (parent != null)
+                {
+                    entity.SetParent(parent, keepWorld: false);
+                }
+
+                // Recursively instantiate children
+                foreach (var childData in prefabData.Children)
+                {
+                    InstantiatePrefabData(childData, scene, entity);
+                }
+
+                return entity;
+            }
+            catch (System.Exception ex)
+            {
+                Console.WriteLine($"[Terrain] Failed to instantiate prefab entity: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get the appropriate culling mode for a submesh from its material.
+        /// The culling mode is determined by the material, not by the vegetation layer.
+        /// </summary>
+        private Engine.Components.CullingMode GetCullingModeFromMaterial(System.Guid? materialGuid)
+        {
+            if (materialGuid.HasValue)
+            {
+                var material = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid.Value);
+                if (material != null)
+                {
+                    // Convert material's int CullingMode to Component CullingMode enum
+                    return (Engine.Components.CullingMode)material.CullingMode;
+                }
+            }
+
+            // Fallback to Back culling (most common default)
+            return Engine.Components.CullingMode.Back;
         }
     }
 }

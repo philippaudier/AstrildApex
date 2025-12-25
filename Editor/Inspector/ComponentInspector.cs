@@ -6,6 +6,7 @@ using ImGuiNET;
 using Engine.Components;
 using Engine.Scene;
 using Engine.Assets;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
@@ -18,7 +19,7 @@ namespace Editor.Inspector
             
             // Draw header with optional "Edit Script" button
             string componentTypeName = component.GetType().Name;
-            bool open = ImGui.CollapsingHeader(componentTypeName, ImGuiTreeNodeFlags.DefaultOpen);
+            bool open = ThemedImGui.CollapsingHeader(componentTypeName, ImGuiTreeNodeFlags.DefaultOpen);
             
             // Add "Edit Script" button on the same line as the header
             string scriptPath = FindComponentScriptPath(component.GetType());
@@ -48,11 +49,18 @@ namespace Editor.Inspector
                     case LightComponent light: LightInspector.Draw(light); break;
                     case CameraComponent camera: CameraInspector.Draw(camera); break;
                     case MeshRendererComponent meshRenderer: MeshRendererInspector.Draw(meshRenderer); break;
-                    // OBSOLETE: Old collision system removed
-                    // case BoxCollider box: BoxColliderInspector.Draw(box); break;
-                    // case HeightfieldCollider heightfield: HeightfieldColliderInspector.Draw(heightfield); break;
                     case Engine.Components.Terrain terrain: TerrainInspector.Draw(entity, terrain); break;
+                    case Engine.Components.WeatherComponent weather: WeatherInspector.Draw(weather); break;
                     case Engine.Components.ParticleSystem particleSystem: ParticleSystemInspector.Draw(particleSystem); break;
+                    case Engine.Audio.Components.AudioSource audioSource: AudioSourceInspector.Draw(audioSource); break;
+                    case Engine.Audio.Components.AudioListenerComponent audioListener: AudioListenerInspector.Draw(audioListener); break;
+                    case Engine.Components.MissingComponent missing: MissingComponentInspector.Draw(missing); break;
+
+                    // Physics components
+                    case Engine.Physics.BoxCollider box: BoxColliderInspector.Draw(box); break;
+                    case Engine.Physics.SphereCollider sphere: SphereColliderInspector.Draw(sphere); break;
+                    case Engine.Physics.CapsuleCollider capsule: CapsuleColliderInspector.Draw(capsule); break;
+                    // case Engine.Physics.KinematicCharacterController kcc: KinematicCharacterControllerInspector.Draw(kcc); break; // File removed
                     default:
                         ImGui.TextDisabled("No custom inspector for this component type.");
                         break;

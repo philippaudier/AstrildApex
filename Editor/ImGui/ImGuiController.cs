@@ -27,6 +27,16 @@ public sealed class ImGuiController : IDisposable
     private int _iboSize = 200000;
 
     private readonly GameWindow _window;
+    
+    // Preview font for font selection
+    private ImFontPtr _previewFont;
+    private string _previewFontPath = "";
+    private float _previewFontSize = 14f;
+    
+    // Deferred font loading (to avoid modifying locked atlas during frame)
+    private string? _pendingPreviewFontPath = null;
+    private float _pendingPreviewFontSize = 14f;
+    private bool _needsFontReload = false;
 
     public ImGuiController(GameWindow window)
     {
@@ -88,6 +98,18 @@ public sealed class ImGuiController : IDisposable
     public void NewFrame(float deltaSeconds)
     {
         if (_frameBegun) ImGui.Render();
+        
+        // Handle deferred font loading BEFORE starting new frame
+        if (_needsFontReload)
+        {
+            PerformDeferredFontReload();
+            _needsFontReload = false;
+        }
+        else if (_pendingPreviewFontPath != null)
+        {
+            PerformDeferredPreviewFontLoad();
+            _pendingPreviewFontPath = null;
+        }
 
         var io = ImGui.GetIO();
         io.DeltaTime = MathF.Max(deltaSeconds, 1f/1000f);
@@ -191,6 +213,133 @@ public sealed class ImGuiController : IDisposable
         GL.Disable(EnableCap.ScissorTest);
         GL.Enable(EnableCap.DepthTest);
         GL.Disable(EnableCap.Blend);
+    }
+
+    /// <summary>
+    /// Reload fonts from EditorSettings and rebuild font atlas (deferred to next frame)
+    /// </summary>
+    public void ReloadFonts()
+    {
+        _needsFontReload = true;
+        LogManager.LogInfo("Font reload scheduled for next frame", "ImGuiController");
+    }
+    
+    /// <summary>
+    /// Internal: Actually perform the font reload
+    /// </summary>
+    private void PerformDeferredFontReload()
+    {
+        try
+        {
+            LogManager.LogInfo("Reloading fonts...", "ImGuiController");
+            
+            var io = ImGui.GetIO();
+            io.Fonts.Clear();
+            
+            // Reset preview font
+            _previewFont = default;
+            _previewFontPath = "";
+            
+            // Reload custom fonts
+            LoadCustomFonts();
+            
+            // Recreate font texture
+            if (_fontTexture != 0)
+            {
+                GL.DeleteTexture(_fontTexture);
+                _fontTexture = 0;
+            }
+            CreateFontTexture();
+            
+            LogManager.LogInfo("Fonts reloaded successfully", "ImGuiController");
+        }
+        catch (Exception ex)
+        {
+            LogManager.LogError($"Failed to reload fonts: {ex.Message}", "ImGuiController");
+        }
+    }
+    
+    /// <summary>
+    /// Load a preview font for the font selection UI (deferred to next frame)
+    /// </summary>
+    public ImFontPtr LoadPreviewFont(string fontPath, float fontSize)
+    {
+        // Check if we already loaded this preview font
+        if (_previewFontPath == fontPath && Math.Abs(_previewFontSize - fontSize) < 0.1f && IsPreviewFontValid())
+        {
+            return _previewFont;
+        }
+        
+        // Schedule deferred loading
+        _pendingPreviewFontPath = fontPath;
+        _pendingPreviewFontSize = fontSize;
+        
+        // Return current font for now (will be replaced next frame)
+        return IsPreviewFontValid() ? _previewFont : ImGui.GetFont();
+    }
+    
+    /// <summary>
+    /// Internal: Actually perform the preview font load
+    /// </summary>
+    private void PerformDeferredPreviewFontLoad()
+    {
+        if (_pendingPreviewFontPath == null) return;
+        
+        try
+        {
+            if (!File.Exists(_pendingPreviewFontPath))
+            {
+                LogManager.LogWarning($"Preview font not found: {_pendingPreviewFontPath}", "ImGuiController");
+                return;
+            }
+            
+            var io = ImGui.GetIO();
+            
+            // Add the preview font to the atlas
+            var font = io.Fonts.AddFontFromFileTTF(_pendingPreviewFontPath, _pendingPreviewFontSize);
+            
+            // Rebuild font atlas
+            if (_fontTexture != 0)
+            {
+                GL.DeleteTexture(_fontTexture);
+                _fontTexture = 0;
+            }
+            CreateFontTexture();
+            
+            _previewFont = font;
+            _previewFontPath = _pendingPreviewFontPath;
+            _previewFontSize = _pendingPreviewFontSize;
+            
+            LogManager.LogInfo($"Loaded preview font: {_pendingPreviewFontPath} @ {_pendingPreviewFontSize}px", "ImGuiController");
+        }
+        catch (Exception ex)
+        {
+            LogManager.LogError($"Failed to load preview font: {ex.Message}", "ImGuiController");
+        }
+    }
+    
+    /// <summary>
+    /// Get the currently loaded preview font, or default if none
+    /// </summary>
+    public ImFontPtr GetPreviewFont()
+    {
+        return IsPreviewFontValid() ? _previewFont : ImGui.GetFont();
+    }
+    
+    /// <summary>
+    /// Check if a preview font is currently loaded
+    /// </summary>
+    public bool HasPreviewFont()
+    {
+        return IsPreviewFontValid();
+    }
+    
+    /// <summary>
+    /// Internal helper to check if preview font pointer is valid
+    /// </summary>
+    private unsafe bool IsPreviewFontValid()
+    {
+        return _previewFont.NativePtr != null;
     }
 
     public void Dispose()

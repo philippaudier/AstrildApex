@@ -200,6 +200,10 @@ namespace Editor
 
                 // PHASE 6: RETURN TO EDIT MODE
                 _currentPhase = TransitionPhase.Idle;
+                
+                // Focus Scene viewport when exiting Play Mode
+                FocusSceneViewport();
+                
                 Log.Information("[TransitionManager] ====== EDIT MODE RESTORED ======");
                 return TransitionResult.Ok();
             }
@@ -299,8 +303,8 @@ namespace Editor
 
                 Log.Information($"[TransitionManager] Preloaded {preloadCount} material(s)");
 
-                // Clear material caches to force reload
-                Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                // CENTRALIZED: Clear all material caches to force reload
+                Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
 
                 // Flush pending texture uploads
                 System.Threading.Thread.Sleep(10);
@@ -326,6 +330,60 @@ namespace Editor
                 if (totalUploaded > 0)
                 {
                     Log.Information($"[TransitionManager] Flushed {totalUploaded} texture(s) in {sw.ElapsedMilliseconds}ms");
+                }
+
+                // === Preload vegetation resources ===
+                try
+                {
+                    // Ensure vegetation shader compiled and UBO bound
+                    try { Engine.Rendering.ShaderLibrary.GetShaderByName("VegetationForward"); } catch { }
+
+                    int vegMaterialsPreloaded = 0;
+
+                    // Scan scene for Terrain components and their VegetationLayers
+                    foreach (var entity in playScene.Entities)
+                    {
+                        try
+                        {
+                            var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                            if (terrain == null) continue;
+                            var layers = terrain.VegetationLayers;
+                            if (layers == null) continue;
+
+                            foreach (var layer in layers)
+                            {
+                                try
+                                {
+                                    if (layer?.ModelGuid == null) continue;
+                                    if (!Engine.Assets.AssetDatabase.TryGet(layer.ModelGuid.Value, out var modelRec)) continue;
+                                    // Load mesh asset to inspect submesh material GUIDs
+                                    var mesh = Engine.Assets.MeshAsset.Load(modelRec.Path);
+                                    if (mesh?.MaterialGuids == null) continue;
+
+                                    foreach (var matGuid in mesh.MaterialGuids)
+                                    {
+                                        try
+                                        {
+                                            if (!matGuid.HasValue) continue;
+                                            var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
+                                            Engine.Rendering.MaterialRuntime.UpdateCacheEntry(matGuid.Value, mat);
+                                            vegMaterialsPreloaded++;
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (vegMaterialsPreloaded > 0)
+                        Log.Information($"[TransitionManager] Preloaded {vegMaterialsPreloaded} vegetation material(s) and VegetationForward shader");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[TransitionManager] Failed to preload vegetation resources");
                 }
 
                 return true;
@@ -399,8 +457,10 @@ namespace Editor
                     var entity = entitiesSpan[i];
                     if (!entity.Active) continue;
 
-                    var components = entity.GetAllComponents();
-                    totalComponents += components.Count();
+                    // ToList() to avoid "Collection was modified" exception
+                    // (some components may add other components during Start())
+                    var components = entity.GetAllComponents().ToList();
+                    totalComponents += components.Count;
 
                     foreach (var component in components)
                     {
@@ -442,6 +502,18 @@ namespace Editor
             if (Panels.GamePanel.Options.FocusOnPlay)
             {
                 Panels.GamePanel.FocusWindow();
+            }
+        }
+
+        private void FocusSceneViewport()
+        {
+            try
+            {
+                Panels.EditorUI.MainViewport.FocusWindow();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[TransitionManager] Failed to focus Scene viewport");
             }
         }
 
@@ -537,8 +609,9 @@ namespace Editor
         {
             try
             {
-                // Reload terrain shader
+                // Reload shaders that might have been modified
                 Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
+                Engine.Rendering.ShaderLibrary.ReloadShader("VegetationForward");
 
                 // Reset game panel
                 Panels.GamePanel.ResetForExit();
@@ -549,7 +622,7 @@ namespace Editor
                 if (uploaded > 0)
                 {
                     Log.Information($"[TransitionManager] Flushed {uploaded} textures on exit");
-                    Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                    Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
                 }
             }
             catch (Exception ex)

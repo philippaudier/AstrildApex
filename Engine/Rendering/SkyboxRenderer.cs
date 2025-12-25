@@ -2226,8 +2226,8 @@ namespace Engine.Rendering
                     // Best-effort: update IBL immediately on the GL thread
                     try { EnsureIBL(); } catch { }
 
-                    // Force material cache clear so next binds will pick up the new IBL handles
-                    try { MaterialRuntime.ClearGlobalCache(); } catch { }
+                    // CENTRALIZED: Force material cache clear so next binds will pick up the new IBL handles
+                    try { Engine.Assets.AssetDatabase.ClearAllMaterialCaches(); } catch { }
                 }
             }
             catch { }

@@ -424,6 +424,7 @@ namespace Engine.Scene
     public sealed class Scene
     {
         private uint _nextId = EntityIdRange.MinEntityId + 1;
+        private readonly Queue<uint> _recycledIds = new Queue<uint>(); // Pool of recycled entity IDs
         public readonly List<Entity> Entities = new List<Entity>();
 
         // Event for transform changes
@@ -464,7 +465,7 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
-            // OBSOLETE: Old collision system removed
+            // Physics system removed - collider creation disabled
             // e.AddComponent<Engine.Components.SphereCollider>().Radius = radius;
 
             Entities.Add(e);
@@ -482,13 +483,11 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
-            // OBSOLETE: Old collision system removed
-            /*
-            var cap = e.AddComponent<Engine.Components.CapsuleCollider>();
-            cap.Height = height;
-            cap.Radius = radius;
-            cap.Direction = 1; // Y-up
-            */
+            // Physics system removed - collider creation disabled
+            // var cap = e.AddComponent<Engine.Components.CapsuleCollider>();
+            // cap.Height = height;
+            // cap.Radius = radius;
+            // cap.Direction = 1; // Y-up
 
             Entities.Add(e);
             return e;
@@ -505,12 +504,9 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
-            // OBSOLETE: Old collision system removed
-            /*
-            // Use BoxCollider to approximate plane area (thin box)
-            var box = e.AddComponent<Engine.Components.BoxCollider>();
-            box.Size = new Vector3(1f, 0.01f, 1f);
-            */
+            // Physics system removed - collider creation disabled
+            // var box = e.AddComponent<Engine.Components.BoxCollider>();
+            // box.Size = new Vector3(1f, 0.01f, 1f);
 
             Entities.Add(e);
             return e;
@@ -527,12 +523,9 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
-            // OBSOLETE: Old collision system removed
-            /*
-            // Thin box collider in XY plane (Z=1 depth)
-            var box = e.AddComponent<Engine.Components.BoxCollider>();
-            box.Size = new Vector3(1f, 1f, 0.01f);
-            */
+            // Physics system removed - collider creation disabled
+            // var box = e.AddComponent<Engine.Components.BoxCollider>();
+            // box.Size = new Vector3(1f, 1f, 0.01f);
 
             Entities.Add(e);
             return e;
@@ -608,14 +601,34 @@ namespace Engine.Scene
         public Entity? GetById(uint id) => Entities.FirstOrDefault(x => x.Id == id);
 
         // Méthode pour obtenir le prochain ID disponible (utilisé par le sérialiseur)
-        public uint GetNextEntityId() 
+        public uint GetNextEntityId()
         {
+            // Prioritize recycled IDs to avoid hitting the limit
+            if (_recycledIds.Count > 0)
+            {
+                return _recycledIds.Dequeue();
+            }
+
             if (_nextId >= EntityIdRange.MaxEntityId)
             {
                 throw new InvalidOperationException(
-                    $"Impossible de créer plus d'entités. Limite atteinte: {EntityIdRange.MaxSupportedEntities}");
+                    $"Impossible de créer plus d'entités. Limite atteinte: {EntityIdRange.MaxSupportedEntities}. " +
+                    $"Recycled IDs available: {_recycledIds.Count}");
             }
             return _nextId++;
+        }
+
+        /// <summary>
+        /// Recycle an entity ID so it can be reused later.
+        /// Called automatically when an entity is removed from the scene.
+        /// </summary>
+        public void RecycleEntityId(uint id)
+        {
+            // Only recycle valid entity IDs (not gizmos or special IDs)
+            if (EntityIdRange.IsEntityId(id) && !_recycledIds.Contains(id))
+            {
+                _recycledIds.Enqueue(id);
+            }
         }
 
         public int CountEntitiesUsingMaterial(Guid materialGuid)

@@ -2,11 +2,14 @@ using ImGuiNET;
 using System;
 using System.Numerics;
 using System.IO;
+using Editor.Themes;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
     public static class FontAssetInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         // Draw from GUID (loads FontAsset from file)
         public static void Draw(Guid fontAssetGuid)
         {
@@ -124,13 +127,13 @@ namespace Editor.Inspector
             ImGui.Separator();
 
             // Preview section
-            if (ImGui.CollapsingHeader("Font Preview"))
+            if (ThemedImGui.CollapsingHeader("Font Preview"))
             {
                 DrawFontPreview(font);
             }
 
             // Glyph atlas info
-            if (ImGui.CollapsingHeader("Glyph Atlas Info"))
+            if (ThemedImGui.CollapsingHeader("Glyph Atlas Info"))
             {
                 ImGui.Text("Atlas generation will be implemented");
                 ImGui.TextDisabled("TODO: Display atlas texture and glyph metrics");
@@ -236,7 +239,7 @@ namespace Editor.Inspector
             }
 
             // Path input (fallback)
-            if (ImGui.TreeNode($"Manual Path##{label}"))
+            if (ThemedImGui.TreeNode($"Manual Path##{label}"))
             {
                 string pathStr = path ?? "";
                 if (ImGui.InputText($"##{label}Path", ref pathStr, 512))

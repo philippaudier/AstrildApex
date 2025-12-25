@@ -15,8 +15,8 @@ namespace Editor
         private static PlayState _state = PlayState.Edit;
         private static Scene? _originalScene;
         private static Scene? _playScene;
-        private static float _fixedTimeAccumulator = 0f;
-        private static float _fixedDeltaTime = 0.02f; // 50 FPS fixed update
+
+        // REMOVED: _fixedTimeAccumulator and _fixedDeltaTime - now handled by PhysicsManager
 
         // PERFORMANCE: Cache component lists to avoid repeated GetAllComponents() allocations
         private static readonly Dictionary<uint, List<Engine.Components.Component>> _cachedComponentsByEntity
@@ -105,8 +105,11 @@ namespace Editor
                 }
             }
 
+            // Physics system removed
+            // Engine.Physics.PhysicsManager.Instance.SetActiveScene(_playScene);
+
             _state = PlayState.Playing;
-            // Play Mode started
+            LogManager.LogInfo("Play Mode started", "PlayMode");
         }
 
         /// <summary>
@@ -164,39 +167,47 @@ namespace Editor
             // Clear local state
             _playScene = null;
             _originalScene = null;
-            _fixedTimeAccumulator = 0f;
             _cachedComponentsByEntity.Clear();
+
+            // Physics system removed
+            // Engine.Physics.PhysicsManager.Instance.Reset();
+            // Engine.Physics.PhysicsManager.Instance.SetActiveScene(null);
 
             _state = PlayState.Edit;
             Engine.Utils.DebugLogger.Log("[PlayMode] Returned to Edit Mode");
         }
 
+        // Weather system (global)
+        private static readonly Engine.Systems.WeatherSystem _weatherSystem = new Engine.Systems.WeatherSystem();
+
         /// <summary>
         /// Met à jour la simulation (appelé depuis la boucle principale)
+        /// Now uses unified PhysicsManager - no more double accumulator!
         /// </summary>
         public static void UpdateSimulation(float deltaTime)
         {
             if (_state != PlayState.Playing || _playScene == null) return;
 
-            // Mettre à jour les composants (Update phase)
-            UpdateComponents(deltaTime);
-
-            // FixedUpdate accumulator for physics and character controllers
-            // CRITICAL: Physics and CharacterController MUST run in the same accumulator
-            // to ensure collision queries see up-to-date collider positions
-            _fixedTimeAccumulator += deltaTime;
-            while (_fixedTimeAccumulator >= _fixedDeltaTime)
+            // === STEP 0: Update weather system (global environment) ===
+            try
             {
-                // OBSOLETE: Old collision system removed
-                // Engine.Physics.CollisionSystem.Step(_fixedDeltaTime);
-
-                // Update components at fixed timestep
-                FixedUpdateComponents(_fixedDeltaTime);
-
-                _fixedTimeAccumulator -= _fixedDeltaTime;
+                _weatherSystem.Update(_playScene, deltaTime);
+            }
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Weather system error: {ex.Message}");
             }
 
-            // Late update
+            // === STEP 1: Update components (variable timestep) ===
+            UpdateComponents(deltaTime);
+
+            // Physics system removed
+            // Engine.Physics.PhysicsManager.Instance.Update(deltaTime);
+
+            // === STEP 3: FixedUpdate for other components (CameraComponent, etc.) ===
+            FixedUpdateComponents(1.0f / 60.0f);
+
+            // === STEP 4: Late update ===
             LateUpdateComponents(deltaTime);
         }
 
@@ -250,6 +261,10 @@ namespace Editor
                 {
                     var component = comps[c];
                     if (!component.Enabled) continue;
+
+                    // Physics system removed
+                    // if (component is Engine.Components.CharacterController)
+                    //     continue;
 
                     try
                     {

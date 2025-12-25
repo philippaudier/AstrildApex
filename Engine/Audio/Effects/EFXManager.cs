@@ -47,22 +47,22 @@ namespace Engine.Audio.Effects
                     if (_maxAuxiliarySends <= 0)
                         _maxAuxiliarySends = 4;
 
-                    Log.Information($"[EFXManager] ✓ ALC_EXT_EFX Supported - Max Auxiliary Sends: {_maxAuxiliarySends}");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[EFXManager] ✓ ALC_EXT_EFX Supported - Max Auxiliary Sends: {_maxAuxiliarySends}");
 
                     // Initialize the new EFX backend
                     AudioEfxBackend.Instance.Initialize();
                 }
                 else
                 {
-                    Log.Warning("[EFXManager] ALC_EXT_EFX extension not found - effects disabled");
-                    Log.Warning("[EFXManager] This should not happen with OpenAL Soft - please verify your OpenAL installation");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[EFXManager] ALC_EXT_EFX extension not found - effects disabled");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[EFXManager] This should not happen with OpenAL Soft - please verify your OpenAL installation");
                 }
 
                 _initialized = true;
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "[EFXManager] Failed to initialize EFX");
+                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[EFXManager] Failed to initialize EFX: {ex.Message}");
                 _efxSupported = false;
             }
         }

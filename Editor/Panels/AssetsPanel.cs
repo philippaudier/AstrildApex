@@ -7,6 +7,7 @@ using Editor.State;
 using Engine.Assets;
 using OpenTK.Graphics.OpenGL4;
 using Editor.UI;
+using Editor.Themes;
 using SysVec2 = System.Numerics.Vector2;
 using AssetRecord = Engine.Assets.AssetDatabase.AssetRecord;
 using Engine.Rendering;
@@ -16,6 +17,8 @@ namespace Editor.Panels
 {
     public static class AssetsPanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         // ====== UI State général ======
         private static string _currentDir = "";           // relatif à AssetsRoot; "" = racine
         private static string _search = "";
@@ -242,6 +245,21 @@ namespace Editor.Panels
                 }
             }
 
+            // Drag & Drop target for creating prefabs from hierarchy entities
+            if (ImGui.BeginDragDropTarget())
+            {
+                var payload = ImGui.AcceptDragDropPayload("ENTITY_ID");
+                unsafe
+                {
+                    if (payload.NativePtr != null && payload.DataSize == sizeof(int))
+                    {
+                        int entityId = *(int*)payload.Data;
+                        CreatePrefabFromEntity((uint)entityId);
+                    }
+                }
+                ImGui.EndDragDropTarget();
+            }
+
             ImGui.End();
         }
 
@@ -257,6 +275,31 @@ namespace Editor.Panels
                         _externalImportQueue.Enqueue(p);
                 }
             }
+        }
+
+        /// <summary>
+        /// Ping an asset - expand its folder, scroll to it, and select it
+        /// </summary>
+        public static void PingAsset(Guid assetGuid)
+        {
+            if (!AssetDatabase.TryGet(assetGuid, out var record)) return;
+
+            // Get relative folder path from asset path
+            var assetsRoot = AssetDatabase.AssetsRoot;
+            var relPath = record.Path.StartsWith(assetsRoot) 
+                ? record.Path.Substring(assetsRoot.Length).TrimStart('\\', '/')
+                : record.Path;
+            var folder = Path.GetDirectoryName(relPath)?.Replace('\\', '/') ?? "";
+
+            // Navigate to folder
+            _currentDir = folder;
+            
+            // Clear selection and select this asset
+            _selAssets.Clear();
+            _selFolders.Clear();
+            _selAssets.Add(assetGuid);
+            
+            // Scroll will happen automatically on next frame as the item draws
         }
 
         private static void TryProcessExternalImports()
@@ -511,7 +554,7 @@ namespace Editor.Panels
         {
             var dirs = EnumerateAllDirsRelative(AssetDatabase.AssetsRoot);
 
-            bool openRoot = ImGui.TreeNodeEx("Assets",
+            bool openRoot = ThemedImGui.TreeNodeEx("Assets",
                 ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.SpanFullWidth);
             if (ImGui.IsItemClicked())
             {
@@ -561,7 +604,7 @@ namespace Editor.Panels
                 ImGui.PushID($"tree::{rel}");
 
                 var flags = ImGuiTreeNodeFlags.SpanFullWidth;
-                bool open = ImGui.TreeNodeEx(name, flags);
+                bool open = ThemedImGui.TreeNodeEx(name, flags);
 
                 // DnD cible : accepter drop sur le nœud du tree
                 if (ImGui.BeginDragDropTarget())
@@ -2620,6 +2663,69 @@ namespace Editor.Panels
             // Check if rectangles overlap
             return !(rectMax.X < windowMin.X || rectMin.X > windowMax.X ||
                      rectMax.Y < windowMin.Y || rectMin.Y > windowMax.Y);
+        }
+
+        /// <summary>
+        /// Create a prefab asset from an entity in the scene
+        /// </summary>
+        private static void CreatePrefabFromEntity(uint entityId)
+        {
+            try
+            {
+                var scene = EditorUI.MainViewport.Renderer?.Scene;
+                if (scene == null)
+                {
+                    Console.WriteLine("[AssetsPanel] No active scene");
+                    return;
+                }
+
+                var entity = scene.GetById(entityId);
+                if (entity == null)
+                {
+                    Console.WriteLine($"[AssetsPanel] Entity {entityId} not found");
+                    return;
+                }
+
+                // Create prefab from entity
+                var prefab = Editor.Inspector.PrefabInstantiator.CreateFromEntity(entity);
+                
+                // Save prefab to disk in current directory
+                var prefabFolder = string.IsNullOrEmpty(_currentDir) 
+                    ? Path.Combine(AssetDatabase.AssetsRoot, "Prefabs")
+                    : Path.Combine(AssetDatabase.AssetsRoot, _currentDir);
+                
+                Directory.CreateDirectory(prefabFolder);
+                
+                var fileName = AssetDatabase.Sanitize(prefab.Name ?? "Prefab") + ".prefab";
+                var path = Path.Combine(prefabFolder, fileName);
+                
+                // Ensure unique filename
+                int counter = 1;
+                while (File.Exists(path))
+                {
+                    fileName = $"{AssetDatabase.Sanitize(prefab.Name ?? "Prefab")} {counter}.prefab";
+                    path = Path.Combine(prefabFolder, fileName);
+                    counter++;
+                }
+                
+                // Save prefab
+                AssetDatabase.SavePrefab(prefab, path);
+                
+                Console.WriteLine($"[AssetsPanel] Created prefab '{prefab.Name}' at {path}");
+                
+                // Refresh assets panel
+                _isDirty = true;
+                AssetDatabase.Refresh();
+                
+                // Select the new prefab
+                _selAssets.Clear();
+                _selFolders.Clear();
+                _selAssets.Add(prefab.Guid);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AssetsPanel] Failed to create prefab: {ex.Message}");
+            }
         }
 
         // ===== Utils =====

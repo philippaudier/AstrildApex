@@ -4,6 +4,7 @@ using Engine.Assets;
 using Editor.Tasks;
 using Editor.Utils;
 using Editor.Logging;
+using Editor.UI;
 using System.IO;
 
 namespace Editor.Inspector
@@ -59,7 +60,7 @@ namespace Editor.Inspector
             }
 
             // === MESH STATISTICS ===
-            if (ImGui.CollapsingHeader("Mesh Statistics", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("Mesh Statistics", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.Indent();
 
@@ -81,7 +82,7 @@ namespace Editor.Inspector
             if (meshAsset.SubMeshes.Count > 1)
             {
                 ImGui.Spacing();
-                if (ImGui.CollapsingHeader($"Submeshes ({meshAsset.SubMeshes.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+                if (ThemedImGui.CollapsingHeader($"Submeshes ({meshAsset.SubMeshes.Count})", ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     ImGui.Indent();
 
@@ -92,7 +93,7 @@ namespace Editor.Inspector
                         int triangleCount = submesh.Indices.Length / 3;
 
                         ImGui.PushID($"submesh_{i}");
-                        if (ImGui.TreeNodeEx($"Submesh {i}", ImGuiTreeNodeFlags.DefaultOpen))
+                        if (ThemedImGui.TreeNodeEx($"Submesh {i}", ImGuiTreeNodeFlags.DefaultOpen))
                         {
                             ImGui.Text($"  Vertices:  {vertexCount:N0}");
                             ImGui.Text($"  Triangles: {triangleCount:N0}");
@@ -110,7 +111,7 @@ namespace Editor.Inspector
             if (meshAsset.MaterialGuids.Count > 0)
             {
                 ImGui.Spacing();
-                if (ImGui.CollapsingHeader($"Imported Materials ({meshAsset.MaterialGuids.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+                if (ThemedImGui.CollapsingHeader($"Imported Materials ({meshAsset.MaterialGuids.Count})", ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     ImGui.Indent();
 
@@ -148,7 +149,7 @@ namespace Editor.Inspector
 
             // === USAGE IN SCENE ===
             ImGui.Spacing();
-            if (ImGui.CollapsingHeader("Usage", ImGuiTreeNodeFlags.None))
+            if (ThemedImGui.CollapsingHeader("Usage", ImGuiTreeNodeFlags.None))
             {
                 ImGui.Indent();
                 ImGui.TextDisabled("Drag & Drop:");

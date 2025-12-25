@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
+using Editor.Themes;
 
 namespace Editor.UI;
 
@@ -140,7 +141,7 @@ public class ViewportOverlays
         const float padding = 8f;
         
         // Reserve space for the triedre inside the toolbar group
-        var availableSpace = new Vector2(triedreSize + padding * 2, ModernUIHelpers.ToolbarButtonSize);
+        var availableSpace = new Vector2(triedreSize + padding * 2, ThemeManager.UI.ToolbarButtonSize);
         ImGui.Dummy(availableSpace);
         
         // Get the drawing area
@@ -252,7 +253,7 @@ public class ViewportOverlays
     {
         const float margin = 15f;
         const float triedreWidth = 76f; // 60 + 8*2 padding
-        var toolbarPos = new Vector2(imageMin.X + margin, imageMax.Y - margin - ModernUIHelpers.ToolbarButtonSize - ModernUIHelpers.Spacing * 2);
+        var toolbarPos = new Vector2(imageMin.X + margin, imageMax.Y - margin - ThemeManager.UI.ToolbarButtonSize - ThemeManager.UI.SpacingMedium * 2);
 
         // Create a popup window for camera controls
         ImGui.SetNextWindowPos(toolbarPos);
@@ -311,7 +312,7 @@ public class ViewportOverlays
     {
         ModernUIHelpers.BeginToolbarGroup();
 
-        ImGui.BeginChild("##CameraControls", new Vector2(370, ModernUIHelpers.ToolbarButtonSize + 16), ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar);
+        ImGui.BeginChild("##CameraControls", new Vector2(370, ThemeManager.UI.ToolbarButtonSize + 16), ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar);
 
         // Front (F)
         if (ModernUIHelpers.ToolButton("Front", CurrentView == CameraView.Front, "Front view (F)", 55f))

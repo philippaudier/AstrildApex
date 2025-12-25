@@ -2,11 +2,14 @@ using ImGuiNET;
 using System;
 using System.IO;
 using System.Numerics;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     public static class TrueTypeFontInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         public static void Draw(Guid ttfGuid)
         {
             if (!Engine.Assets.AssetDatabase.TryGet(ttfGuid, out var record))

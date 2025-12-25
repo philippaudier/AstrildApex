@@ -44,7 +44,8 @@ namespace Engine.Components
             TopDown,          // Top-down view with optional tilt (Diablo, Stardew Valley)
             Isometric,        // Fixed isometric angle (classic RTS, Tactics games)
             SideScroller2D,   // 2D side-view following (Mario, Celeste)
-            Orbit             // Free orbit around target (Unity Scene view style)
+            Orbit,            // Free orbit around target (Unity Scene view style)
+            FreeCam           // Free camera with WASD movement and mouse look (no target)
         }
 
         [Serialization.Serializable("controlMode")]
@@ -127,6 +128,16 @@ namespace Engine.Components
 
         [Serialization.Serializable("fpsSprintMultiplier")]
         public float FPSSprintMultiplier = 1.75f;
+
+        // Free Camera
+        [Serialization.Serializable("freeCamMoveSpeed")]
+        public float FreeCamMoveSpeed = 10f;
+
+        [Serialization.Serializable("freeCamSprintMultiplier")]
+        public float FreeCamSprintMultiplier = 2.5f;
+
+        [Serialization.Serializable("freeCamEnableFastMode")]
+        public bool FreeCamEnableFastMode = true;
 
         // Top Down
         [Serialization.Serializable("topDownAngle")]
@@ -272,6 +283,9 @@ namespace Engine.Components
                 case ControlMode.Orbit:
                     UpdateOrbit(deltaTime);
                     break;
+                case ControlMode.FreeCam:
+                    UpdateFreeCam(deltaTime);
+                    break;
             }
         }
 
@@ -293,6 +307,7 @@ namespace Engine.Components
                 case ControlMode.FirstPerson:
                 case ControlMode.ThirdPerson:
                 case ControlMode.Orbit:
+                case ControlMode.FreeCam:
                     // These modes work best with perspective projection
                     if (Projection != ProjectionMode.Perspective)
                         Projection = ProjectionMode.Perspective;
@@ -352,8 +367,8 @@ namespace Engine.Components
                 return false;
             }
 
-            // Lock cursor for gameplay (FPS, ThirdPerson, Orbit modes)
-            if (Mode == ControlMode.FirstPerson || Mode == ControlMode.ThirdPerson || Mode == ControlMode.Orbit)
+            // Lock cursor for gameplay (FPS, ThirdPerson, Orbit, FreeCam modes)
+            if (Mode == ControlMode.FirstPerson || Mode == ControlMode.ThirdPerson || Mode == ControlMode.Orbit || Mode == ControlMode.FreeCam)
             {
                 if (!_cursorWasLocked)
                 {
@@ -605,41 +620,62 @@ namespace Engine.Components
             Entity?.SetWorldTRS(_smoothPosition, rotation, Vector3.One);
         }
 
+        private void UpdateFreeCam(float deltaTime)
+        {
+            var im = InputManager.Instance;
+            if (im == null || Entity == null) return;
+
+            // Direct mouse look - no interpolation for instant response
+            float dx = im.MouseDelta.X;
+            float dy = im.MouseDelta.Y;
+
+            _yaw += dx * Sensitivity * (InvertX ? -1f : 1f);
+            _pitch += dy * Sensitivity * (InvertY ? 1f : -1f);
+            _pitch = MathHelper.Clamp(_pitch,
+                MathHelper.DegreesToRadians(MinPitch),
+                MathHelper.DegreesToRadians(MaxPitch));
+
+            // Calculate rotation - direct update, no smoothing
+            var rotation = Quaternion.FromAxisAngle(Vector3.UnitY, _yaw) *
+                          Quaternion.FromAxisAngle(Vector3.UnitX, _pitch);
+
+            // Pre-calculate movement vectors once
+            var forward = Vector3.Transform(Vector3.UnitZ, rotation);
+            var right = Vector3.Transform(Vector3.UnitX, rotation);
+
+            // Get current position
+            Entity.GetWorldTRS(out var currentPos, out _, out _);
+
+            // Calculate speed with sprint modifier
+            float speed = FreeCamMoveSpeed;
+            if (FreeCamEnableFastMode && im.IsKeyDown(Keys.LeftShift))
+                speed *= FreeCamSprintMultiplier;
+
+            // Direct movement - no smoothing for instant response
+            float frameSpeed = speed * deltaTime;
+
+            // WASD movement - combine movements before applying
+            if (im.IsKeyDown(Keys.W)) currentPos += forward * frameSpeed;
+            if (im.IsKeyDown(Keys.S)) currentPos -= forward * frameSpeed;
+            if (im.IsKeyDown(Keys.D)) currentPos += right * frameSpeed;
+            if (im.IsKeyDown(Keys.A)) currentPos -= right * frameSpeed;
+
+            // Space/Ctrl for up/down movement - use world up
+            if (im.IsKeyDown(Keys.Space)) currentPos.Y += frameSpeed;
+            if (im.IsKeyDown(Keys.LeftControl)) currentPos.Y -= frameSpeed;
+
+            // Direct position update - no lerp/smoothing for ultra-fluid response
+            Entity.SetWorldTRS(currentPos, rotation, Vector3.One);
+            
+            // Update smooth position to match for consistency with other modes
+            _smoothPosition = currentPos;
+        }
+
         // ========== COLLISION HELPER ==========
 
         private float PerformCollisionCheck(Vector3 pivot, Vector3 desiredPosition, Vector3 forward, float distance)
         {
-            var direction = (desiredPosition - pivot).Normalized();
-
-            // Get player's collider to ignore it
-            // OBSOLETE: Old collision system removed - camera occlusion disabled
-            // TODO: Re-implement using new KinematicCharacterController or Physics.Colliders system
-            /*
-            Collider? playerCollider = null;
-            float playerRadius = 0.5f;
-
-            var follow = FollowTarget;
-            if (follow?.Entity != null)
-            {
-                playerCollider = follow.Entity.GetComponent<Collider>();
-                var charController = follow.Entity.GetComponent<CharacterController>();
-                if (charController != null)
-                    playerRadius = charController.Radius;
-            }
-
-            var rayOrigin = pivot + direction * (playerRadius + 0.1f);
-            var adjustedDistance = distance - (playerRadius + 0.1f);
-
-            var ray = new Ray
-            {
-                Origin = rayOrigin,
-                Direction = direction
-            };
-
-            var hits = CollisionSystem.RaycastAll(ray, adjustedDistance, CollisionLayerMask, QueryTriggerInteraction.Ignore);
-            */
-
-            // Camera occlusion disabled - old collision system removed - no collision detection
+            // Physics system removed - collision detection disabled
             return distance;
         }
 

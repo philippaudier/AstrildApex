@@ -3,6 +3,7 @@ using System.Numerics;
 using ImGuiNET;
 using OpenTK.Mathematics;
 using Editor.State;
+using Editor.UI;
 using Engine.Scene;
 using NumVector2 = System.Numerics.Vector2;
 using NumVector3 = System.Numerics.Vector3;
@@ -112,18 +113,13 @@ namespace Editor.Inspector
         #region Section Management
         
         /// <summary>
-        /// Draw a collapsible section header (Unity-style)
+        /// Draw a collapsible section header (Unity-style) with automatic text contrast
         /// </summary>
         public static bool Section(string label, bool defaultOpen = true, string? tooltip = null, string? helpText = null)
         {
-            ImGui.PushStyleColor(ImGuiCol.Header, InspectorColors.Section);
-            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, new NumVector4(0.4f, 0.6f, 0.9f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.HeaderActive, new NumVector4(0.5f, 0.7f, 1.0f, 1f));
-            
+            // Use ThemedImGui for automatic text contrast
             var flags = defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None;
-            bool isOpen = ImGui.CollapsingHeader(label, flags);
-            
-            ImGui.PopStyleColor(3);
+            bool isOpen = ThemedImGui.CollapsingHeader(label, flags);
             
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.DelayShort) && !string.IsNullOrEmpty(tooltip))
             {

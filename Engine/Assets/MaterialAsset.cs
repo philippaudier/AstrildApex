@@ -58,6 +58,15 @@ namespace Engine.Assets
         // Opacity/Alpha control (for transparency)
         public float Opacity { get; set; } = 1.0f;  // 0.0 = fully transparent, 1.0 = fully opaque
 
+        // Face culling mode (0 = Back, 1 = Front, 2 = None/Both)
+        // Default: Back for opaque objects, None for transparent (leaves, foliage)
+        public int CullingMode { get; set; } = 0; // 0 = Back (default, performance)
+
+        // Alpha clipping (alpha test) - discard pixels below threshold
+        // Essential for foliage: eliminates transparent pixels while keeping Back culling for performance
+        public bool AlphaClippingEnabled { get; set; } = false;
+        public float AlphaClipThreshold { get; set; } = 0.5f; // 0.0-1.0, pixels below this are discarded
+
         // Stylization parameters (for artistic tweaking)
         public float Saturation { get; set; } = 1.0f;   // 0.0 = grayscale, 1.0 = normal, >1.0 = oversaturated
         public float Brightness { get; set; } = 1.0f;   // 0.0 = black, 1.0 = normal, >1.0 = brighter
@@ -65,8 +74,17 @@ namespace Engine.Assets
         public float Hue { get; set; } = 0.0f;          // -1.0 to 1.0, shifts hue (color wheel rotation)
         public float Emission { get; set; } = 0.0f;     // 0.0 = no emission, >0.0 = emissive/glow strength
 
+        // Water / planar reflection settings
+        // Enable rendering planar reflection texture for this material (if shader supports it)
+        public bool UsePlanarReflection { get; set; } = false;
+        // Per-material planar reflection strength (inspector-exposed)
+        public float WaterReflectionStrength { get; set; } = 1.0f;
+
         // Glass-specific properties (used when Shader == "Glass")
         public GlassMaterialProperties? GlassProperties { get; set; }
+
+        // Water-specific properties (used when Shader == "WaterForward")
+        public WaterProperties? WaterProperties { get; set; }
 
         public static MaterialAsset Load(string file)
         {

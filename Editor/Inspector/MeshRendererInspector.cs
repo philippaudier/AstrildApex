@@ -2,16 +2,22 @@ using ImGuiNET;
 using Engine.Components;
 using Engine.Assets;
 using Editor.Inspector;
+using Editor.UI;
+using Editor.Themes;
 using System;
 using System.Linq;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Unity-style inspector for MeshRendererComponent with comprehensive UI
+    /// Modern Unity-style inspector for MeshRendererComponent
+    /// Uses unified EditorWidgets system for consistent UX
     /// </summary>
     public static class MeshRendererInspector
     {
+        // Quick access to theme
+        private static UITheme UI => ThemeManager.UI;
+        
         // Cache pour éviter de charger le MeshAsset à chaque frame (cause des 6 FPS!)
         private static Guid? _cachedMeshGuid = null;
         private static MeshAsset? _cachedMeshAsset = null;
@@ -45,11 +51,11 @@ namespace Editor.Inspector
                         
                         ImGui.Text("Mesh Type:");
                         ImGui.SameLine();
-                        ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.8f, 0.4f, 1.0f), "Custom (Imported)");
+                        ImGui.TextColored(UI.Success, "Custom (Imported)");
                         
                         ImGui.Text("Mesh Asset:");
                         ImGui.SameLine();
-                        ImGui.TextColored(new System.Numerics.Vector4(0.8f, 0.8f, 1.0f, 1.0f), meshName);
+                        ImGui.TextColored(UI.Info, meshName);
                         
                         ImGui.SameLine();
                         if (ImGui.SmallButton("Clear##CustomMesh"))
@@ -68,7 +74,7 @@ namespace Editor.Inspector
                 {
                     ImGui.Text("Mesh Type:");
                     ImGui.SameLine();
-                    ImGui.TextColored(new System.Numerics.Vector4(0.8f, 0.8f, 0.4f, 1.0f), "Primitive");
+                    ImGui.TextColored(UI.Warning, "Primitive");
                     
                     // Display primitive mesh selector
                     var mesh = meshRenderer.Mesh;
@@ -144,73 +150,100 @@ namespace Editor.Inspector
             if (InspectorWidgets.Section("Materials", defaultOpen: true,
                 tooltip: "Material(s) to apply to the mesh"))
             {
-                // Material Asset Picker
-                var currentMaterialGuid = meshRenderer.MaterialGuid ?? Guid.Empty;
-                var currentMaterialName = currentMaterialGuid != Guid.Empty
-                    ? AssetDatabase.GetName(currentMaterialGuid)
-                    : "<Default White>";
-
-                ImGui.Text("Material:");
-                ImGui.SameLine();
-
-                var materials = AssetDatabase.All()
-                    .Where(r => r.Type == "Material")
-                    .ToList();
-
-                if (ImGui.BeginCombo("##MaterialAsset", currentMaterialName))
+                // Modern Material Asset Field with drag-drop + click-to-select
+                // Pass null (not Guid.Empty) when no material to show "Drag & Drop" button
+                Guid? currentMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty 
+                    ? meshRenderer.MaterialGuid.Value 
+                    : (Guid?)null;
+                    
+                Guid? newMaterial = EditorWidgets.AssetField(
+                    "Material",
+                    currentMaterial,
+                    "Material",
+                    description: "Material to apply visual properties (PBR, textures, colors)",
+                    showPreview: false);
+                
+                if (newMaterial != meshRenderer.MaterialGuid)
                 {
-                    // Option to use default material
-                    if (ImGui.Selectable("<Default White>", currentMaterialGuid == Guid.Empty))
+                    if (newMaterial.HasValue && newMaterial.Value != Guid.Empty)
                     {
-                        meshRenderer.SetMaterial(AssetDatabase.EnsureDefaultWhiteMaterial());
+                        meshRenderer.SetMaterial(newMaterial.Value);
                     }
-
-                    // List all available materials
-                    foreach (var mat in materials)
+                    else
                     {
-                        bool isSelected = mat.Guid == currentMaterialGuid;
-                        if (ImGui.Selectable(mat.Name, isSelected))
-                        {
-                            meshRenderer.SetMaterial(mat.Guid);
-                        }
-
-                        if (isSelected)
-                        {
-                            ImGui.SetItemDefaultFocus();
-                        }
-                    }
-
-                    ImGui.EndCombo();
-                }
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("Select a material to apply visual properties");
-                }
-
-                // Quick Material Actions
-                ImGui.Spacing();
-                if (currentMaterialGuid != Guid.Empty)
-                {
-                    if (ImGui.Button("Edit Material", new System.Numerics.Vector2(-1, 0)))
-                    {
-                        // TODO: Select the material in the AssetsPanel
-                        Engine.Utils.DebugLogger.Log($"[MeshRendererInspector] Edit material: {currentMaterialGuid}");
-                    }
-                    if (ImGui.IsItemHovered())
-                    {
-                        ImGui.SetTooltip("Open material in inspector");
+                        // Clear material assignment (set to null)
+                        meshRenderer.MaterialGuid = null;
                     }
                 }
 
                 ImGui.Spacing();
-                ImGui.Separator();
-                ImGui.Spacing();
+                EditorWidgets.Separator();
 
                 // Multiple materials support (not yet implemented)
                 ImGui.TextDisabled("Multiple Materials:");
                 ImGui.Indent();
                 ImGui.TextDisabled("Feature not implemented yet");
                 ImGui.TextWrapped("When a mesh has multiple submeshes with different materials, you'll be able to assign different materials to each submesh here.");
+                ImGui.Unindent();
+
+                InspectorWidgets.EndSection();
+            }
+
+            // === RENDERING SECTION ===
+            if (InspectorWidgets.Section("Rendering", defaultOpen: true,
+                tooltip: "Rendering configuration"))
+            {
+                ImGui.Text("Culling Mode:");
+                ImGui.SameLine();
+                EditorWidgets.HelpIcon("Which faces to cull during rendering");
+
+                var cullingMode = meshRenderer.Culling;
+                string[] cullingLabels = { "Back", "Front", "None (Both)" };
+                string[] cullingTooltips = {
+                    "Cull back faces (default for most objects)",
+                    "Cull front faces (for inside-out geometry)",
+                    "No culling - render both sides (for thin objects like leaves)"
+                };
+
+                int cullingIndex = (int)cullingMode;
+                
+                if (ImGui.BeginCombo("##CullingMode", cullingLabels[cullingIndex]))
+                {
+                    for (int i = 0; i < cullingLabels.Length; i++)
+                    {
+                        bool isSelected = (cullingIndex == i);
+                        if (ImGui.Selectable(cullingLabels[i], isSelected))
+                        {
+                            meshRenderer.Culling = (CullingMode)i;
+                        }
+                        
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip(cullingTooltips[i]);
+                        }
+                        
+                        if (isSelected)
+                            ImGui.SetItemDefaultFocus();
+                    }
+                    ImGui.EndCombo();
+                }
+
+                ImGui.Spacing();
+                
+                // Visual indicator
+                ImGui.Indent();
+                switch (meshRenderer.Culling)
+                {
+                    case CullingMode.Back:
+                        ImGui.TextColored(UI.Success, "✓ Standard rendering (recommended)");
+                        break;
+                    case CullingMode.Front:
+                        ImGui.TextColored(UI.Warning, "⚠ Special use case (inside-out)");
+                        break;
+                    case CullingMode.None:
+                        ImGui.TextColored(UI.Info, "ℹ Double-sided (performance cost)");
+                        break;
+                }
                 ImGui.Unindent();
 
                 InspectorWidgets.EndSection();
@@ -300,7 +333,7 @@ namespace Editor.Inspector
                     if (meshAsset != null)
                     {
                         // Statistics
-                        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f), "Statistics:");
+                        ImGui.TextColored(UI.Primary, "Statistics:");
                         ImGui.Indent();
                         ImGui.Text($"Vertices: {meshAsset.TotalVertexCount:N0}");
                         ImGui.Text($"Triangles: {meshAsset.TotalTriangleCount:N0}");
@@ -318,7 +351,7 @@ namespace Editor.Inspector
                         ImGui.Separator();
                         ImGui.Spacing();
 
-                        ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f), "Bounding Box:");
+                        ImGui.TextColored(UI.Primary, "Bounding Box:");
                         ImGui.Indent();
                         var bounds = meshAsset.Bounds;
                         ImGui.Text($"Center: ({bounds.Center.X:F2}, {bounds.Center.Y:F2}, {bounds.Center.Z:F2})");
@@ -332,7 +365,7 @@ namespace Editor.Inspector
                             ImGui.Separator();
                             ImGui.Spacing();
 
-                            ImGui.TextColored(new System.Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f), "Imported Materials:");
+                            ImGui.TextColored(UI.Primary, "Imported Materials:");
                             ImGui.Indent();
                             for (int i = 0; i < meshAsset.MaterialGuids.Count; i++)
                             {
@@ -356,49 +389,6 @@ namespace Editor.Inspector
                     }
 
                     InspectorWidgets.EndSection();
-                }
-            }
-
-            // === COLLISION HELPER SECTION ===
-            if (meshRenderer.IsUsingCustomMesh() && meshRenderer.Entity != null)
-            {
-                // Vérifier si l'entité a déjà un MeshCollider spécifiquement
-                bool hasMeshCollider = meshRenderer.Entity.HasComponent<MeshCollider>();
-                bool hasAnyCollider = meshRenderer.Entity.HasComponent<Engine.Components.Collider>();
-
-                if (!hasMeshCollider)
-                {
-                    ImGui.Spacing();
-                    ImGui.Separator();
-                    ImGui.Spacing();
-
-                    if (!hasAnyCollider)
-                    {
-                        InspectorWidgets.InfoBox("💡 This mesh has no collision. Add a MeshCollider for precise collision detection.");
-                    }
-                    else
-                    {
-                        InspectorWidgets.InfoBox("💡 This mesh has a basic collider. Add a MeshCollider for precise collision detection.");
-                    }
-
-                    if (ImGui.Button("Add MeshCollider", new System.Numerics.Vector2(-1, 0)))
-                    {
-                        var meshCollider = meshRenderer.Entity.AddComponent<MeshCollider>();
-                        meshCollider.UseMeshRendererMesh = true;
-                        Console.WriteLine($"[MeshRendererInspector] Auto-added MeshCollider to '{meshRenderer.Entity.Name}'");
-                    }
-
-                    if (ImGui.IsItemHovered())
-                    {
-                        ImGui.SetTooltip("Add a MeshCollider that follows the exact shape of this mesh");
-                    }
-                }
-                else
-                {
-                    ImGui.Spacing();
-                    ImGui.Separator();
-                    ImGui.Spacing();
-                    ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.8f, 0.4f, 1.0f), "✓ MeshCollider already added");
                 }
             }
         }

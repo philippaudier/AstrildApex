@@ -4,14 +4,16 @@ using System.Numerics;
 using ImGuiNET;
 using Engine.Audio.Assets;
 using Engine.Assets;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Inspecteur pour les fichiers audio dans le panneau Assets
+    /// Modern Audio Clip inspector with unified UX
     /// </summary>
     public static class AudioClipInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         public static void Draw(Guid assetGuid)
         {
             if (!AssetDatabase.TryGet(assetGuid, out var record))

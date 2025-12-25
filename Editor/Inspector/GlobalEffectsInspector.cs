@@ -4,11 +4,15 @@ using ImGuiNET;
 using Engine.Components;
 using Engine.Rendering;
 using System.Numerics;
+using Editor.Themes;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
     public static class GlobalEffectsInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         public static void DrawInspector(GlobalEffects globalEffects)
         {
             if (globalEffects == null) return;
@@ -76,6 +80,12 @@ namespace Editor.Inspector
                     ImGui.CloseCurrentPopup();
                 }
 
+                if (ImGui.MenuItem("Image Sharpening") && !globalEffects.HasEffect<ImageSharpeningEffect>())
+                {
+                    globalEffects.AddEffect<ImageSharpeningEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
                 ImGui.EndPopup();
             }
 
@@ -93,7 +103,7 @@ namespace Editor.Inspector
         private static void DrawEffectInspector(PostProcessEffect effect, GlobalEffects globalEffects, int index)
         {
             var flags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.Framed;
-            bool nodeOpen = ImGui.TreeNodeEx($"{effect.EffectName}##{index}", flags);
+            bool nodeOpen = ThemedImGui.TreeNodeEx($"{effect.EffectName}##{index}", flags);
 
             // Bouton pour supprimer l'effet
             ImGui.SameLine(ImGui.GetWindowWidth() - 30);
@@ -115,6 +125,8 @@ namespace Editor.Inspector
                     globalEffects.RemoveEffect<DepthOfFieldEffect>();
                 else if (effect is MotionBlurEffect)
                     globalEffects.RemoveEffect<MotionBlurEffect>();
+                else if (effect is ImageSharpeningEffect)
+                    globalEffects.RemoveEffect<ImageSharpeningEffect>();
             }
 
             if (nodeOpen)
@@ -159,6 +171,10 @@ namespace Editor.Inspector
                 else if (effect is MotionBlurEffect motionBlur)
                 {
                     DrawMotionBlurInspector(motionBlur, index);
+                }
+                else if (effect is ImageSharpeningEffect sharpening)
+                {
+                    DrawImageSharpeningInspector(sharpening, index);
                 }
 
                 ImGui.TreePop();
@@ -732,6 +748,64 @@ namespace Editor.Inspector
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("Extreme motion blur\nVery strong effect, high quality");
+            }
+        }
+
+        private static void DrawImageSharpeningInspector(ImageSharpeningEffect sharpening, int index)
+        {
+            ImGui.Text("Image Sharpening Settings");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Sharpness strength
+            sharpening.Sharpness = ImGuiHelper.SliderFloat($"Sharpness##{index}", sharpening.Sharpness, 0.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Sharpening strength\n0.0 = no sharpening\n0.5 = balanced (recommended)\n1.0 = maximum sharpening");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Info");
+            ImGui.Spacing();
+
+            ImGui.TextWrapped("AMD FidelityFX Contrast Adaptive Sharpening (CAS)");
+            ImGui.Spacing();
+            ImGui.TextWrapped("Edge-aware sharpening that prevents over-sharpening and halos. High contrast areas (edges) get less sharpening to prevent artifacts, while low contrast areas get more sharpening for clarity.");
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Presets");
+            ImGui.Spacing();
+
+            if (ImGui.Button($"Subtle (0.3)##{index}", new Vector2(-1, 0)))
+            {
+                sharpening.Sharpness = 0.3f;
+                sharpening.Intensity = 1.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Subtle sharpening\nGood for general use");
+            }
+
+            if (ImGui.Button($"Balanced (0.5)##{index}", new Vector2(-1, 0)))
+            {
+                sharpening.Sharpness = 0.5f;
+                sharpening.Intensity = 1.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Balanced sharpening (recommended)\nNoticeable improvement without artifacts");
+            }
+
+            if (ImGui.Button($"Strong (0.8)##{index}", new Vector2(-1, 0)))
+            {
+                sharpening.Sharpness = 0.8f;
+                sharpening.Intensity = 1.0f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Strong sharpening\nVery crisp image, use carefully");
             }
         }
     }

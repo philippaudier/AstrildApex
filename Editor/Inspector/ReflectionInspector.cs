@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Numerics;
 using ImGuiNET;
 using Editor.State;
+using Editor.UI;
 using Engine.Inspector;
 using Engine.Scene;
 using OpenTK.Mathematics;
@@ -30,10 +31,8 @@ namespace Editor.Inspector
         public static void DrawForEntity(Entity ent)
         {
             if (ent == null) return;
-            if (ImGui.CollapsingHeader("Components & Data", ImGuiTreeNodeFlags.DefaultOpen))
-            {
-                DrawObject(ent, "", "Entity");
-            }
+            // Removed "Components & Data" section - directly show entity data
+            // DrawObject(ent, "", "Entity");
             
             // Process any component removals at the end of the frame
             ProcessComponentRemovals();
@@ -100,17 +99,9 @@ namespace Editor.Inspector
         {
             ImGui.Spacing();
             
-            // Blue header color like before
-            var headerBgColor = new System.Numerics.Vector4(0.2f, 0.4f, 0.8f, 1.0f); // Blue like before
-            
-            ImGui.PushStyleColor(ImGuiCol.Header, headerBgColor);
-            ImGui.PushStyleColor(ImGuiCol.HeaderHovered, headerBgColor * 1.1f);
-            ImGui.PushStyleColor(ImGuiCol.HeaderActive, headerBgColor * 1.2f);
-            
-            // Simple CollapsingHeader like before
-            bool isOpen = ImGui.CollapsingHeader($"{name}##{name}_header", ImGuiTreeNodeFlags.DefaultOpen);
-            
-            ImGui.PopStyleColor(3);
+            // Use themed header colors instead of hardcoded blue
+            // ThemedImGui.CollapsingHeader already handles contrast automatically
+            bool isOpen = ThemedImGui.CollapsingHeader($"{name}##{name}_header", ImGuiTreeNodeFlags.DefaultOpen);
             
             // If component is open, show controls below
             if (isOpen)
@@ -171,6 +162,7 @@ namespace Editor.Inspector
         
         public static void ProcessComponentRemovals()
         {
+            bool anyRemoved = false;
             foreach (var component in _componentsToRemove)
             {
                 if (component.Entity != null)
@@ -184,10 +176,17 @@ namespace Editor.Inspector
                     {
                         var genericMethod = removeMethod.MakeGenericMethod(componentType);
                         genericMethod.Invoke(component.Entity, null);
+                        anyRemoved = true;
                     }
                 }
             }
             _componentsToRemove.Clear();
+            
+            // Invalidate the component cache in InspectorPanel if any component was removed
+            if (anyRemoved)
+            {
+                Editor.Panels.InspectorPanel.InvalidateComponentCache();
+            }
         }
 
         static void DrawXYZFields(string label, ref System.Numerics.Vector3 value, float step)
@@ -253,7 +252,7 @@ namespace Editor.Inspector
         {
             if (obj == null) return;
             var t = obj.GetType();
-            if (ImGui.TreeNode($"{title} [{t.Name}]"))
+            if (ThemedImGui.TreeNode($"{title} [{t.Name}]"))
             {
                 DrawMembers(obj, t, basePath);
                 ImGui.TreePop();
@@ -407,7 +406,7 @@ namespace Editor.Inspector
                 }
                 else
                 {
-                    if (cur != null && ImGui.TreeNode($"{label}"))
+                    if (cur != null && ThemedImGui.TreeNode($"{label}"))
                     {
                         DrawObject(cur, path, label);
                         ImGui.TreePop();

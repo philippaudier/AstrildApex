@@ -77,6 +77,9 @@ namespace Engine.Core
         // Fixed timestep for physics
         private double _fixedTimeAccumulator = 0.0;
         private const double FixedTimeStep = 1.0 / 60.0; // 60 Hz physics
+        
+        // Track last frame time for Time.DeltaTime
+        private DateTime _lastFrameTime = DateTime.UtcNow;
 
         // PERFORMANCE: Cache UpdatePhase enum values to avoid Enum.GetValues() allocation every frame
         private static readonly UpdatePhase[] AllPhases = (UpdatePhase[])Enum.GetValues(typeof(UpdatePhase));
@@ -192,6 +195,9 @@ namespace Engine.Core
         /// <param name="deltaTime">Time since last frame in seconds</param>
         public void ExecuteFrame(float deltaTime)
         {
+            // Update Time class with current frame delta
+            Time.Update(deltaTime);
+            
             RebuildPipeline();
 
             // Execute each phase in order - use cached enum values to avoid allocation

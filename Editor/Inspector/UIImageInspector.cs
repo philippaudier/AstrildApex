@@ -1,10 +1,14 @@
 using ImGuiNET;
 using System.Numerics;
+using Editor.Themes;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
     public static class UIImageInspector
     {
+        private static UITheme UI => ThemeManager.UI;
+        
         public static void Draw(Engine.Components.UI.UIImageComponent img)
         {
             ImGui.Text("UIImage");
@@ -121,7 +125,7 @@ namespace Editor.Inspector
             }
 
             // Manual GUID input (fallback)
-            if (ImGui.TreeNode("Manual GUID Input"))
+            if (ThemedImGui.TreeNode("Manual GUID Input"))
             {
                 var guidStr = img.TextureGuid.HasValue ? img.TextureGuid.Value.ToString() : string.Empty;
                 if (ImGui.InputText("##TextureGUID", ref guidStr, 64))

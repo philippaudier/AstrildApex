@@ -18,6 +18,10 @@ namespace Editor.Themes
         {
             return new List<EditorTheme>
             {
+                // Default themes
+                AstrildLight(),
+                AstrildDark(),
+                
                 // Glassmorphism originals
                 PurpleDream(),
                 PinkPassion(),
@@ -48,6 +52,235 @@ namespace Editor.Themes
                 NordAurora()
             };
         }
+        
+        /// <summary>
+        /// Astrild Light - Light theme with Monokai Pro Light colors (DEFAULT)
+        /// </summary>
+        public static EditorTheme AstrildLight()
+        {
+            return new EditorTheme
+            {
+                Name = "Astrild Light",
+                Description = "Clean light theme with Monokai Pro Light palette - vibrant and professional",
+                
+                // Window & Background - Off-white/cream (#F5F2EF)
+                WindowBackground = new Vector4(0.96f, 0.95f, 0.94f, 0.98f),  // #F5F2EF
+                ChildBackground = new Vector4(0.98f, 0.97f, 0.96f, 0.95f),   // Slightly lighter
+                PopupBackground = new Vector4(0.99f, 0.98f, 0.97f, 0.99f),   // Almost white
+                Border = new Vector4(0.70f, 0.68f, 0.65f, 0.35f),            // Subtle gray border
+                
+                // Text - Dark gray (#3D3B3A)
+                Text = new Vector4(0.24f, 0.23f, 0.23f, 1f),                 // #3D3B3A
+                TextDisabled = new Vector4(0.58f, 0.57f, 0.55f, 1f),         // Muted gray
+                TextSelectedBg = new Vector4(0.85f, 0.82f, 0.78f, 0.4f),     // Beige selection
+                
+                // Frames - Very light with subtle borders
+                FrameBg = new Vector4(1f, 0.99f, 0.98f, 0.85f),              // Almost white
+                FrameBgHovered = new Vector4(0.96f, 0.94f, 0.90f, 0.9f),
+                FrameBgActive = new Vector4(0.92f, 0.90f, 0.86f, 1f),
+                
+                // Title Bar - Magenta (#D9436E)
+                TitleBg = new Vector4(0.85f, 0.26f, 0.43f, 0.9f),            // #D9436E
+                TitleBgActive = new Vector4(0.90f, 0.32f, 0.48f, 1f),
+                TitleBgCollapsed = new Vector4(0.85f, 0.26f, 0.43f, 0.6f),
+                
+                // Menu Bar
+                MenuBarBg = new Vector4(0.94f, 0.93f, 0.92f, 0.95f),
+                
+                // Scrollbar
+                ScrollbarBg = new Vector4(0.92f, 0.91f, 0.90f, 0.6f),
+                ScrollbarGrab = new Vector4(0.65f, 0.63f, 0.60f, 0.6f),
+                ScrollbarGrabHovered = new Vector4(0.85f, 0.26f, 0.43f, 0.7f),  // Magenta
+                ScrollbarGrabActive = new Vector4(0.85f, 0.26f, 0.43f, 0.85f),
+                
+                // CheckMark - Green (#19AC5E)
+                CheckMark = new Vector4(0.10f, 0.67f, 0.37f, 1f),            // #19AC5E
+                
+                // Slider - Magenta (#D9436E)
+                SliderGrab = new Vector4(0.85f, 0.26f, 0.43f, 0.85f),
+                SliderGrabActive = new Vector4(0.85f, 0.26f, 0.43f, 1f),
+                
+                // Buttons
+                Button = new Vector4(0.88f, 0.87f, 0.85f, 0.8f),
+                ButtonHovered = new Vector4(0.85f, 0.26f, 0.43f, 0.25f),     // Magenta tint
+                ButtonActive = new Vector4(0.85f, 0.26f, 0.43f, 0.4f),
+                
+                // Header - Blue (#0C78D9)
+                Header = new Vector4(0.05f, 0.47f, 0.85f, 0.35f),            // #0C78D9
+                HeaderHovered = new Vector4(0.05f, 0.47f, 0.85f, 0.5f),
+                HeaderActive = new Vector4(0.05f, 0.47f, 0.85f, 0.65f),
+                
+                // Separator
+                Separator = new Vector4(0.70f, 0.68f, 0.65f, 0.5f),
+                SeparatorHovered = new Vector4(0.85f, 0.26f, 0.43f, 0.7f),
+                SeparatorActive = new Vector4(0.85f, 0.26f, 0.43f, 0.9f),
+                
+                // Resize Grip
+                ResizeGrip = new Vector4(0.70f, 0.68f, 0.65f, 0.4f),
+                ResizeGripHovered = new Vector4(0.85f, 0.26f, 0.43f, 0.6f),
+                ResizeGripActive = new Vector4(0.85f, 0.26f, 0.43f, 0.8f),
+                
+                // Tabs
+                Tab = new Vector4(0.90f, 0.89f, 0.88f, 0.85f),
+                TabHovered = new Vector4(0.92f, 0.91f, 0.90f, 0.95f),
+                TabActive = new Vector4(0.96f, 0.95f, 0.94f, 1f),            // Active = background color
+                TabUnfocused = new Vector4(0.88f, 0.87f, 0.86f, 0.75f),
+                TabUnfocusedActive = new Vector4(0.94f, 0.93f, 0.92f, 0.85f),
+                
+                // Docking
+                DockingPreview = new Vector4(0.05f, 0.47f, 0.85f, 0.4f),     // Blue
+                DockingEmptyBg = new Vector4(0.96f, 0.95f, 0.94f, 0.5f),
+                
+                // Table
+                TableHeaderBg = new Vector4(0.88f, 0.87f, 0.85f, 0.9f),
+                TableBorderStrong = new Vector4(0.70f, 0.68f, 0.65f, 0.6f),
+                TableBorderLight = new Vector4(0.80f, 0.78f, 0.75f, 0.3f),
+                TableRowBg = new Vector4(0f, 0f, 0f, 0f),
+                TableRowBgAlt = new Vector4(0.70f, 0.68f, 0.65f, 0.08f),
+                
+                // Drag Drop - Orange (#CE7D1F)
+                DragDropTarget = new Vector4(0.81f, 0.49f, 0.12f, 0.5f),     // #CE7D1F
+                
+                // Nav
+                NavHighlight = new Vector4(0.85f, 0.26f, 0.43f, 1f),         // Magenta
+                NavWindowingHighlight = new Vector4(0.05f, 0.47f, 0.85f, 0.8f),  // Blue
+                NavWindowingDimBg = new Vector4(0.24f, 0.23f, 0.23f, 0.2f),
+                
+                // Modal
+                ModalWindowDimBg = new Vector4(0.24f, 0.23f, 0.23f, 0.6f),
+                
+                // Inspector Custom Colors - Monokai Pro Light palette
+                InspectorLabel = new Vector4(0.30f, 0.29f, 0.28f, 1f),
+                InspectorValue = new Vector4(0.24f, 0.23f, 0.23f, 1f),
+                InspectorWarning = new Vector4(0.81f, 0.49f, 0.12f, 1f),     // Orange #CE7D1F
+                InspectorError = new Vector4(0.85f, 0.26f, 0.43f, 1f),       // Magenta #D9436E
+                InspectorSuccess = new Vector4(0.10f, 0.67f, 0.37f, 1f),     // Green #19AC5E
+                InspectorInfo = new Vector4(0.05f, 0.47f, 0.85f, 1f),        // Blue #0C78D9
+                InspectorSection = new Vector4(0.42f, 0.38f, 0.75f, 1f),     // Purple #6B61BA
+                
+                // Gradients
+                GradientStart = new Vector4(0.85f, 0.26f, 0.43f, 1f),        // Magenta
+                GradientEnd = new Vector4(0.42f, 0.38f, 0.75f, 1f),          // Purple
+                
+                // Accent Color - Magenta
+                AccentColor = new Vector4(0.85f, 0.26f, 0.43f, 1f)
+            };
+        }
+        
+        /// <summary>
+        /// Astrild Dark - Dark theme with Monokai Pro colors
+        /// </summary>
+        public static EditorTheme AstrildDark()
+        {
+            return new EditorTheme
+            {
+                Name = "Astrild Dark",
+                Description = "Dark theme with Monokai Pro palette - elegant and vibrant",
+                
+                // Window & Background - Dark gray (#2D2A2E)
+                WindowBackground = new Vector4(0.18f, 0.16f, 0.18f, 0.98f),  // #2D2A2E
+                ChildBackground = new Vector4(0.20f, 0.18f, 0.20f, 0.95f),
+                PopupBackground = new Vector4(0.16f, 0.14f, 0.16f, 0.99f),
+                Border = new Vector4(0.40f, 0.37f, 0.40f, 0.5f),
+                
+                // Text - Light gray (#FCFCFA)
+                Text = new Vector4(0.99f, 0.99f, 0.98f, 1f),                 // #FCFCFA
+                TextDisabled = new Vector4(0.60f, 0.58f, 0.60f, 1f),
+                TextSelectedBg = new Vector4(0.40f, 0.37f, 0.40f, 0.4f),
+                
+                // Frames - Slightly lighter dark
+                FrameBg = new Vector4(0.15f, 0.13f, 0.15f, 0.85f),
+                FrameBgHovered = new Vector4(0.22f, 0.20f, 0.22f, 0.9f),
+                FrameBgActive = new Vector4(0.28f, 0.25f, 0.28f, 1f),
+                
+                // Title Bar - Magenta/Pink (#FF6188)
+                TitleBg = new Vector4(1f, 0.38f, 0.53f, 0.85f),              // #FF6188
+                TitleBgActive = new Vector4(1f, 0.38f, 0.53f, 1f),
+                TitleBgCollapsed = new Vector4(1f, 0.38f, 0.53f, 0.6f),
+                
+                // Menu Bar
+                MenuBarBg = new Vector4(0.16f, 0.14f, 0.16f, 0.95f),
+                
+                // Scrollbar
+                ScrollbarBg = new Vector4(0.18f, 0.16f, 0.18f, 0.6f),
+                ScrollbarGrab = new Vector4(0.50f, 0.47f, 0.50f, 0.6f),
+                ScrollbarGrabHovered = new Vector4(1f, 0.38f, 0.53f, 0.7f),  // Pink
+                ScrollbarGrabActive = new Vector4(1f, 0.38f, 0.53f, 0.85f),
+                
+                // CheckMark - Green (#A9DC76)
+                CheckMark = new Vector4(0.66f, 0.86f, 0.46f, 1f),            // #A9DC76
+                
+                // Slider - Pink (#FF6188)
+                SliderGrab = new Vector4(1f, 0.38f, 0.53f, 0.85f),
+                SliderGrabActive = new Vector4(1f, 0.38f, 0.53f, 1f),
+                
+                // Buttons
+                Button = new Vector4(0.35f, 0.32f, 0.35f, 0.8f),
+                ButtonHovered = new Vector4(1f, 0.38f, 0.53f, 0.3f),         // Pink tint
+                ButtonActive = new Vector4(1f, 0.38f, 0.53f, 0.5f),
+                
+                // Header - Cyan (#78DCE8)
+                Header = new Vector4(0.47f, 0.86f, 0.91f, 0.35f),            // #78DCE8
+                HeaderHovered = new Vector4(0.47f, 0.86f, 0.91f, 0.5f),
+                HeaderActive = new Vector4(0.47f, 0.86f, 0.91f, 0.65f),
+                
+                // Separator
+                Separator = new Vector4(0.40f, 0.37f, 0.40f, 0.5f),
+                SeparatorHovered = new Vector4(1f, 0.38f, 0.53f, 0.7f),
+                SeparatorActive = new Vector4(1f, 0.38f, 0.53f, 0.9f),
+                
+                // Resize Grip
+                ResizeGrip = new Vector4(0.40f, 0.37f, 0.40f, 0.4f),
+                ResizeGripHovered = new Vector4(1f, 0.38f, 0.53f, 0.6f),
+                ResizeGripActive = new Vector4(1f, 0.38f, 0.53f, 0.8f),
+                
+                // Tabs
+                Tab = new Vector4(0.25f, 0.23f, 0.25f, 0.85f),
+                TabHovered = new Vector4(0.28f, 0.26f, 0.28f, 0.95f),
+                TabActive = new Vector4(0.35f, 0.32f, 0.35f, 1f),
+                TabUnfocused = new Vector4(0.22f, 0.20f, 0.22f, 0.75f),
+                TabUnfocusedActive = new Vector4(0.30f, 0.28f, 0.30f, 0.85f),
+                
+                // Docking
+                DockingPreview = new Vector4(0.47f, 0.86f, 0.91f, 0.4f),     // Cyan
+                DockingEmptyBg = new Vector4(0.18f, 0.16f, 0.18f, 0.5f),
+                
+                // Table
+                TableHeaderBg = new Vector4(0.25f, 0.23f, 0.25f, 0.9f),
+                TableBorderStrong = new Vector4(0.40f, 0.37f, 0.40f, 0.6f),
+                TableBorderLight = new Vector4(0.35f, 0.32f, 0.35f, 0.3f),
+                TableRowBg = new Vector4(0f, 0f, 0f, 0f),
+                TableRowBgAlt = new Vector4(0.40f, 0.37f, 0.40f, 0.1f),
+                
+                // Drag Drop - Orange (#FC9867)
+                DragDropTarget = new Vector4(0.99f, 0.60f, 0.40f, 0.5f),     // #FC9867
+                
+                // Nav
+                NavHighlight = new Vector4(1f, 0.38f, 0.53f, 1f),            // Pink
+                NavWindowingHighlight = new Vector4(0.47f, 0.86f, 0.91f, 0.8f),  // Cyan
+                NavWindowingDimBg = new Vector4(0.10f, 0.09f, 0.10f, 0.7f),
+                
+                // Modal
+                ModalWindowDimBg = new Vector4(0.10f, 0.09f, 0.10f, 0.75f),
+                
+                // Inspector Custom Colors - Monokai Pro palette
+                InspectorLabel = new Vector4(0.85f, 0.85f, 0.83f, 1f),
+                InspectorValue = new Vector4(0.99f, 0.99f, 0.98f, 1f),
+                InspectorWarning = new Vector4(1f, 0.85f, 0.40f, 1f),        // Yellow #FFD866
+                InspectorError = new Vector4(1f, 0.38f, 0.53f, 1f),          // Pink #FF6188
+                InspectorSuccess = new Vector4(0.66f, 0.86f, 0.46f, 1f),     // Green #A9DC76
+                InspectorInfo = new Vector4(0.47f, 0.86f, 0.91f, 1f),        // Cyan #78DCE8
+                InspectorSection = new Vector4(0.67f, 0.57f, 1f, 1f),        // Purple #AB9DF2
+                
+                // Gradients
+                GradientStart = new Vector4(1f, 0.38f, 0.53f, 1f),           // Pink
+                GradientEnd = new Vector4(0.67f, 0.57f, 1f, 1f),             // Purple
+                
+                // Accent Color - Pink
+                AccentColor = new Vector4(1f, 0.38f, 0.53f, 1f)
+            };
+        }
+        
         /// <summary>
         /// Purple Dream - Glassmorphism theme with purple gradients (from your HTML design)
         /// </summary>
@@ -74,10 +307,10 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(1f, 1f, 1f, 0.15f),
                 FrameBgActive = new Vector4(1f, 1f, 1f, 0.2f),
                 
-                // Title Bar - Purple gradient
-                TitleBg = new Vector4(0.4f, 0.49f, 0.92f, 0.8f),
-                TitleBgActive = new Vector4(0.4f, 0.49f, 0.92f, 1f),
-                TitleBgCollapsed = new Vector4(0.4f, 0.49f, 0.92f, 0.5f),
+                // Title Bar - Purple gradient (FIXED: Darkened for WCAG AA compliance)
+                TitleBg = new Vector4(0.25f, 0.35f, 0.75f, 0.9f),
+                TitleBgActive = new Vector4(0.30f, 0.40f, 0.80f, 1f),
+                TitleBgCollapsed = new Vector4(0.25f, 0.35f, 0.75f, 0.6f),
                 
                 // Menu Bar
                 MenuBarBg = new Vector4(0.15f, 0.15f, 0.2f, 0.9f),
@@ -100,10 +333,10 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(1f, 1f, 1f, 0.2f),
                 ButtonActive = new Vector4(0.94f, 0.58f, 0.99f, 0.4f),
                 
-                // Header - Section headers (from your design)
-                Header = new Vector4(0.3f, 0.5f, 0.8f, 0.8f),
-                HeaderHovered = new Vector4(0.4f, 0.6f, 0.9f, 0.9f),
-                HeaderActive = new Vector4(0.5f, 0.7f, 1.0f, 1f),
+                // Header - Section headers (FIXED: Darkened for contrast)
+                Header = new Vector4(0.20f, 0.30f, 0.65f, 0.9f),
+                HeaderHovered = new Vector4(0.25f, 0.35f, 0.75f, 0.95f),
+                HeaderActive = new Vector4(0.30f, 0.40f, 0.80f, 1f),
                 
                 // Separator
                 Separator = new Vector4(1f, 1f, 1f, 0.2f),
@@ -192,9 +425,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0.2f, 0.4f, 0.6f, 0.3f),
                 FrameBgActive = new Vector4(0.2f, 0.5f, 0.8f, 0.4f),
                 
-                TitleBg = new Vector4(0.31f, 0.67f, 1f, 0.8f),
-                TitleBgActive = new Vector4(0.0f, 0.95f, 1f, 1f),
-                TitleBgCollapsed = new Vector4(0.31f, 0.67f, 1f, 0.5f),
+                TitleBg = new Vector4(0.2f, 0.55f, 0.85f, 0.9f),
+                TitleBgActive = new Vector4(0.0f, 0.65f, 0.80f, 1f),
+                TitleBgCollapsed = new Vector4(0.2f, 0.55f, 0.85f, 0.6f),
                 
                 MenuBarBg = new Vector4(0.08f, 0.13f, 0.18f, 0.95f),
                 
@@ -212,9 +445,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.31f, 0.67f, 1f, 0.4f),
                 ButtonActive = new Vector4(0.0f, 0.95f, 1f, 0.6f),
                 
-                Header = new Vector4(0.2f, 0.45f, 0.7f, 0.8f),
-                HeaderHovered = new Vector4(0.31f, 0.67f, 1f, 0.9f),
-                HeaderActive = new Vector4(0.0f, 0.95f, 1f, 1f),
+                Header = new Vector4(0.10f, 0.35f, 0.60f, 0.9f),
+                HeaderHovered = new Vector4(0.15f, 0.50f, 0.75f, 0.95f),
+                HeaderActive = new Vector4(0.0f, 0.65f, 0.80f, 1f),
                 
                 Separator = new Vector4(0.3f, 0.6f, 0.9f, 0.3f),
                 SeparatorHovered = new Vector4(0.3f, 0.7f, 1f, 0.5f),
@@ -292,9 +525,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0.2f, 0.6f, 0.4f, 0.3f),
                 FrameBgActive = new Vector4(0.26f, 0.91f, 0.48f, 0.4f),
                 
-                TitleBg = new Vector4(0.26f, 0.91f, 0.48f, 0.8f),
-                TitleBgActive = new Vector4(0.22f, 0.97f, 0.84f, 1f),
-                TitleBgCollapsed = new Vector4(0.26f, 0.91f, 0.48f, 0.5f),
+                TitleBg = new Vector4(0.18f, 0.70f, 0.38f, 0.9f),
+                TitleBgActive = new Vector4(0.15f, 0.75f, 0.65f, 1f),
+                TitleBgCollapsed = new Vector4(0.18f, 0.70f, 0.38f, 0.6f),
                 
                 MenuBarBg = new Vector4(0.08f, 0.18f, 0.15f, 0.95f),
                 
@@ -312,9 +545,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.26f, 0.91f, 0.48f, 0.5f),
                 ButtonActive = new Vector4(0.22f, 0.97f, 0.84f, 0.7f),
                 
-                Header = new Vector4(0.2f, 0.7f, 0.5f, 0.8f),
-                HeaderHovered = new Vector4(0.26f, 0.91f, 0.48f, 0.9f),
-                HeaderActive = new Vector4(0.22f, 0.97f, 0.84f, 1f),
+                Header = new Vector4(0.12f, 0.50f, 0.30f, 0.9f),
+                HeaderHovered = new Vector4(0.15f, 0.65f, 0.40f, 0.95f),
+                HeaderActive = new Vector4(0.15f, 0.75f, 0.65f, 1f),
                 
                 Separator = new Vector4(0.3f, 0.9f, 0.6f, 0.3f),
                 SeparatorHovered = new Vector4(0.3f, 1f, 0.7f, 0.5f),
@@ -412,9 +645,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.94f, 0.58f, 0.99f, 0.5f),
                 ButtonActive = new Vector4(0.96f, 0.34f, 0.42f, 0.7f),
                 
-                Header = new Vector4(0.8f, 0.3f, 0.6f, 0.8f),
-                HeaderHovered = new Vector4(0.94f, 0.58f, 0.99f, 0.9f),
-                HeaderActive = new Vector4(0.96f, 0.34f, 0.42f, 1f),
+                Header = new Vector4(0.60f, 0.15f, 0.40f, 0.9f),
+                HeaderHovered = new Vector4(0.75f, 0.25f, 0.55f, 0.95f),
+                HeaderActive = new Vector4(0.85f, 0.20f, 0.35f, 1f),
                 
                 Separator = new Vector4(1f, 0.5f, 0.8f, 0.3f),
                 SeparatorHovered = new Vector4(1f, 0.6f, 0.85f, 0.5f),
@@ -492,9 +725,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(1f, 0.6f, 0.2f, 0.3f),
                 FrameBgActive = new Vector4(1f, 0.88f, 0.25f, 0.4f),
                 
-                TitleBg = new Vector4(0.98f, 0.56f, 0.34f, 0.8f),
-                TitleBgActive = new Vector4(1f, 0.88f, 0.25f, 1f),
-                TitleBgCollapsed = new Vector4(0.98f, 0.56f, 0.34f, 0.5f),
+                TitleBg = new Vector4(0.80f, 0.40f, 0.15f, 0.9f),
+                TitleBgActive = new Vector4(0.75f, 0.45f, 0.10f, 1f),
+                TitleBgCollapsed = new Vector4(0.80f, 0.40f, 0.15f, 0.6f),
                 
                 MenuBarBg = new Vector4(0.18f, 0.13f, 0.1f, 0.95f),
                 
@@ -512,9 +745,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.98f, 0.56f, 0.34f, 0.5f),
                 ButtonActive = new Vector4(1f, 0.88f, 0.25f, 0.7f),
                 
-                Header = new Vector4(0.9f, 0.5f, 0.2f, 0.8f),
-                HeaderHovered = new Vector4(0.98f, 0.56f, 0.34f, 0.9f),
-                HeaderActive = new Vector4(1f, 0.88f, 0.25f, 1f),
+                Header = new Vector4(0.65f, 0.35f, 0.10f, 0.9f),
+                HeaderHovered = new Vector4(0.75f, 0.40f, 0.12f, 0.95f),
+                HeaderActive = new Vector4(0.75f, 0.45f, 0.10f, 1f),
                 
                 Separator = new Vector4(1f, 0.7f, 0.3f, 0.3f),
                 SeparatorHovered = new Vector4(1f, 0.8f, 0.4f, 0.5f),
@@ -612,9 +845,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.19f, 0.81f, 0.82f, 0.5f),
                 ButtonActive = new Vector4(0.2f, 0.03f, 0.4f, 0.7f),
                 
-                Header = new Vector4(0.1f, 0.3f, 0.6f, 0.8f),
-                HeaderHovered = new Vector4(0.19f, 0.81f, 0.82f, 0.9f),
-                HeaderActive = new Vector4(0.2f, 0.03f, 0.4f, 1f),
+                Header = new Vector4(0.08f, 0.25f, 0.50f, 0.9f),
+                HeaderHovered = new Vector4(0.12f, 0.55f, 0.65f, 0.95f),
+                HeaderActive = new Vector4(0.15f, 0.02f, 0.35f, 1f),
                 
                 Separator = new Vector4(0.2f, 0.5f, 0.8f, 0.3f),
                 SeparatorHovered = new Vector4(0.3f, 0.7f, 0.9f, 0.5f),
@@ -692,9 +925,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0.7f, 0.6f, 0.7f, 0.25f),
                 FrameBgActive = new Vector4(1f, 0.84f, 0.89f, 0.35f),
                 
-                TitleBg = new Vector4(0.66f, 0.93f, 0.92f, 0.8f),
-                TitleBgActive = new Vector4(1f, 0.84f, 0.89f, 1f),
-                TitleBgCollapsed = new Vector4(0.66f, 0.93f, 0.92f, 0.5f),
+                TitleBg = new Vector4(0.45f, 0.70f, 0.68f, 0.9f),
+                TitleBgActive = new Vector4(0.75f, 0.45f, 0.55f, 1f),
+                TitleBgCollapsed = new Vector4(0.45f, 0.70f, 0.68f, 0.6f),
                 
                 MenuBarBg = new Vector4(0.2f, 0.17f, 0.18f, 0.95f),
                 
@@ -712,9 +945,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.66f, 0.93f, 0.92f, 0.5f),
                 ButtonActive = new Vector4(1f, 0.84f, 0.89f, 0.7f),
                 
-                Header = new Vector4(0.6f, 0.75f, 0.75f, 0.8f),
-                HeaderHovered = new Vector4(0.66f, 0.93f, 0.92f, 0.9f),
-                HeaderActive = new Vector4(1f, 0.84f, 0.89f, 1f),
+                Header = new Vector4(0.40f, 0.55f, 0.55f, 0.9f),
+                HeaderHovered = new Vector4(0.45f, 0.70f, 0.68f, 0.95f),
+                HeaderActive = new Vector4(0.75f, 0.45f, 0.55f, 1f),
                 
                 Separator = new Vector4(0.8f, 0.7f, 0.8f, 0.3f),
                 SeparatorHovered = new Vector4(0.85f, 0.8f, 0.85f, 0.5f),
@@ -792,9 +1025,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(1f, 0.5f, 0.3f, 0.25f),
                 FrameBgActive = new Vector4(1f, 0.41f, 0.53f, 0.35f),
                 
-                TitleBg = new Vector4(1f, 0.6f, 0.34f, 0.8f),
-                TitleBgActive = new Vector4(1f, 0.41f, 0.53f, 1f),
-                TitleBgCollapsed = new Vector4(1f, 0.6f, 0.34f, 0.5f),
+                TitleBg = new Vector4(0.80f, 0.35f, 0.20f, 0.9f),
+                TitleBgActive = new Vector4(0.85f, 0.25f, 0.35f, 1f),
+                TitleBgCollapsed = new Vector4(0.80f, 0.35f, 0.20f, 0.6f),
                 
                 MenuBarBg = new Vector4(0.18f, 0.13f, 0.12f, 0.95f),
                 
@@ -812,9 +1045,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(1f, 0.6f, 0.34f, 0.5f),
                 ButtonActive = new Vector4(1f, 0.41f, 0.53f, 0.7f),
                 
-                Header = new Vector4(0.9f, 0.45f, 0.35f, 0.8f),
-                HeaderHovered = new Vector4(1f, 0.6f, 0.34f, 0.9f),
-                HeaderActive = new Vector4(1f, 0.41f, 0.53f, 1f),
+                Header = new Vector4(0.70f, 0.30f, 0.20f, 0.9f),
+                HeaderHovered = new Vector4(0.80f, 0.35f, 0.20f, 0.95f),
+                HeaderActive = new Vector4(0.85f, 0.25f, 0.35f, 1f),
                 
                 Separator = new Vector4(1f, 0.6f, 0.5f, 0.3f),
                 SeparatorHovered = new Vector4(1f, 0.7f, 0.6f, 0.5f),
@@ -984,17 +1217,17 @@ namespace Editor.Themes
                 PopupBackground = new Vector4(0.09f, 0.055f, 0.13f, 0.98f),
                 Border = new Vector4(1f, 0f, 0.5f, 0.4f),
                 
-                Text = new Vector4(1f, 0.2f, 0.6f, 1f),
-                TextDisabled = new Vector4(0.6f, 0.3f, 0.5f, 1f),
+                Text = new Vector4(1f, 0.5f, 0.8f, 1f),
+                TextDisabled = new Vector4(0.7f, 0.4f, 0.6f, 1f),
                 TextSelectedBg = new Vector4(1f, 0f, 0.5f, 0.4f),
                 
                 FrameBg = new Vector4(0.3f, 0f, 0.4f, 0.3f),
                 FrameBgHovered = new Vector4(0.4f, 0f, 0.5f, 0.4f),
                 FrameBgActive = new Vector4(1f, 0f, 0.5f, 0.5f),
                 
-                TitleBg = new Vector4(0.2f, 0f, 0.35f, 0.9f),
-                TitleBgActive = new Vector4(1f, 0f, 0.5f, 1f),
-                TitleBgCollapsed = new Vector4(0.2f, 0f, 0.35f, 0.6f),
+                TitleBg = new Vector4(0.15f, 0f, 0.25f, 0.95f),
+                TitleBgActive = new Vector4(0.65f, 0f, 0.35f, 1f),
+                TitleBgCollapsed = new Vector4(0.15f, 0f, 0.25f, 0.65f),
                 
                 MenuBarBg = new Vector4(0.1f, 0.06f, 0.14f, 0.98f),
                 
@@ -1012,9 +1245,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(1f, 0f, 0.5f, 0.7f),
                 ButtonActive = new Vector4(0f, 1f, 1f, 0.8f),
                 
-                Header = new Vector4(0.25f, 0f, 0.4f, 0.85f),
-                HeaderHovered = new Vector4(1f, 0f, 0.5f, 0.9f),
-                HeaderActive = new Vector4(0f, 1f, 1f, 1f),
+                Header = new Vector4(0.15f, 0f, 0.25f, 0.95f),
+                HeaderHovered = new Vector4(0.55f, 0f, 0.30f, 0.95f),
+                HeaderActive = new Vector4(0.65f, 0f, 0.35f, 1f),
                 
                 Separator = new Vector4(1f, 0f, 0.5f, 0.4f),
                 SeparatorHovered = new Vector4(1f, 0f, 0.5f, 0.6f),
@@ -1112,9 +1345,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.3f, 0.2f, 0.7f, 0.7f),
                 ButtonActive = new Vector4(0.5f, 0.4f, 0.9f, 0.9f),
                 
-                Header = new Vector4(0.15f, 0.1f, 0.4f, 0.85f),
-                HeaderHovered = new Vector4(0.3f, 0.2f, 0.7f, 0.95f),
-                HeaderActive = new Vector4(0.5f, 0.4f, 0.9f, 1f),
+                Header = new Vector4(0.12f, 0.08f, 0.35f, 0.9f),
+                HeaderHovered = new Vector4(0.25f, 0.18f, 0.60f, 0.95f),
+                HeaderActive = new Vector4(0.40f, 0.30f, 0.75f, 1f),
                 
                 Separator = new Vector4(0.3f, 0.2f, 0.6f, 0.4f),
                 SeparatorHovered = new Vector4(0.4f, 0.3f, 0.8f, 0.6f),
@@ -1192,9 +1425,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0f, 0.5f, 0.25f, 0.4f),
                 FrameBgActive = new Vector4(0f, 1f, 0.5f, 0.5f),
                 
-                TitleBg = new Vector4(0.1f, 0.1f, 0.1f, 0.95f),
-                TitleBgActive = new Vector4(0f, 1f, 0.5f, 1f),
-                TitleBgCollapsed = new Vector4(0.1f, 0.1f, 0.1f, 0.7f),
+                TitleBg = new Vector4(0.05f, 0.15f, 0.10f, 0.98f),
+                TitleBgActive = new Vector4(0f, 0.45f, 0.25f, 1f),
+                TitleBgCollapsed = new Vector4(0.05f, 0.15f, 0.10f, 0.75f),
                 
                 MenuBarBg = new Vector4(0.08f, 0.08f, 0.08f, 0.98f),
                 
@@ -1212,9 +1445,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0f, 1f, 0.5f, 0.7f),
                 ButtonActive = new Vector4(1f, 0f, 1f, 0.9f),
                 
-                Header = new Vector4(0f, 0.4f, 0.2f, 0.85f),
-                HeaderHovered = new Vector4(0f, 1f, 0.5f, 0.95f),
-                HeaderActive = new Vector4(1f, 0f, 1f, 1f),
+                Header = new Vector4(0f, 0.30f, 0.15f, 0.95f),
+                HeaderHovered = new Vector4(0f, 0.40f, 0.20f, 0.95f),
+                HeaderActive = new Vector4(0f, 0.45f, 0.25f, 1f),
                 
                 Separator = new Vector4(0f, 1f, 0.5f, 0.5f),
                 SeparatorHovered = new Vector4(0f, 1f, 0.5f, 0.7f),
@@ -1312,9 +1545,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.25f, 0.6f, 0.25f, 0.7f),
                 ButtonActive = new Vector4(0.35f, 0.8f, 0.35f, 0.9f),
                 
-                Header = new Vector4(0.15f, 0.4f, 0.15f, 0.85f),
-                HeaderHovered = new Vector4(0.25f, 0.7f, 0.25f, 0.95f),
-                HeaderActive = new Vector4(0.35f, 0.9f, 0.35f, 1f),
+                Header = new Vector4(0.12f, 0.35f, 0.12f, 0.9f),
+                HeaderHovered = new Vector4(0.18f, 0.55f, 0.18f, 0.95f),
+                HeaderActive = new Vector4(0.25f, 0.65f, 0.25f, 1f),
                 
                 Separator = new Vector4(0.3f, 0.6f, 0.3f, 0.4f),
                 SeparatorHovered = new Vector4(0.4f, 0.8f, 0.4f, 0.6f),
@@ -1412,9 +1645,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.6f, 0.5f, 0.8f, 0.7f),
                 ButtonActive = new Vector4(0.7f, 0.6f, 0.9f, 0.9f),
                 
-                Header = new Vector4(0.35f, 0.3f, 0.5f, 0.85f),
-                HeaderHovered = new Vector4(0.6f, 0.5f, 0.8f, 0.95f),
-                HeaderActive = new Vector4(0.7f, 0.6f, 0.9f, 1f),
+                Header = new Vector4(0.28f, 0.23f, 0.42f, 0.9f),
+                HeaderHovered = new Vector4(0.45f, 0.38f, 0.65f, 0.95f),
+                HeaderActive = new Vector4(0.55f, 0.45f, 0.75f, 1f),
                 
                 Separator = new Vector4(0.6f, 0.5f, 0.8f, 0.4f),
                 SeparatorHovered = new Vector4(0.7f, 0.6f, 0.9f, 0.6f),
@@ -1512,9 +1745,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(0.8f, 0.5f, 0.2f, 0.7f),
                 ButtonActive = new Vector4(1f, 0.6f, 0.3f, 0.9f),
                 
-                Header = new Vector4(0.5f, 0.3f, 0.15f, 0.85f),
-                HeaderHovered = new Vector4(0.8f, 0.5f, 0.2f, 0.95f),
-                HeaderActive = new Vector4(1f, 0.6f, 0.3f, 1f),
+                Header = new Vector4(0.42f, 0.24f, 0.12f, 0.9f),
+                HeaderHovered = new Vector4(0.65f, 0.38f, 0.15f, 0.95f),
+                HeaderActive = new Vector4(0.80f, 0.45f, 0.18f, 1f),
                 
                 Separator = new Vector4(0.8f, 0.5f, 0.2f, 0.4f),
                 SeparatorHovered = new Vector4(0.9f, 0.6f, 0.3f, 0.6f),
@@ -1592,9 +1825,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0.2f, 0.5f, 0.6f, 0.4f),
                 FrameBgActive = new Vector4(0.27f, 1f, 1f, 0.5f),
                 
-                TitleBg = new Vector4(0.3f, 0.08f, 0.08f, 0.9f),
-                TitleBgActive = new Vector4(1f, 0.27f, 0.27f, 1f),
-                TitleBgCollapsed = new Vector4(0.3f, 0.08f, 0.08f, 0.6f),
+                TitleBg = new Vector4(0.25f, 0.05f, 0.05f, 0.95f),
+                TitleBgActive = new Vector4(0.75f, 0.10f, 0.10f, 1f),
+                TitleBgCollapsed = new Vector4(0.25f, 0.05f, 0.05f, 0.65f),
                 
                 MenuBarBg = new Vector4(0.1f, 0.1f, 0.15f, 0.98f),
                 
@@ -1612,9 +1845,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(1f, 0.27f, 0.27f, 0.7f),
                 ButtonActive = new Vector4(0.27f, 1f, 1f, 0.9f),
                 
-                Header = new Vector4(0.35f, 0.1f, 0.1f, 0.85f),
-                HeaderHovered = new Vector4(1f, 0.27f, 0.27f, 0.95f),
-                HeaderActive = new Vector4(0.27f, 1f, 1f, 1f),
+                Header = new Vector4(0.28f, 0.08f, 0.08f, 0.9f),
+                HeaderHovered = new Vector4(0.60f, 0.12f, 0.12f, 0.95f),
+                HeaderActive = new Vector4(0.75f, 0.10f, 0.10f, 1f),
                 
                 Separator = new Vector4(1f, 0.27f, 0.27f, 0.5f),
                 SeparatorHovered = new Vector4(1f, 0.4f, 0.4f, 0.7f),
@@ -1692,9 +1925,9 @@ namespace Editor.Themes
                 FrameBgHovered = new Vector4(0.15f, 0.25f, 0.5f, 0.4f),
                 FrameBgActive = new Vector4(1f, 0.84f, 0f, 0.5f),
                 
-                TitleBg = new Vector4(0.08f, 0.12f, 0.3f, 0.9f),
-                TitleBgActive = new Vector4(1f, 0.84f, 0f, 1f),
-                TitleBgCollapsed = new Vector4(0.08f, 0.12f, 0.3f, 0.6f),
+                TitleBg = new Vector4(0.08f, 0.12f, 0.3f, 0.95f),
+                TitleBgActive = new Vector4(0.65f, 0.50f, 0f, 1f),
+                TitleBgCollapsed = new Vector4(0.08f, 0.12f, 0.3f, 0.65f),
                 
                 MenuBarBg = new Vector4(0.08f, 0.1f, 0.18f, 0.98f),
                 
@@ -1712,9 +1945,9 @@ namespace Editor.Themes
                 ButtonHovered = new Vector4(1f, 0.84f, 0f, 0.7f),
                 ButtonActive = new Vector4(1f, 1f, 0.5f, 0.9f),
                 
-                Header = new Vector4(0.15f, 0.2f, 0.4f, 0.85f),
-                HeaderHovered = new Vector4(1f, 0.84f, 0f, 0.95f),
-                HeaderActive = new Vector4(1f, 1f, 0.5f, 1f),
+                Header = new Vector4(0.12f, 0.16f, 0.35f, 0.9f),
+                HeaderHovered = new Vector4(0.50f, 0.40f, 0f, 0.95f),
+                HeaderActive = new Vector4(0.65f, 0.50f, 0f, 1f),
                 
                 Separator = new Vector4(1f, 0.84f, 0f, 0.4f),
                 SeparatorHovered = new Vector4(1f, 0.9f, 0.3f, 0.6f),

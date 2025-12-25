@@ -91,6 +91,21 @@ namespace Engine.Assets
                 }
             }
 
+            // Prefabs (.prefab) contain their GUID too
+            foreach (var f in Directory.EnumerateFiles(AssetsRoot, "*.prefab", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    var prefab = PrefabAsset.Load(f);
+                    var rec = new AssetRecord(prefab.Guid, f, "Prefab");
+                    Index(rec);
+                    EnsureMetaExists(rec);
+                }
+                catch (Exception)
+                {
+                }
+            }
+
             // Fichiers bruts (png/jpg/gltf/fbx/)  GUID via sidecar .meta
             foreach (var f in Directory.EnumerateFiles(AssetsRoot, "*.*", SearchOption.AllDirectories))
             {
@@ -98,6 +113,7 @@ namespace Engine.Assets
                 if (f.EndsWith(MaterialExt, StringComparison.OrdinalIgnoreCase)) continue;
                 if (f.EndsWith(SkyboxExt, StringComparison.OrdinalIgnoreCase)) continue;
                 if (f.EndsWith(MeshAssetExt, StringComparison.OrdinalIgnoreCase)) continue;
+                if (f.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase)) continue;
 
                 var type = GuessTypeFromExtension(Path.GetExtension(f));
                 var metaPath = f + MetaExt;
@@ -145,6 +161,7 @@ namespace Engine.Assets
                 ".dae" => "ModelDAE",
                 ".meshasset" => "MeshAsset",
                 ".skymat" => "SkyboxMaterial",
+                ".prefab" => "Prefab",
                 ".ttf" or ".otf" or ".woff" or ".woff2" => "TrueTypeFont",
                 ".fontasset" => "FontAsset",
                 _ => "File"
@@ -293,7 +310,7 @@ namespace Engine.Assets
             // Prevent re-entrant saves for same material GUID which can cause overwrite races
             if (!_savingInProgress.Add(mat.Guid))
             {
-                try { Console.WriteLine($"[AssetDatabase] Skipping SaveMaterialAsync for {mat.Guid} because save already in progress"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Skipping SaveMaterialAsync for {mat.Guid} because save already in progress"); } catch { }
                 return System.Threading.Tasks.Task.CompletedTask;
             }
 
@@ -307,9 +324,9 @@ namespace Engine.Assets
                         var frame = st.GetFrame(1);
                         var method = frame?.GetMethod();
                         var caller = method != null ? $"{method.DeclaringType?.FullName}.{method.Name}" : "<unknown>";
-                        Console.WriteLine($"[AssetDatabase] SaveMaterialAsync() called by {caller} for {mat.Guid} -> {rec.Path}");
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] SaveMaterialAsync() called by {caller} for {mat.Guid} -> {rec.Path}"); } catch { }
                     }
-                    catch { Console.WriteLine($"[AssetDatabase] SaveMaterialAsync() called for {mat.Guid} -> {rec.Path}"); }
+                    catch { try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] SaveMaterialAsync() called for {mat.Guid} -> {rec.Path}"); } catch { } }
 
                     // Prepare material to save. If overwriteShader==false we preserve the
                     // currently-on-disk Shader value to avoid accidental clobbers.
@@ -327,7 +344,7 @@ namespace Engine.Assets
 
                     // Save synchronously on background thread
                     MaterialAsset.SaveAtomic(rec.Path, toWrite);
-                    Console.WriteLine($"[AssetDatabase] Material file written (async): {rec.Path}");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Material file written (async): {rec.Path}"); } catch { }
 
                     EnsureMetaExists(rec);
 
@@ -340,10 +357,10 @@ namespace Engine.Assets
                             _materialCache[saved.Guid] = saved;
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[AssetDatabase] Failed to readback saved material (async): {ex.Message}");
-                    }
+                        catch (Exception ex)
+                        {
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Failed to readback saved material (async): {ex.Message}"); } catch { }
+                        }
 
                     // Enqueue event invocation on main thread so subscribers can safely touch GL state
                     try
@@ -353,10 +370,10 @@ namespace Engine.Assets
                             try
                             {
                                 MaterialSaved?.Invoke(mat.Guid);
-                                Console.WriteLine($"[AssetDatabase] MaterialSaved event invoked (async) for {mat.Guid}");
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] MaterialSaved event invoked (async) for {mat.Guid}"); } catch { }
                             }
                             catch { }
-                            try { Engine.Rendering.MaterialRuntime.ClearGlobalCache(); } catch { }
+                            // DON'T clear global cache here - OnMaterialSaved handles cache update correctly
                         });
                     }
                     catch { }
@@ -374,7 +391,7 @@ namespace Engine.Assets
             // Prevent re-entrant saves for same material GUID which can cause overwrite races
             if (!_savingInProgress.Add(mat.Guid))
             {
-                try { Console.WriteLine($"[AssetDatabase] Skipping SaveMaterial for {mat.Guid} because save already in progress"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Skipping SaveMaterial for {mat.Guid} because save already in progress"); } catch { }
                 return;
             }
 
@@ -387,9 +404,9 @@ namespace Engine.Assets
                     var frame = st.GetFrame(1); // caller frame
                     var method = frame?.GetMethod();
                     var caller = method != null ? $"{method.DeclaringType?.FullName}.{method.Name}" : "<unknown>";
-                    Console.WriteLine($"[AssetDatabase] SaveMaterial() called by {caller} for {mat.Guid} -> {rec.Path}");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] SaveMaterial() called by {caller} for {mat.Guid} -> {rec.Path}"); } catch { }
                 }
-                catch { Console.WriteLine($"[AssetDatabase] SaveMaterial() called for {mat.Guid} -> {rec.Path}"); }
+                catch { try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] SaveMaterial() called for {mat.Guid} -> {rec.Path}"); } catch { } }
 
                 // Prepare material to save by merging only changed fields into the
                 // on-disk material. This avoids overwriting user-intended fields with
@@ -404,16 +421,16 @@ namespace Engine.Assets
 
                 // Save synchronously - simple and reliable
                 MaterialAsset.SaveAtomic(rec.Path, toWrite);
-                Console.WriteLine($"[AssetDatabase] Material file written: {rec.Path}");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Material file written: {rec.Path}"); } catch { }
 
                 EnsureMetaExists(rec);
-                Console.WriteLine($"[AssetDatabase] EnsureMetaExists completed for {rec.Path + MetaExt}");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] EnsureMetaExists completed for {rec.Path + MetaExt}"); } catch { }
 
                 // Read back the file to verify what was persisted (debug help)
                 try
                 {
                     var saved = MaterialAsset.Load(rec.Path);
-                    Console.WriteLine($"[AssetDatabase] Saved material readback: Guid={saved.Guid}, Name={saved.Name}, Roughness={saved.Roughness}, Metallic={saved.Metallic}");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Saved material readback: Guid={saved.Guid}, Name={saved.Name}, Roughness={saved.Roughness}, Metallic={saved.Metallic}"); } catch { }
                     // Update in-memory cache to prefer this freshly-saved copy and avoid immediate disk read races
                     lock (_materialCacheLock)
                     {
@@ -422,20 +439,13 @@ namespace Engine.Assets
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[AssetDatabase] Failed to readback saved material: {ex.Message}");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] Failed to readback saved material: {ex.Message}"); } catch { }
                 }
-                // Notify that material has been saved/modified
                 // Notify that material has been saved/modified
                 MaterialSaved?.Invoke(mat.Guid);
-                Console.WriteLine($"[AssetDatabase] MaterialSaved event invoked for {mat.Guid}");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[AssetDatabase] MaterialSaved event invoked for {mat.Guid}"); } catch { }
 
-                // Ensure runtime material caches (GL-side) are cleared so updated properties
-                // (tiling, offset, normal strength, etc.) are picked up without requiring a manual reassign.
-                try
-                {
-                    Engine.Rendering.MaterialRuntime.ClearGlobalCache();
-                }
-                catch { }
+                // DON'T clear global cache here - OnMaterialSaved handles cache update correctly
             }
             finally
             {
@@ -463,10 +473,143 @@ namespace Engine.Assets
             return loaded;
         }
 
+        /// <summary>
+        /// Update the in-memory material cache with a live material instance.
+        /// Used during interactive editing to ensure all renderers see live changes
+        /// without writing to disk on every slider movement.
+        /// </summary>
+        public static void UpdateMaterialCache(Guid guid, MaterialAsset material)
+        {
+            lock (_materialCacheLock)
+            {
+                _materialCache[guid] = material;
+            }
+        }
+
+        /// <summary>
+        /// Clear the in-memory material cache.
+        /// This forces all subsequent LoadMaterial calls to read from disk.
+        /// Call this when entering play mode or when you need to ensure fresh disk values.
+        /// </summary>
+        public static void ClearMaterialCache()
+        {
+            lock (_materialCacheLock)
+            {
+                _materialCache.Clear();
+                Console.WriteLine("[AssetDatabase] Material cache cleared");
+            }
+        }
+
+        /// <summary>
+        /// CENTRALIZED: Clear ALL material caches - both AssetDatabase and MaterialRuntime.
+        /// This ensures complete cache invalidation across the entire system.
+        /// Use this when:
+        /// - Changing shader on a material
+        /// - Loading a new scene
+        /// - Entering/exiting play mode
+        /// - Refreshing all materials
+        /// </summary>
+        public static void ClearAllMaterialCaches()
+        {
+            // Clear AssetDatabase material cache (MaterialAsset data)
+            lock (_materialCacheLock)
+            {
+                _materialCache.Clear();
+                Console.WriteLine("[AssetDatabase] Asset material cache cleared");
+            }
+
+            // Clear MaterialRuntime cache (OpenGL handles + textures)
+            try
+            {
+                Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                Console.WriteLine("[AssetDatabase] Runtime material cache cleared");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AssetDatabase] Failed to clear runtime cache: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// CENTRALIZED: Invalidate a single material across ALL caches.
+        /// Use this when a material changes and needs to be reloaded.
+        /// </summary>
+        public static void InvalidateMaterial(Guid guid)
+        {
+            // Remove from AssetDatabase cache
+            lock (_materialCacheLock)
+            {
+                _materialCache.Remove(guid);
+            }
+
+            // Invalidate MaterialRuntime cache entry
+            try
+            {
+                Engine.Rendering.MaterialRuntime.InvalidateCacheEntry(guid);
+            }
+            catch { }
+        }
+
+        // Prefab cache
+        private static readonly Dictionary<Guid, PrefabAsset> _prefabCache = new();
+        private static readonly object _prefabCacheLock = new();
+
+        public static PrefabAsset LoadPrefab(Guid guid)
+        {
+            if (!TryGet(guid, out var rec)) throw new FileNotFoundException($"Prefab {guid} not found.");
+            
+            lock (_prefabCacheLock)
+            {
+                if (_prefabCache.TryGetValue(guid, out var cached))
+                {
+                    return cached;
+                }
+            }
+
+            var loaded = PrefabAsset.Load(rec.Path);
+            lock (_prefabCacheLock)
+            {
+                _prefabCache[guid] = loaded;
+            }
+            return loaded;
+        }
+
+        public static void SavePrefab(PrefabAsset prefab, string? customPath = null)
+        {
+            string path;
+            if (customPath != null)
+            {
+                path = customPath;
+            }
+            else if (TryGet(prefab.Guid, out var rec))
+            {
+                path = rec.Path;
+            }
+            else
+            {
+                // Create new prefab file
+                var fileName = Sanitize(prefab.Name ?? "Prefab") + ".prefab";
+                var prefabFolder = Path.Combine(AssetsRoot, "Prefabs");
+                Directory.CreateDirectory(prefabFolder);
+                path = Path.Combine(prefabFolder, fileName);
+            }
+
+            PrefabAsset.SaveAtomic(path, prefab);
+            
+            // Update cache
+            lock (_prefabCacheLock)
+            {
+                _prefabCache[prefab.Guid] = prefab;
+            }
+            
+            // Refresh will discover the new asset
+            Refresh();
+        }
+
         public static string GetName(Guid guid) => TryGet(guid, out var r) ? r.Name : guid.ToString();
         public static string GetTypeName(Guid guid) => TryGet(guid, out var r) ? r.Type : "?";
 
-        static string Sanitize(string n)
+        public static string Sanitize(string n)
         {
             foreach (var c in Path.GetInvalidFileNameChars()) n = n.Replace(c, '_');
             return string.IsNullOrWhiteSpace(n) ? "Asset" : n.Trim();
@@ -566,6 +709,8 @@ namespace Engine.Assets
                 Emission = src.Emission,
                 TransparencyMode = src.TransparencyMode,
                 Opacity = src.Opacity,
+                UsePlanarReflection = src.UsePlanarReflection,
+                WaterReflectionStrength = src.WaterReflectionStrength,
                 Shader = src.Shader
             };
 
@@ -621,9 +766,90 @@ namespace Engine.Assets
                 else
                 {
                     // If it's a source model file, look for the corresponding .meshasset
+                    // First check if the expected .meshasset exists
+                    Console.WriteLine($"[AssetDatabase] Looking for .meshasset: {meshAssetPath} (exists: {File.Exists(meshAssetPath)})");
+                    
+                    if (!File.Exists(meshAssetPath))
+                    {
+                        // .meshasset not found at expected path, check if there's another .meshasset in the same folder
+                        // This can happen when a model file is renamed but the .meshasset keeps the old name
+                        var modelDir = Path.GetDirectoryName(rec.Path);
+                        Console.WriteLine($"[AssetDatabase] .meshasset not found, checking folder: {modelDir}");
+                        
+                        if (!string.IsNullOrEmpty(modelDir))
+                        {
+                            var meshAssetFiles = Directory.GetFiles(modelDir, "*.meshasset");
+                            Console.WriteLine($"[AssetDatabase] Found {meshAssetFiles.Length} .meshasset file(s) in folder");
+                            
+                            if (meshAssetFiles.Length == 1)
+                            {
+                                // Found exactly one .meshasset in the folder, assume it's for this model
+                                var oldMeshAssetPath = meshAssetFiles[0];
+                                Console.WriteLine($"[AssetDatabase] Found orphaned .meshasset: {Path.GetFileName(oldMeshAssetPath)}");
+                                Console.WriteLine($"[AssetDatabase] Renaming to match source: {Path.GetFileName(meshAssetPath)}");
+                                
+                                try
+                                {
+                                    // Also rename the .meta file if it exists
+                                    var oldMetaPath = oldMeshAssetPath + MetaExt;
+                                    var newMetaPath = meshAssetPath + MetaExt;
+                                    
+                                    File.Move(oldMeshAssetPath, meshAssetPath);
+                                    Console.WriteLine($"[AssetDatabase] Successfully renamed .meshasset");
+                                    
+                                    if (File.Exists(oldMetaPath))
+                                    {
+                                        File.Move(oldMetaPath, newMetaPath);
+                                        Console.WriteLine($"[AssetDatabase] Successfully renamed .meshasset.meta");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[AssetDatabase] Failed to rename .meshasset: {ex.Message}");
+                                }
+                            }
+                            else if (meshAssetFiles.Length > 1)
+                            {
+                                Console.WriteLine($"[AssetDatabase] Warning: Multiple .meshasset files found in {modelDir}, cannot auto-rename");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[AssetDatabase] No .meshasset files found in folder");
+                            }
+                        }
+                    }
+                    
                     if (File.Exists(meshAssetPath))
                     {
                         meshAsset = MeshAsset.Load(meshAssetPath);
+                        
+                        // Check if the SourcePath in the .meshasset is outdated (file was renamed)
+                        if (meshAsset != null && !string.IsNullOrEmpty(meshAsset.SourcePath))
+                        {
+                            string? resolvedSourcePath = null;
+                            if (!Path.IsPathRooted(meshAsset.SourcePath) && !meshAsset.SourcePath.Contains('/') && !meshAsset.SourcePath.Contains('\\'))
+                            {
+                                var meshAssetDir = Path.GetDirectoryName(meshAssetPath);
+                                if (!string.IsNullOrEmpty(meshAssetDir))
+                                {
+                                    resolvedSourcePath = Path.Combine(meshAssetDir, meshAsset.SourcePath);
+                                }
+                            }
+                            else
+                            {
+                                resolvedSourcePath = meshAsset.SourcePath;
+                            }
+                            
+                            // If the old source file doesn't exist but our current file does, update the SourcePath
+                            if (!string.IsNullOrEmpty(resolvedSourcePath) && !File.Exists(resolvedSourcePath) && File.Exists(rec.Path))
+                            {
+                                Console.WriteLine($"[AssetDatabase] Source file was renamed: {meshAsset.SourcePath} → {Path.GetFileName(rec.Path)}");
+                                meshAsset.SourcePath = Path.GetFileName(rec.Path);
+                                // Save the updated .meshasset
+                                MeshAsset.Save(meshAssetPath, meshAsset);
+                                Console.WriteLine($"[AssetDatabase] Updated .meshasset with new source path");
+                            }
+                        }
                     }
                     else
                     {
@@ -730,6 +956,13 @@ namespace Engine.Assets
                         return false;
                     }
                 }
+                else
+                {
+                    // .meshasset doesn't exist, cache is invalid
+                    Console.WriteLine($"[AssetDatabase] Cache invalid: .meshasset not found at {meshAssetPath}");
+                    File.Delete(cachePath);
+                    return false;
+                }
 
                 using (var fs = new FileStream(cachePath, FileMode.Open, FileAccess.Read))
                 using (var reader = new BinaryReader(fs))
@@ -751,6 +984,37 @@ namespace Engine.Assets
                     meshAsset.Guid = new Guid(reader.ReadBytes(16));
                     meshAsset.Name = reader.ReadString();
                     meshAsset.SourcePath = reader.ReadString();
+                    
+                    // Verify that the source file still exists (in case it was renamed/moved)
+                    if (!string.IsNullOrEmpty(meshAsset.SourcePath))
+                    {
+                        // Try to resolve the source path (could be relative to .meshasset or just a filename)
+                        string? resolvedSourcePath = null;
+                        
+                        // If it's just a filename, look in the same directory as the .meshasset
+                        if (!Path.IsPathRooted(meshAsset.SourcePath) && !meshAsset.SourcePath.Contains('/') && !meshAsset.SourcePath.Contains('\\'))
+                        {
+                            var meshAssetDir = Path.GetDirectoryName(meshAssetPath);
+                            if (!string.IsNullOrEmpty(meshAssetDir))
+                            {
+                                resolvedSourcePath = Path.Combine(meshAssetDir, meshAsset.SourcePath);
+                            }
+                        }
+                        else
+                        {
+                            resolvedSourcePath = meshAsset.SourcePath;
+                        }
+                        
+                        // Check if the resolved source file exists
+                        if (!string.IsNullOrEmpty(resolvedSourcePath) && !File.Exists(resolvedSourcePath))
+                        {
+                            Console.WriteLine($"[AssetDatabase] Cache invalid: source file not found at {resolvedSourcePath}");
+                            Console.WriteLine($"[AssetDatabase] Deleting stale cache: {Path.GetFileName(cachePath)}");
+                            File.Delete(cachePath);
+                            return false;
+                        }
+                    }
+                    
                     meshAsset.TotalVertexCount = reader.ReadInt32();
                     meshAsset.TotalTriangleCount = reader.ReadInt32();
 
@@ -953,12 +1217,18 @@ namespace Engine.Assets
                 TriplanarBlendSharpness = disk.TriplanarBlendSharpness,
                 TransparencyMode = disk.TransparencyMode,
                 Opacity = disk.Opacity,
+                CullingMode = disk.CullingMode,
+                AlphaClippingEnabled = disk.AlphaClippingEnabled,
+                AlphaClipThreshold = disk.AlphaClipThreshold,
                 Saturation = disk.Saturation,
                 Brightness = disk.Brightness,
                 Contrast = disk.Contrast,
                 Hue = disk.Hue,
                 Emission = disk.Emission,
                 GlassProperties = disk.GlassProperties
+                ,UsePlanarReflection = disk.UsePlanarReflection
+                ,WaterReflectionStrength = disk.WaterReflectionStrength
+                ,WaterProperties = disk.WaterProperties
             };
 
             // Overwrite simple fields when incoming differs from disk
@@ -1003,6 +1273,10 @@ namespace Engine.Assets
             if (incoming.TransparencyMode != disk.TransparencyMode) merged.TransparencyMode = incoming.TransparencyMode;
             if (Math.Abs(incoming.Opacity - disk.Opacity) > 1e-6f) merged.Opacity = incoming.Opacity;
 
+            if (incoming.CullingMode != disk.CullingMode) merged.CullingMode = incoming.CullingMode;
+            if (incoming.AlphaClippingEnabled != disk.AlphaClippingEnabled) merged.AlphaClippingEnabled = incoming.AlphaClippingEnabled;
+            if (Math.Abs(incoming.AlphaClipThreshold - disk.AlphaClipThreshold) > 1e-6f) merged.AlphaClipThreshold = incoming.AlphaClipThreshold;
+
             if (Math.Abs(incoming.Saturation - disk.Saturation) > 1e-6f) merged.Saturation = incoming.Saturation;
             if (Math.Abs(incoming.Brightness - disk.Brightness) > 1e-6f) merged.Brightness = incoming.Brightness;
             if (Math.Abs(incoming.Contrast - disk.Contrast) > 1e-6f) merged.Contrast = incoming.Contrast;
@@ -1010,6 +1284,16 @@ namespace Engine.Assets
             if (Math.Abs(incoming.Emission - disk.Emission) > 1e-6f) merged.Emission = incoming.Emission;
 
             if (incoming.GlassProperties != disk.GlassProperties) merged.GlassProperties = incoming.GlassProperties;
+
+            // Merge WaterProperties (important for WaterForward initialization)
+            if (incoming.WaterProperties != disk.WaterProperties)
+            {
+                merged.WaterProperties = incoming.WaterProperties;
+            }
+
+            // Water / planar reflection fields
+            if (incoming.UsePlanarReflection != disk.UsePlanarReflection) merged.UsePlanarReflection = incoming.UsePlanarReflection;
+            if (Math.Abs(incoming.WaterReflectionStrength - disk.WaterReflectionStrength) > 1e-6f) merged.WaterReflectionStrength = incoming.WaterReflectionStrength;
 
             return merged;
         }
@@ -1021,6 +1305,79 @@ namespace Engine.Assets
             if (x.Length != y.Length) return false;
             for (int i = 0; i < x.Length; i++) if (Math.Abs(x[i] - y[i]) > 1e-6f) return false;
             return true;
+        }
+
+        /// <summary>
+        /// Create a deep clone of a MaterialAsset to avoid shared reference issues.
+        /// This ensures that modifications to the clone don't affect the original.
+        /// </summary>
+        public static MaterialAsset CloneMaterial(MaterialAsset m)
+        {
+            return new MaterialAsset
+            {
+                Guid = m.Guid,
+                Name = m.Name,
+                Shader = m.Shader,
+                AlbedoTexture = m.AlbedoTexture,
+                AlbedoColor = m.AlbedoColor != null ? (float[])m.AlbedoColor.Clone() : new float[] { 1f, 1f, 1f, 1f },
+                NormalTexture = m.NormalTexture,
+                NormalStrength = m.NormalStrength,
+                MetallicTexture = m.MetallicTexture,
+                RoughnessTexture = m.RoughnessTexture,
+                MetallicRoughnessTexture = m.MetallicRoughnessTexture,
+                OcclusionTexture = m.OcclusionTexture,
+                OcclusionStrength = m.OcclusionStrength,
+                EmissiveTexture = m.EmissiveTexture,
+                EmissiveColor = m.EmissiveColor != null ? (float[])m.EmissiveColor.Clone() : new float[] { 1f, 1f, 1f },
+                HeightTexture = m.HeightTexture,
+                HeightScale = m.HeightScale,
+                DetailMaskTexture = m.DetailMaskTexture,
+                DetailAlbedoTexture = m.DetailAlbedoTexture,
+                DetailNormalTexture = m.DetailNormalTexture,
+                Metallic = m.Metallic,
+                Roughness = m.Roughness,
+                TextureTiling = m.TextureTiling != null ? (float[])m.TextureTiling.Clone() : new float[] { 1f, 1f },
+                TextureOffset = m.TextureOffset != null ? (float[])m.TextureOffset.Clone() : new float[] { 0f, 0f },
+                UseTriplanar = m.UseTriplanar,
+                TriplanarScale = m.TriplanarScale,
+                TriplanarBlendSharpness = m.TriplanarBlendSharpness,
+                TransparencyMode = m.TransparencyMode,
+                Opacity = m.Opacity,
+                CullingMode = m.CullingMode,
+                AlphaClippingEnabled = m.AlphaClippingEnabled,
+                AlphaClipThreshold = m.AlphaClipThreshold,
+                Saturation = m.Saturation,
+                Brightness = m.Brightness,
+                Contrast = m.Contrast,
+                Hue = m.Hue,
+                Emission = m.Emission,
+                GlassProperties = m.GlassProperties != null ? new GlassMaterialProperties
+                {
+                    RefractiveIndex = m.GlassProperties.RefractiveIndex,
+                    DistortionStrength = m.GlassProperties.DistortionStrength,
+                    ChromaticAberration = m.GlassProperties.ChromaticAberration,
+                    Roughness = m.GlassProperties.Roughness,
+                    Thickness = m.GlassProperties.Thickness,
+                    Tint = m.GlassProperties.Tint != null ? (float[])m.GlassProperties.Tint.Clone() : new float[] { 1f, 1f, 1f },
+                    Opacity = m.GlassProperties.Opacity,
+                    FresnelPower = m.GlassProperties.FresnelPower,
+                    ReflectionStrength = m.GlassProperties.ReflectionStrength
+                } : null,
+                WaterProperties = m.WaterProperties != null ? new WaterProperties
+                {
+                    WaveSpeed = m.WaterProperties.WaveSpeed,
+                    WaveHeight = m.WaterProperties.WaveHeight,
+                    WaveFrequency = m.WaterProperties.WaveFrequency,
+                    Reflectivity = m.WaterProperties.Reflectivity,
+                    FresnelPower = m.WaterProperties.FresnelPower,
+                    DistortionStrength = m.WaterProperties.DistortionStrength,
+                    Transparency = m.WaterProperties.Transparency,
+                    SpecularPower = m.WaterProperties.SpecularPower,
+                    SpecularColor = m.WaterProperties.SpecularColor != null ? (float[])m.WaterProperties.SpecularColor.Clone() : new float[] { 1f, 1f, 1f }
+                } : null,
+                UsePlanarReflection = m.UsePlanarReflection,
+                WaterReflectionStrength = m.WaterReflectionStrength
+            };
         }
     }
 }

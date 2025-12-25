@@ -74,24 +74,36 @@ public static class Program
         // CRITICAL FIX: Set working directory to executable location so shader files are found
         // When using 'dotnet run', the working directory is the project root, not bin/Debug/
         var exeDir = System.IO.Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        // Parse verbose CLI flag early so we can enable verbose logging and console redirection
+        var verbose = args != null && Array.Exists(args, a => string.Equals(a, "--verbose", StringComparison.OrdinalIgnoreCase) || string.Equals(a, "-v", StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrEmpty(exeDir))
         {
             System.IO.Directory.SetCurrentDirectory(exeDir);
             
-            // Redirect Console output to the engine debug logger to keep the terminal clean.
-            // TEMPORARILY DISABLED FOR DEBUGGING
-            /*try
+            // If verbose requested, enable file-based verbose logging and forward console output
+            try
             {
-                Console.SetOut(new Engine.Utils.ConsoleLogWriter());
-                Console.SetError(new Engine.Utils.ConsoleLogWriter());
+                DebugLogger.EnableVerbose = verbose;
             }
-            catch { }*/
-            
-            // Also write a short startup message to the engine log (non-verbose)
-            try { DebugLogger.Log($"[Program] Set working directory to: {exeDir}"); } catch { }
-            // By default, disable verbose debug logging to avoid per-frame I/O overhead.
-            // Enable only when explicitly requested (e.g., via a --verbose flag).
-            try { DebugLogger.EnableVerbose = false; } catch { }
+            catch { }
+
+            if (verbose)
+            {
+                try
+                {
+                    var originalOut = Console.Out;
+                    var originalErr = Console.Error;
+                    Console.SetOut(new Engine.Utils.DualConsoleLogWriter(originalOut));
+                    Console.SetError(new Engine.Utils.DualConsoleLogWriter(originalErr));
+                    Console.WriteLine("[Program] Verbose logging enabled (console + astrild_debug.log)");
+                }
+                catch { }
+            }
+            else
+            {
+                // Also write a short startup message to the engine log (non-verbose)
+                try { DebugLogger.Log($"[Program] Set working directory to: {exeDir}"); } catch { }
+            }
         }
 
         // Configure Serilog: route events to both the terminal and the in-editor Console panel.
@@ -352,6 +364,7 @@ public static class Program
 
             Editor.Utils.StartupProfiler.BeginSection("ImGui Controller Init");
             imgui = new ImGuiController(game);
+            Editor.Utils.ImGuiControllerManager.Initialize(imgui);
             Editor.Utils.StartupProfiler.EndSection();
 
             // Initialize ProgressManager for use throughout the editor
@@ -400,7 +413,7 @@ public static class Program
             try
             {
                 Engine.Audio.Core.AudioEngine.Instance.Initialize();
-                Log.Information("AudioEngine initialized successfully");
+                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[AudioEngine] initialized successfully");
             }
             catch (Exception ex)
             {
@@ -417,9 +430,8 @@ public static class Program
             Log.Information("AssetDatabase initialized");
             Editor.Utils.StartupProfiler.EndSection();
 
-            // CRITICAL FIX: Clear collision system at editor startup
-            // Ensures no phantom colliders from previous sessions remain in memory
-            Engine.Physics.CollisionSystem.ClearAll();
+            // Physics system removed
+            // Engine.Physics.CollisionSystem.ClearAll();
 
             // Auto-load last scene if available
             loadingManager.UpdateStep("Loading scene...");

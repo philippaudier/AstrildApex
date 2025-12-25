@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using ImGuiNET;
 using Editor.Rendering;
+using Editor.Themes;
 
 namespace Editor.UI;
 
@@ -278,12 +279,12 @@ public class ViewportToolbar
 
         drawList.AddLine(
             new Vector2(pos.X, pos.Y + 4),
-            new Vector2(pos.X, pos.Y + ModernUIHelpers.ToolbarButtonSize - 4),
+            new Vector2(pos.X, pos.Y + ThemeManager.UI.ToolbarButtonSize - 4),
             col,
             1f
         );
 
-        ImGui.Dummy(new Vector2(1f, ModernUIHelpers.ToolbarButtonSize));
+        ImGui.Dummy(new Vector2(1f, ThemeManager.UI.ToolbarButtonSize));
     }
 
     /// <summary>

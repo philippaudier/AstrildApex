@@ -5834,8 +5834,81 @@ void main(){
                 try { pbr = Engine.Rendering.ShaderLibrary.GetShaderByName("ForwardBase"); } catch { }
             }
 
-            // Build render items (reuse opaque items list)
-            var items = _renderItems;
+            // Build render items for transparent objects only
+            // This is separate from opaque rendering to ensure proper render order
+            var items = new List<RenderItem>(_scene.Entities.Count);
+            var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_scene.Entities);
+
+            for (int i = 0; i < entitiesSpan.Length; i++)
+            {
+                var entity = entitiesSpan[i];
+                if (!entity.Active || entity.HasComponent<Engine.Components.Terrain>()) continue;
+
+                if (entity.HasComponent<MeshRendererComponent>())
+                {
+                    var meshRenderer = entity.GetComponent<MeshRendererComponent>();
+                    if (meshRenderer == null || !meshRenderer.HasMeshToRender()) continue;
+
+                    // Load material to check transparency
+                    bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
+                    if (!hasMaterial) continue; // Skip non-transparent items
+
+                    Engine.Rendering.MaterialRuntime? materialRuntime;
+                    try
+                    {
+                        var asset = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid!.Value);
+                        Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
+                        materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
+                    }
+                    catch
+                    {
+                        continue; // Skip broken materials
+                    }
+
+                    // Only include transparent items
+                    if (materialRuntime.TransparencyMode == 0) continue;
+
+                    entity.GetModelAndNormalMatrix(out var model, out var normalMat3);
+
+                    int vao, ebo, idxCount;
+                    if (meshRenderer.IsUsingCustomMesh())
+                    {
+                        var customMesh = LoadCustomMesh(meshRenderer.CustomMeshGuid!.Value, meshRenderer.SubmeshIndex);
+                        if (customMesh.HasValue)
+                        {
+                            vao = customMesh.Value.VAO;
+                            ebo = customMesh.Value.EBO;
+                            idxCount = customMesh.Value.IndexCount;
+                        }
+                        else continue;
+                    }
+                    else
+                    {
+                        vao = _cubeVao; ebo = _cubeEbo; idxCount = _cubeIdx.Length;
+                        switch (meshRenderer.Mesh)
+                        {
+                            case MeshKind.Cube: vao = _cubeVao; ebo = _cubeEbo; idxCount = _cubeIdx.Length; break;
+                            case MeshKind.Plane: vao = _planeVao; ebo = _planeEbo; idxCount = _planeIndexCount; break;
+                            case MeshKind.Quad: vao = _quadVao; ebo = _quadEbo; idxCount = _quadIndexCount; break;
+                            case MeshKind.Sphere: vao = _sphereVao; ebo = _sphereEbo; idxCount = _sphereIndexCount; break;
+                            case MeshKind.Capsule: vao = _capsuleVao; ebo = _capsuleEbo; idxCount = _capsuleIndexCount; break;
+                        }
+                    }
+
+                    items.Add(new RenderItem
+                    {
+                        Model = model,
+                        NormalMat3 = normalMat3,
+                        Vao = vao,
+                        Ebo = ebo,
+                        IndexCount = idxCount,
+                        MaterialGuid = meshRenderer.MaterialGuid!.Value,
+                        MaterialRuntime = materialRuntime,
+                        ObjectId = entity.Id,
+                        CullingMode = meshRenderer.Culling
+                    });
+                }
+            }
 
             // === QUEUE 3000: TRANSPARENT ===
             GL.Enable(EnableCap.Blend);

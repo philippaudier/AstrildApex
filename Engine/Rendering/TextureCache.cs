@@ -1083,15 +1083,10 @@ namespace Engine.Rendering
         
         private static PixelInternalFormat ChooseOptimalFormat(byte[] data, int width, int height)
         {
-            // Simple heuristic: if mostly opaque, use RGB8, otherwise RGBA8
-            bool hasAlpha = false;
-            for (int i = 3; i < data.Length && !hasAlpha; i += 4)
-            {
-                if (data[i] < 255)
-                    hasAlpha = true;
-            }
-            
-            return hasAlpha ? PixelInternalFormat.Rgba8 : PixelInternalFormat.Rgb8;
+            // ALWAYS use RGBA8 to support alpha clipping even if texture appears fully opaque
+            // Alpha clipping needs the alpha channel available in the shader
+            // The small memory overhead (33% more) is worth it for proper alpha clipping support
+            return PixelInternalFormat.Rgba8;
         }
         
         private static int CalculateTextureSize(int width, int height, PixelInternalFormat format, bool hasMipmaps = true)

@@ -28,19 +28,18 @@ namespace Engine.Rendering.Terrain
                 AssetDatabase.MaterialSaved += OnMaterialSaved;
                 _subscribedToMaterialChanges = true;
             }
-            
+
             // Load default terrain shader (TerrainForward or TerrainDebug if env var set)
             string shaderName = "TerrainForward";
             try
             {
                 if (Environment.GetEnvironmentVariable("TERRAIN_DEBUG_SHADER") == "1")
-                    {
+                {
                     shaderName = "TerrainDebug";
-                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] Using debug shader: TerrainDebug");
                 }
             }
             catch { }
-            
+
             _shader = LoadTerrainShader(shaderName);
             if (_shader == null)
             {
@@ -54,12 +53,29 @@ namespace Engine.Rendering.Terrain
             {
                 // Use ShaderLibrary instead of loading directly to ensure proper path resolution
                 var shader = Engine.Rendering.ShaderLibrary.GetShaderByName(shaderName);
-                
+
                 if (shader == null)
                 {
                     Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Shader '{shaderName}' not found in ShaderLibrary");
+                    return null;
                 }
-                
+
+                // Verify shader compiled correctly
+                if (shader.Handle == 0 || !GL.IsProgram(shader.Handle))
+                {
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Shader '{shaderName}' has invalid handle");
+                    return null;
+                }
+
+                // Check if shader linked successfully
+                GL.GetProgram(shader.Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
+                if (linkStatus == 0)
+                {
+                    string infoLog = GL.GetProgramInfoLog(shader.Handle);
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR: Shader '{shaderName}' failed to link:\n{infoLog}");
+                    return null;
+                }
+
                 return shader;
             }
             catch (Exception ex)
@@ -107,33 +123,21 @@ namespace Engine.Rendering.Terrain
             }
             catch { }
 
-            if (terrain == null)
-            {
-                Engine.Utils.DebugLogger.Log("[TerrainRenderer] Terrain is null!");
-                return;
-            }
+            if (terrain == null) return;
+
             if (_shader == null)
             {
                 _shader = LoadTerrainShader("TerrainForward");
-                if (_shader == null)
-                {
-                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] CRITICAL: Failed to load TerrainForward shader - terrain will not render!");
-                    return;
-                }
+                if (_shader == null) return;
             }
-            
+
             // Verify shader is still valid (handle might be invalidated after PlayMode changes)
             if (!GL.IsProgram(_shader.Handle) || _shader.Handle == 0)
             {
                 // Force reload from ShaderLibrary to clear cache
                 Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
                 _shader = Engine.Rendering.ShaderLibrary.GetShaderByName("TerrainForward");
-                
-                if (_shader == null || _shader.Handle == 0)
-                {
-                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] CRITICAL: Failed to reload shader after invalidation!");
-                    return;
-                }
+                if (_shader == null || _shader.Handle == 0) return;
             }
 
             // Bind GlobalUBO if provided (for clip plane support in reflections)
@@ -207,8 +211,10 @@ namespace Engine.Rendering.Terrain
             _shader.SetMat4("u_View", view);
             _shader.SetMat4("u_Projection", projection);
 
-            // Calculate normal matrix from model matrix
+            // Calculate normal matrix from model matrix (transpose of inverse)
             var normalMat = new Matrix3(model);
+            normalMat.Invert();
+            normalMat.Transpose();
             _shader.SetMat3("u_NormalMat", normalMat);
 
             // Set entity ID for object picking and selection outline
@@ -219,6 +225,9 @@ namespace Engine.Rendering.Terrain
             _shader.SetVec3("uCameraPos", viewPos); // Compatibility
             _shader.SetVec3("u_LightDir", lightDir);
             _shader.SetVec3("u_LightColor", lightColor);
+
+            // CRITICAL: Initialize u_FlipNormalY (required by Common.glsl)
+            _shader.SetInt("u_FlipNormalY", 1); // 1 = flip Y for OpenGL convention
 
             // Asset resolver function (needed for texture loading)
             Func<Guid, string?> resolver = guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null;
@@ -677,6 +686,109 @@ namespace Engine.Rendering.Terrain
                 GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
             }
 
+            // CRITICAL: Must send weather uniforms AFTER shader.Use() (line 166)
+            // Get weather values from WeatherManager with fallback to defaults
+            try
+            {
+                var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                if (weather != null)
+                {
+                    _shader.SetFloat("u_RainIntensity", weather.RainIntensity);
+                    _shader.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                    _shader.SetFloat("u_SnowIntensity", weather.SnowIntensity);
+                    _shader.SetFloat("u_Wetness", weather.Wetness);
+
+                    _shader.SetFloat("u_SnowSlopeMin", weather.SnowSlopeMin);
+                    _shader.SetFloat("u_SnowSlopeMax", weather.SnowSlopeMax);
+                    _shader.SetFloat("u_SnowSparkle", weather.SnowSparkle);
+                    _shader.SetFloat("u_SnowDisplacement", weather.SnowDisplacement);
+
+                    // Load and bind snow material if assigned
+                    if (weather.SnowMapMaterial.HasValue)
+                    {
+                        try
+                        {
+                            var snowMat = Engine.Assets.AssetDatabase.LoadMaterial(weather.SnowMapMaterial.Value);
+                            if (snowMat != null)
+                            {
+                                // Load snow material runtime from cache
+                                // Cache is updated by ApplyLiveMaterialUpdate when inspector changes values
+                                Func<Guid, string?> snowResolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+                                var snowRuntime = Engine.Rendering.MaterialRuntime.FromAsset(snowMat, snowResolver);
+
+                                // CRITICAL FIX: Use units 13-15 to avoid conflict with IBL textures (10-12)
+                                // Bind snow textures to dedicated texture units
+                                GL.ActiveTexture(TextureUnit.Texture13);
+                                GL.BindTexture(TextureTarget.Texture2D, snowRuntime.AlbedoTex);
+                                _shader.SetInt("u_SnowAlbedoTex", 13);
+
+                                GL.ActiveTexture(TextureUnit.Texture14);
+                                GL.BindTexture(TextureTarget.Texture2D, snowRuntime.NormalTex);
+                                _shader.SetInt("u_SnowNormalTex", 14);
+
+                                GL.ActiveTexture(TextureUnit.Texture15);
+                                GL.BindTexture(TextureTarget.Texture2D, snowRuntime.MetallicRoughnessTex);
+                                _shader.SetInt("u_SnowMetallicRoughnessTex", 15);
+
+                                // Send snow material properties
+                                _shader.SetVec4("u_SnowAlbedoColor", new OpenTK.Mathematics.Vector4(
+                                    snowRuntime.AlbedoColor[0], snowRuntime.AlbedoColor[1],
+                                    snowRuntime.AlbedoColor[2], snowRuntime.AlbedoColor[3]));
+                                _shader.SetFloat("u_SnowMetallic", snowRuntime.Metallic);
+                                _shader.SetFloat("u_SnowRoughness", 1.0f - snowRuntime.Smoothness); // Convert smoothness to roughness
+                                _shader.SetFloat("u_SnowNormalStrength", snowRuntime.NormalStrength);
+                                _shader.SetVec2("u_SnowTextureTiling", new OpenTK.Mathematics.Vector2(
+                                    snowRuntime.TextureTiling[0],
+                                    snowRuntime.TextureTiling[1]));
+
+                                // CRITICAL: Restore texture unit 0 as active
+                                GL.ActiveTexture(TextureUnit.Texture0);
+                            }
+                            else
+                            {
+                                // Snow material not found - bind default white texture
+                                BindDefaultSnowTextures();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Failed to load snow material: {ex.Message}");
+                            BindDefaultSnowTextures();
+                        }
+                    }
+                    else
+                    {
+                        // No snow material assigned - use defaults
+                        BindDefaultSnowTextures();
+                    }
+                }
+                else
+                {
+                    // Fallback to safe defaults
+                    _shader.SetFloat("u_RainIntensity", 0.0f);
+                    _shader.SetFloat("u_SnowAccumulation", 0.0f);
+                    _shader.SetFloat("u_SnowIntensity", 0.0f);
+                    _shader.SetFloat("u_Wetness", 0.0f);
+                    _shader.SetFloat("u_SnowSlopeMin", 0.0f);
+                    _shader.SetFloat("u_SnowSlopeMax", 45.0f);
+                    _shader.SetFloat("u_SnowSparkle", 0.5f);
+                    _shader.SetFloat("u_SnowDisplacement", 0.5f);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Weather system not available - use safe defaults
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Weather system unavailable: {ex.Message}");
+                _shader.SetFloat("u_RainIntensity", 0.0f);
+                _shader.SetFloat("u_SnowAccumulation", 0.0f);
+                _shader.SetFloat("u_SnowIntensity", 0.0f);
+                _shader.SetFloat("u_Wetness", 0.0f);
+                _shader.SetFloat("u_SnowSlopeMin", 0.0f);
+                _shader.SetFloat("u_SnowSlopeMax", 45.0f);
+                _shader.SetFloat("u_SnowSparkle", 0.5f);
+                _shader.SetFloat("u_SnowDisplacement", 0.5f);
+            }
+
             // Check for errors before rendering
             var preRenderError = GL.GetError();
             if (preRenderError != ErrorCode.NoError)
@@ -691,7 +803,7 @@ namespace Engine.Rendering.Terrain
             var postRenderError = GL.GetError();
             if (postRenderError != ErrorCode.NoError)
             {
-                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ❌ GL error AFTER terrain.Render(): {postRenderError}");
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] GL error AFTER terrain.Render(): {postRenderError}");
             }
             
             // Log first-frame debug info (only once per terrain)
@@ -705,120 +817,7 @@ namespace Engine.Rendering.Terrain
             }
             catch { }
 
-            // Render water plane if enabled
-            if (terrain.EnableWater && terrain.WaterMaterialGuid.HasValue)
-            {
-                try
-                {
-                    // Load water material (with caching)
-                    var waterMaterial = GetMaterialCached(terrain.WaterMaterialGuid.Value);
-                    if (waterMaterial != null)
-                    {
-                        // Get the appropriate shader for the water material
-                        Engine.Rendering.ShaderProgram? waterShader = null;
-
-                        // Try to get shader from material or use default ForwardBase
-                        if (!string.IsNullOrEmpty(waterMaterial.Shader))
-                        {
-                            waterShader = Engine.Rendering.ShaderLibrary.GetShaderByName(waterMaterial.Shader);
-                        }
-
-                        if (waterShader == null)
-                        {
-                            waterShader = Engine.Rendering.ShaderLibrary.GetShaderByName("ForwardBase");
-                        }
-
-                        if (waterShader != null)
-                        {
-                            waterShader.Use();
-
-                            // Set matrices
-                            waterShader.SetMat4("u_Model", modelMatrix);
-                            waterShader.SetMat4("u_View", view);
-                            waterShader.SetMat4("u_Projection", projection);
-                            waterShader.SetMat3("u_NormalMat", new Matrix3(modelMatrix));
-
-                            // Set camera and lighting
-                            waterShader.SetVec3("u_ViewPos", viewPos);
-                            waterShader.SetVec3("uCameraPos", viewPos);
-                            waterShader.SetVec3("u_LightDir", lightDir);
-                            waterShader.SetVec3("u_LightColor", lightColor);
-
-                            // Load material into runtime format and bind it
-                            var waterMaterialRuntime = new Engine.Rendering.MaterialRuntime();
-                            Func<Guid, string?> waterResolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var r) ? r.Path : null;
-
-                            // Load albedo texture
-                            if (waterMaterial.AlbedoTexture.HasValue)
-                            {
-                                waterMaterialRuntime.AlbedoTex = Engine.Rendering.TextureCache.GetOrLoad(waterMaterial.AlbedoTexture.Value, waterResolver);
-                            }
-                            else
-                            {
-                                waterMaterialRuntime.AlbedoTex = Engine.Rendering.TextureCache.White1x1;
-                            }
-
-                            // Load normal texture
-                            if (waterMaterial.NormalTexture.HasValue)
-                            {
-                                waterMaterialRuntime.NormalTex = Engine.Rendering.TextureCache.GetOrLoad(waterMaterial.NormalTexture.Value, waterResolver);
-                            }
-                            else
-                            {
-                                waterMaterialRuntime.NormalTex = Engine.Rendering.TextureCache.White1x1;
-                            }
-
-                            // Set material properties
-                            waterMaterialRuntime.AlbedoColor = waterMaterial.AlbedoColor;
-                            waterMaterialRuntime.Metallic = waterMaterial.Metallic;
-                            waterMaterialRuntime.Smoothness = 1.0f - waterMaterial.Roughness; // Convert roughness to smoothness
-                            waterMaterialRuntime.TransparencyMode = waterMaterial.TransparencyMode;
-                            waterMaterialRuntime.NormalStrength = waterMaterial.NormalStrength;
-                            waterMaterialRuntime.TextureTiling = waterMaterial.TextureTiling;
-                            waterMaterialRuntime.TextureOffset = waterMaterial.TextureOffset;
-
-                            // Bind material to shader
-                            waterMaterialRuntime.Bind(waterShader);
-
-                            // Set SSAO uniforms
-                            waterShader.SetInt("u_SSAOEnabled", ssaoEnabled ? 1 : 0);
-                            waterShader.SetFloat("u_SSAOStrength", ssaoStrength);
-                            waterShader.SetVec2("u_ScreenSize", screenSize);
-
-                            if (ssaoEnabled && ssaoTexture != 0)
-                            {
-                                GL.ActiveTexture(TextureUnit.Texture3);
-                                GL.BindTexture(TextureTarget.Texture2D, ssaoTexture);
-                                waterShader.SetInt("u_SSAOTexture", 3);
-                            }
-
-                            // Set shadow uniforms
-                            if (shadowsEnabled && shadowTexture != 0)
-                            {
-                                GL.ActiveTexture(TextureUnit.Texture4);
-                                GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
-                                waterShader.SetInt("u_ShadowMap", 4);
-                                waterShader.SetInt("u_UseShadows", 1);
-                                waterShader.SetFloat("u_ShadowBias", shadowBias);
-                                waterShader.SetFloat("u_ShadowMapSize", shadowMapSize);
-                                waterShader.SetFloat("u_ShadowStrength", shadowStrength);
-                                waterShader.SetMat4("u_ShadowMatrix", shadowMatrix);
-                            }
-                            else
-                            {
-                                waterShader.SetInt("u_UseShadows", 0);
-                            }
-
-                            // Render water plane
-                            terrain.RenderWater();
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Error rendering water plane: {ex.Message}");
-                }
-            }
+            // Water rendering removed: water plane and WaterForward shader have been purged
 
             // Cleanup: restore some GL state we modified
             GL.ActiveTexture(TextureUnit.Texture0);
@@ -827,6 +826,37 @@ namespace Engine.Rendering.Terrain
             // Restore culling state - let higher-level renderer manage culling
             // Don't force it off as that breaks backface culling for all subsequent renders
             GL.Enable(EnableCap.CullFace);
+        }
+
+        private void BindDefaultSnowTextures()
+        {
+            if (_shader == null) return;
+
+            // CRITICAL FIX: Use units 13-15 to avoid conflict with IBL textures (10-12)
+            // MaterialRuntime.Bind() uses units 10-12 for IBL, which was overwriting snow textures!
+
+            // Bind default white textures for snow material
+            GL.ActiveTexture(TextureUnit.Texture13);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            _shader.SetInt("u_SnowAlbedoTex", 13);
+
+            GL.ActiveTexture(TextureUnit.Texture14);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1); // Use white for default normal
+            _shader.SetInt("u_SnowNormalTex", 14);
+
+            GL.ActiveTexture(TextureUnit.Texture15);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            _shader.SetInt("u_SnowMetallicRoughnessTex", 15);
+
+            // Default snow material properties (realistic snow albedo ~65-70%)
+            _shader.SetVec4("u_SnowAlbedoColor", new OpenTK.Mathematics.Vector4(0.65f, 0.68f, 0.75f, 1.0f));
+            _shader.SetFloat("u_SnowMetallic", 0.0f);
+            _shader.SetFloat("u_SnowRoughness", 0.3f);
+            _shader.SetFloat("u_SnowNormalStrength", 1.0f);
+            _shader.SetVec2("u_SnowTextureTiling", new OpenTK.Mathematics.Vector2(0.1f, 0.1f));
+
+            // CRITICAL: Restore texture unit 0 as active
+            GL.ActiveTexture(TextureUnit.Texture0);
         }
 
         private void OnMaterialSaved(Guid materialGuid)
@@ -859,6 +889,26 @@ namespace Engine.Rendering.Terrain
                 var material = AssetDatabase.LoadMaterial(materialGuid);
                 if (material != null)
                 {
+                    // Ensure texture streaming is initiated and upload pending textures
+                    try
+                    {
+                        Engine.Rendering.TextureCache.Initialize();
+
+                        // Schedule loads for common material textures so they can be uploaded
+                        if (material.AlbedoTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.AlbedoTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.NormalTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.NormalTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.MetallicTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.MetallicTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.RoughnessTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.RoughnessTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.MetallicRoughnessTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.MetallicRoughnessTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.OcclusionTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.OcclusionTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.EmissiveTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.EmissiveTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+                        if (material.HeightTexture.HasValue) Engine.Rendering.TextureCache.GetOrLoad(material.HeightTexture.Value, guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+
+                        // Process pending uploads immediately (main thread / GL context)
+                        try { Engine.Rendering.TextureCache.FlushPendingUploads(50); } catch { }
+                    }
+                    catch { }
+
                     _materialCache[materialGuid] = material;
                     // PERFORMANCE: Disabled log
                     // Console.WriteLine($"[TerrainRenderer] Material {materialGuid} loaded and cached");
@@ -871,6 +921,26 @@ namespace Engine.Rendering.Terrain
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Invalidate cached material to force reload on next frame (for live editing)
+        /// </summary>
+        public void InvalidateMaterialCache(Guid materialGuid)
+        {
+            if (_materialCache.Remove(materialGuid))
+            {
+                // Material removed from cache, will be reloaded on next frame
+            }
+        }
+
+        /// <summary>
+        /// Update cached material with new values for live editing (without disk reload)
+        /// </summary>
+        public void UpdateMaterialCache(Guid materialGuid, MaterialAsset material)
+        {
+            // Update or add to cache with the new material data
+            _materialCache[materialGuid] = material;
         }
 
         public void Dispose()

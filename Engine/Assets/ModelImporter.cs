@@ -73,10 +73,10 @@ namespace Engine.Assets
                     Engine.Utils.DebugLogger.Log($"[ModelImporter] Failed to refresh AssetDatabase: {ex.Message}");
                 }
 
-                // Clear material runtime cache
+                // CENTRALIZED: Clear all material caches
                 try
                 {
-                    Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                    Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
                 }
                 catch { }
 

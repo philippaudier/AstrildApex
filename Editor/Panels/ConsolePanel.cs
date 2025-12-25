@@ -7,11 +7,14 @@ using ImGuiNET;
 using Editor.Logging;
 using System.Numerics;
 using Editor.Icons;
+using Editor.Themes;
 
 namespace Editor.Panels
 {
     public static class ConsolePanel
     {
+        private static UITheme UI => ThemeManager.UI;
+
         static ConsolePanel()
         {
             try { Editor.Logging.LogManager.OnLogChanged += () => _isDirtyLogs = true; } catch { }

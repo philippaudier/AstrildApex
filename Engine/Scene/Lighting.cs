@@ -55,11 +55,6 @@ namespace Engine.Scene
                 L.AmbientColor = envSettings.AmbientColor;
                 L.AmbientIntensity = envSettings.AmbientIntensity;
                 L.AmbientMode = envSettings.AmbientMode;
-                L.FogEnabled = envSettings.FogEnabled;
-                L.FogColor = envSettings.FogColor;
-                L.FogStart = envSettings.FogStart;
-                L.FogEnd = envSettings.FogEnd;
-                L.FogDensity = envSettings.FogDensity;
                 L.SkyboxTint = envSettings.SkyboxTint;
                 L.SkyboxExposure = envSettings.SkyboxExposure;
                 // If a skybox material asset is assigned, prefer its tint/exposure
@@ -187,6 +182,31 @@ namespace Engine.Scene
                         }
                     }
                 }
+            }
+
+            // Get fog settings from WeatherComponent (NEW WEATHER SYSTEM)
+            var weatherComp = scene.Entities
+                .Select(e => e.GetComponent<Engine.Components.WeatherComponent>())
+                .FirstOrDefault(w => w != null);
+
+            if (weatherComp != null)
+            {
+                L.FogEnabled = weatherComp.FogEnabled;
+                // Convert System.Numerics.Vector3 to OpenTK.Mathematics.Vector3
+                var fogCol = weatherComp.FogColor;
+                L.FogColor = new Vector3(fogCol.X, fogCol.Y, fogCol.Z);
+                L.FogStart = weatherComp.FogStart;
+                L.FogEnd = weatherComp.FogEnd;
+                L.FogDensity = weatherComp.FogDensity;
+            }
+            else
+            {
+                // Fallback: no fog if no weather component
+                L.FogEnabled = false;
+                L.FogColor = Vector3.One;
+                L.FogStart = 0.0f;
+                L.FogEnd = 300.0f;
+                L.FogDensity = 0.01f;
             }
 
             // Process all other lights

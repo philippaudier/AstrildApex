@@ -55,15 +55,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\Water.tese</Link>
     </None>
-    <!-- Removed legacy WaterSimple shader (replaced by WaterForward/Water PBR shaders) -->
-    <None Update="Rendering\Shaders\Forward\WaterForward.vert">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\WaterForward.vert</Link>
-    </None>
-    <None Update="Rendering\Shaders\Forward\WaterForward.frag">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\WaterForward.frag</Link>
-    </None>
+    <!-- WaterForward shader removed from repository; no project links needed -->
     <!-- Maintain backward compatibility: also provide 'Water' shader name by duplicating files -->
     <None Update="Rendering\Shaders\Forward\Water.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -200,6 +192,15 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\ssao_combine.frag</Link>
     </None>
+    <!-- Image Sharpening Post-Process Shaders (AMD FidelityFX CAS) -->
+    <None Update="Rendering\Shaders\PostProcess\image_sharpening.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\image_sharpening.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\image_sharpening.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\image_sharpening.frag</Link>
+    </None>
     <!-- GTAO Post-Process Shaders -->
     <None Update="Rendering\Shaders\PostProcess\gtao.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -307,6 +308,14 @@
     <None Update="Rendering\Shaders\Forward\TerrainForward.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\TerrainForward.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\VegetationForward.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\VegetationForward.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\VegetationForward.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\VegetationForward.frag</Link>
     </None>
 
     <!-- Debug Shaders -->

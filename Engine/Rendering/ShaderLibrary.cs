@@ -109,7 +109,7 @@ namespace Engine.Rendering
             if (_cache.TryGetValue(name, out var prog)) return prog;
             if (!_pairs.TryGetValue(name, out var paths))
             {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] NOT FOUND in _pairs! Available: {string.Join(", ", _pairs.Keys)}"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Shader '{name}' not found. Available: {string.Join(", ", _pairs.Keys)}"); } catch { }
                 return null;
             }
             try
@@ -132,12 +132,9 @@ namespace Engine.Rendering
             }
             catch (Exception ex)
             {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ FAILED to load shader {name}: {ex.Message}"); } catch { }
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ Stack trace: {ex.StackTrace}"); } catch { }
-                if (ex.InnerException != null)
-                {
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] ❌ Inner exception: {ex.InnerException.Message}"); } catch { }
-                }
+                // CRITICAL: Always log shader compilation failures (not just in verbose mode)
+                Console.WriteLine($"[ShaderLibrary] ❌ FAILED to compile shader '{name}': {ex.Message}");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Stack trace: {ex.StackTrace}"); } catch { }
                 _cache[name] = null;
                 return null;
             }

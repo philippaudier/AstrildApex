@@ -2,14 +2,17 @@ using System;
 using ImGuiNET;
 using Engine.Components;
 using OpenTK.Mathematics;
+using Editor.UI;
+using Editor.Themes;
 
 namespace Editor.Inspector
 {
     /// <summary>
-    /// Professional Unity-style Light Component inspector with presets and validation
+    /// Modern Unity-style Light Component inspector with unified UX
     /// </summary>
     public static class LightInspector
     {
+        private static UITheme UI => ThemeManager.UI;
         public static void Draw(LightComponent light)
         {
             if (light?.Entity == null) return;

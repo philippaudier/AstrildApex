@@ -110,9 +110,11 @@ namespace Editor.Themes
         public Vector4 GradientEnd { get; set; }
         public Vector4 AccentColor { get; set; }
         
-        // === STYLE VALUES ===
+        // === EXTENDED STYLE VALUES ===
         public float Alpha { get; set; } = 1.0f;
         public float DisabledAlpha { get; set; } = 0.6f;
+        
+        // Rounding (0 = square corners, higher = more rounded)
         public float WindowRounding { get; set; } = 12.0f;
         public float ChildRounding { get; set; } = 8.0f;
         public float FrameRounding { get; set; } = 6.0f;
@@ -120,5 +122,35 @@ namespace Editor.Themes
         public float ScrollbarRounding { get; set; } = 9.0f;
         public float GrabRounding { get; set; } = 6.0f;
         public float TabRounding { get; set; } = 8.0f;
+        
+        // Borders
+        public float WindowBorderSize { get; set; } = 1.0f;
+        public float ChildBorderSize { get; set; } = 1.0f;
+        public float PopupBorderSize { get; set; } = 1.0f;
+        public float FrameBorderSize { get; set; } = 0.0f;
+        public float TabBorderSize { get; set; } = 0.0f;
+        
+        // Padding & Spacing
+        public Vector2 WindowPadding { get; set; } = new Vector2(8, 8);
+        public Vector2 FramePadding { get; set; } = new Vector2(5, 4);
+        public Vector2 ItemSpacing { get; set; } = new Vector2(8, 4);
+        public Vector2 ItemInnerSpacing { get; set; } = new Vector2(4, 4);
+        public Vector2 CellPadding { get; set; } = new Vector2(4, 2);
+        
+        // Sizes
+        public Vector2 WindowMinSize { get; set; } = new Vector2(32, 32);
+        public float IndentSpacing { get; set; } = 21.0f;
+        public float ScrollbarSize { get; set; } = 14.0f;
+        public float GrabMinSize { get; set; } = 12.0f;
+        
+        // Alignment
+        public Vector2 WindowTitleAlign { get; set; } = new Vector2(0.0f, 0.5f);
+        public Vector2 ButtonTextAlign { get; set; } = new Vector2(0.5f, 0.5f);
+        public Vector2 SelectableTextAlign { get; set; } = new Vector2(0.0f, 0.0f);
+        
+        // Misc
+        public float LogSliderDeadzone { get; set; } = 4.0f;
+        public float TabMinWidthForCloseButton { get; set; } = 0.0f;
+        public float ColorButtonPosition { get; set; } = 1.0f; // 0=left, 1=right
     }
 }

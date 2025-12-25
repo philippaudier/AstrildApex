@@ -114,11 +114,10 @@ namespace Editor
         {
             try
             {
-                // Clear all collision data to remove ghost colliders from the Play Mode session
-                // This ensures Edit Mode doesn't have stale colliders from the cloned scene
-                Engine.Physics.CollisionSystem.ClearAll();
+                // Physics system removed - cleanup disabled
+                // Engine.Physics.CollisionSystem.ClearAll();
 
-                Log.Information("[PhysicsSystemHandler] Physics system cleaned up");
+                Log.Information("[PhysicsSystemHandler] Physics system cleaned up (disabled)");
             }
             catch (Exception ex)
             {
@@ -206,22 +205,11 @@ namespace Editor
         {
             try
             {
-                // Clear material caches to force reload with fresh texture handles
-                Engine.Rendering.MaterialRuntime.ClearGlobalCache();
+                // CENTRALIZED: Clear ALL material caches using the new unified method
+                // This ensures both AssetDatabase and MaterialRuntime caches are cleared together
+                Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
 
-                try
-                {
-                    Panels.EditorUI.MainViewport.Renderer?.ClearMaterialCache();
-                }
-                catch { }
-
-                try
-                {
-                    Panels.GamePanel.ClearMaterialCache();
-                }
-                catch { }
-
-                Log.Information("[RenderingSystemHandler] Material caches cleared for Play Mode");
+                Log.Information("[RenderingSystemHandler] All material caches cleared for Play Mode");
             }
             catch (Exception ex)
             {

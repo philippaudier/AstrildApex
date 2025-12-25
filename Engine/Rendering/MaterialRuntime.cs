@@ -56,6 +56,44 @@ namespace Engine.Rendering
             }
         }
 
+        /// <summary>
+        /// Invalidates a single material cache entry to force reload on next access.
+        /// Call this when material properties change in the Inspector.
+        /// </summary>
+        public static void InvalidateCacheEntry(Guid guid)
+        {
+            try
+            {
+                _globalCache.Remove(guid);
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] ✗ Error invalidating cache entry: {ex.Message}"); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Updates a single material cache entry with the provided material asset.
+        /// Call this when material properties change and you want to immediately update the cache.
+        /// </summary>
+        public static void UpdateCacheEntry(Guid guid, MaterialAsset asset)
+        {
+            try
+            {
+                // First invalidate the old entry
+                _globalCache.Remove(guid);
+
+                // Then reload it into the cache with the provided asset
+                Func<Guid, string?> resolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var rec) ? rec.Path : null;
+                var runtime = FromAsset(asset, resolver);
+                // FromAsset already adds it to the cache, so we're done
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] ✗ Error updating cache entry: {ex.Message}"); } catch { }
+            }
+        }
+
         public Guid AssetGuid;
         
         // === BASE TEXTURES ===

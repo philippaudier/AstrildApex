@@ -2,6 +2,8 @@ using System;
 using ImGuiNET;
 using Editor.Rendering;
 using OpenTK.Mathematics;
+using Editor.Themes;
+using Editor.UI;
 using Vector2 = System.Numerics.Vector2;
 
 namespace Editor.Panels;
@@ -11,6 +13,8 @@ namespace Editor.Panels;
 /// </summary>
 public class CameraSettingsPanel
 {
+    private static UITheme UI => ThemeManager.UI;
+
     private static bool _isOpen = false;
 
     public static void Open()
@@ -35,7 +39,7 @@ public class CameraSettingsPanel
             }
 
             // === General Settings ===
-            if (ImGui.CollapsingHeader("General", ImGuiTreeNodeFlags.DefaultOpen))
+            if (ThemedImGui.CollapsingHeader("General", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 // Camera Mode
                 ImGui.Text("Projection Mode:");
@@ -92,7 +96,7 @@ public class CameraSettingsPanel
             // === Perspective Settings ===
             if (cameraMode == CameraMode.Perspective)
             {
-                if (ImGui.CollapsingHeader("Perspective Settings", ImGuiTreeNodeFlags.DefaultOpen))
+                if (ThemedImGui.CollapsingHeader("Perspective Settings", ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     // Near/Far Clip
                     float nearClip = renderer.NearClip;
@@ -116,7 +120,7 @@ public class CameraSettingsPanel
             {
                 string headerName = cameraMode == CameraMode.TwoD ? "2D Settings" : "Orthographic Settings";
 
-                if (ImGui.CollapsingHeader(headerName, ImGuiTreeNodeFlags.DefaultOpen))
+                if (ThemedImGui.CollapsingHeader(headerName, ImGuiTreeNodeFlags.DefaultOpen))
                 {
                     // Ortho Size
                     float tempOrthoSize = orthoSize;
@@ -157,7 +161,7 @@ public class CameraSettingsPanel
             }
 
             // === Info ===
-            if (ImGui.CollapsingHeader("Info"))
+            if (ThemedImGui.CollapsingHeader("Info"))
             {
                 ImGui.TextDisabled("Current Settings:");
                 ImGui.Text($"Mode: {cameraMode}");
