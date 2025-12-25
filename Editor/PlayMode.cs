@@ -187,10 +187,10 @@ namespace Editor
             _fixedTimeAccumulator += deltaTime;
             while (_fixedTimeAccumulator >= _fixedDeltaTime)
             {
-                // Step 1: Update physics/colliders
-                Engine.Physics.CollisionSystem.Step(_fixedDeltaTime);
+                // OBSOLETE: Old collision system removed
+                // Engine.Physics.CollisionSystem.Step(_fixedDeltaTime);
 
-                // Step 2: Update CharacterControllers (they query the colliders updated above)
+                // Update components at fixed timestep
                 FixedUpdateComponents(_fixedDeltaTime);
 
                 _fixedTimeAccumulator -= _fixedDeltaTime;

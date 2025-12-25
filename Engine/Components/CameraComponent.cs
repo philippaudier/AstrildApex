@@ -612,6 +612,9 @@ namespace Engine.Components
             var direction = (desiredPosition - pivot).Normalized();
 
             // Get player's collider to ignore it
+            // OBSOLETE: Old collision system removed - camera occlusion disabled
+            // TODO: Re-implement using new KinematicCharacterController or Physics.Colliders system
+            /*
             Collider? playerCollider = null;
             float playerRadius = 0.5f;
 
@@ -634,35 +637,9 @@ namespace Engine.Components
             };
 
             var hits = CollisionSystem.RaycastAll(ray, adjustedDistance, CollisionLayerMask, QueryTriggerInteraction.Ignore);
+            */
 
-            if (hits != null && hits.Count > 0)
-            {
-                float closestDistance = adjustedDistance;
-
-                foreach (var hit in hits)
-                {
-                    if (playerCollider != null && hit.ColliderComponent == playerCollider)
-                        continue;
-                    if (hit.ColliderComponent?.Entity == Entity)
-                        continue;
-                    if (hit.Distance < 0.01f)
-                        continue;
-
-                    var hitPoint = hit.Point;
-                    var toPivot = (pivot - hitPoint).Length;
-                    var toDesired = (desiredPosition - hitPoint).Length;
-
-                    if (toPivot < playerRadius || toDesired > distance)
-                        continue;
-
-                    if (hit.Distance < closestDistance)
-                        closestDistance = hit.Distance;
-                }
-
-                if (closestDistance < adjustedDistance)
-                    return MathF.Max(MinDistance, closestDistance + (playerRadius + 0.1f) - CollisionMargin);
-            }
-
+            // Camera occlusion disabled - old collision system removed - no collision detection
             return distance;
         }
 

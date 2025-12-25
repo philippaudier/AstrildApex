@@ -3,6 +3,7 @@ using System.Threading;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Engine.Mathx;
@@ -48,17 +49,28 @@ namespace Editor.Rendering
         // Ajoute ce champ dans la classe ViewportRenderer
         public bool ForceEditorCamera { get; set; } = true;
 
-        // Material cache to avoid loading from disk every frame
-        private readonly Dictionary<Guid, Engine.Rendering.MaterialRuntime> _materialCache = new();
-    // When true, force re-binding of material uniforms on next render pass
-    private volatile bool _forceMaterialRebind = false;
+        // When true, force re-binding of material uniforms on next render pass
+        private volatile bool _forceMaterialRebind = false;
+    
+    // Fallback material for missing/broken materials (magenta like Unity)
+    private Engine.Rendering.MaterialRuntime? _errorMaterialRuntime = null;
 
         // Custom mesh cache (for imported 3D models)
         // Key is (MeshGuid, SubmeshIndex)
         private readonly Dictionary<(Guid, int), CustomMeshData> _customMeshCache = new();
 
+        // Weather system for editor-time weather updates
+        private Engine.Systems.WeatherSystem _weatherSystem = new Engine.Systems.WeatherSystem();
+
         // Time tracking for animated shaders (e.g., Water shader)
         private System.Diagnostics.Stopwatch _timeStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Separate stopwatch for weather system deltaTime
+        private System.Diagnostics.Stopwatch _weatherDeltaStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Frame counter for periodic debug logging
+        private int _frameCounter = 0;
+
     // Frame timing instrumentation (lightweight)
     private System.Diagnostics.Stopwatch? _frameTimer = null;
     private float _lastFrameCpuMs = 0f;
@@ -320,6 +332,7 @@ namespace Editor.Rendering
             public Engine.Rendering.MaterialRuntime MaterialRuntime;
             public uint ObjectId;
             public MeshKind MeshType;  // Added to track mesh type for culling
+            public Engine.Components.CullingMode CullingMode;  // Added to track culling mode from MeshRenderer
         }
 
         public ViewportRenderer()
@@ -398,6 +411,21 @@ namespace Editor.Rendering
                 _uiRenderer = null;
                 _inputModule = null;
             }
+
+            // Initialize Vegetation renderer for instanced vegetation with wind animation
+            // Initialize early in constructor so it's ready for rendering as soon as scenes are loaded
+            try
+            {
+                _vegetationRenderer = new Engine.Rendering.VegetationRenderer();
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    Editor.Logging.LogManager.LogInfo("VegetationRenderer initialized in constructor", "Renderer");
+            }
+            catch (Exception ex)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    Editor.Logging.LogManager.LogWarning($"Failed to create VegetationRenderer in constructor: {ex.Message}", "Renderer");
+                _vegetationRenderer = null;
+            }
         }
 
         // Expose near/far so UI can bind to them
@@ -455,11 +483,30 @@ namespace Editor.Rendering
         // === Scene ===
         private Scene _scene = new Scene();
         public Scene Scene => _scene;
+        private HashSet<Engine.Components.Terrain> _subscribedTerrains = new HashSet<Engine.Components.Terrain>();
 
         // Ajoute cette méthode publique dans ViewportRenderer :
         public void SetScene(Scene scene)
         {
             _scene = scene ?? throw new ArgumentNullException(nameof(scene));
+
+            // CRITICAL: Initialize WeatherManager from scene's WeatherComponent
+            // This ensures weather parameters are available from the moment the scene loads
+            try
+            {
+                foreach (var entity in scene.Entities)
+                {
+                    if (!entity.Active) continue;
+                    var weather = entity.GetComponent<Engine.Components.WeatherComponent>();
+                    if (weather != null)
+                    {
+                        Engine.Systems.WeatherManager.UpdateFromComponent(weather);
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] WeatherManager initialized from scene's WeatherComponent"); } catch { }
+                        break;
+                    }
+                }
+            }
+            catch { }
 
             // Subscribe to material changes to invalidate cache (only once)
             if (!_subscribedToMaterialChanges)
@@ -467,6 +514,232 @@ namespace Editor.Rendering
                 Engine.Assets.AssetDatabase.MaterialSaved += OnMaterialSaved;
                 _subscribedToMaterialChanges = true;
             }
+
+            // Subscribe to terrain vegetation events for VegetationRenderer
+            if (_vegetationRenderer != null)
+            {
+                foreach (var entity in scene.Entities)
+                {
+                    var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                    if (terrain != null && !_subscribedTerrains.Contains(terrain))
+                    {
+                        // Subscribe to future regenerations (only once per terrain)
+                        terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
+                        _subscribedTerrains.Add(terrain);
+
+                        // CRITICAL: Initialize batches for existing vegetation (if already generated)
+                        if (terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0)
+                        {
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Initializing existing vegetation batches for terrain (layers={terrain.VegetationLayers?.Length ?? 0})"); } catch { }
+                            OnTerrainVegetationRegenerated(terrain);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called when terrain vegetation is regenerated. Updates VegetationRenderer batches.
+        /// </summary>
+        private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
+        {
+            // CRITICAL: Update WeatherManager whenever vegetation is regenerated
+            // This ensures wind parameters are synchronized before rendering new vegetation
+            try
+            {
+                if (_scene != null)
+                {
+                    foreach (var entity in _scene.Entities)
+                    {
+                        if (!entity.Active) continue;
+                        var weather = entity.GetComponent<Engine.Components.WeatherComponent>();
+                        if (weather != null)
+                        {
+                            Engine.Systems.WeatherManager.UpdateFromComponent(weather);
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] WeatherManager updated after vegetation regeneration"); } catch { }
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            if (_vegetationRenderer == null)
+            {
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] OnTerrainVegetationRegenerated: VegetationRenderer is null!"); } catch { }
+                return;
+            }
+
+            if (terrain.VegetationLayers == null || terrain.VegetationInstances == null)
+            {
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] OnTerrainVegetationRegenerated: No vegetation layers or instances"); } catch { }
+                return;
+            }
+
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] OnTerrainVegetationRegenerated: Processing {terrain.VegetationLayers.Length} layers"); } catch { }
+
+            // Update batches for each vegetation layer
+            for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
+            {
+                var layer = terrain.VegetationLayers[layerIndex];
+
+                // DEBUG: Log layer details
+                if (layer == null)
+                {
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: Layer is NULL!"); } catch { }
+                    continue;
+                }
+
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: PrefabGuid={layer.PrefabGuid?.ToString() ?? "NULL"}, ModelGuid={layer.ModelGuid?.ToString() ?? "NULL"}, Density={layer.Density}"); } catch { }
+
+                // Try to get model GUID from either direct assignment or prefab
+                Guid? modelGuid = GetModelGuidFromLayer(layer);
+
+                if (modelGuid == null || modelGuid == System.Guid.Empty)
+                {
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ❌ SKIPPED - No model found! Assign a Prefab or Model in the Inspector."); } catch { }
+                    continue;
+                }
+
+                if (!terrain.VegetationInstances.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0)
+                {
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ❌ No instances generated for this layer"); } catch { }
+                    continue;
+                }
+
+                // Update vegetation batch with transforms from terrain
+                int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count})"); } catch { }
+                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back);
+            }
+            // Ensure GPU buffers are (re)uploaded after updating batches so changes
+            // made in the inspector take effect immediately in the renderer.
+            try
+            {
+                _vegetationRenderer.RefreshAllBatches();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Get the model GUID from a vegetation layer (supports both Prefab and direct Model assignment).
+        /// </summary>
+        private Guid? GetModelGuidFromLayer(Engine.Assets.VegetationLayer layer)
+        {
+            // Priority 1: Direct ModelGuid (legacy mode)
+            if (layer.ModelGuid.HasValue && layer.ModelGuid.Value != Guid.Empty)
+            {
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Using direct ModelGuid: {layer.ModelGuid.Value}"); } catch { }
+                return layer.ModelGuid.Value;
+            }
+
+            // Priority 2: Extract ModelGuid from Prefab
+            if (layer.PrefabGuid.HasValue && layer.PrefabGuid.Value != Guid.Empty)
+            {
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Attempting to extract ModelGuid from Prefab {layer.PrefabGuid.Value}"); } catch { }
+
+                try
+                {
+                    // Load prefab asset
+                    if (!AssetDatabase.TryGet(layer.PrefabGuid.Value, out var prefabRecord))
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Prefab not found in AssetDatabase"); } catch { }
+                        return null;
+                    }
+
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Loading prefab from: {prefabRecord.Path}"); } catch { }
+                    var prefab = Engine.Assets.PrefabAsset.Load(prefabRecord.Path);
+
+                    if (prefab == null)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Prefab.Load returned null"); } catch { }
+                        return null;
+                    }
+
+                    if (prefab.RootEntity == null)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Prefab.RootEntity is null"); } catch { }
+                        return null;
+                    }
+
+                    if (prefab.RootEntity.Components == null)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Prefab.RootEntity.Components is null"); } catch { }
+                        return null;
+                    }
+
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Prefab has {prefab.RootEntity.Components.Count} components"); } catch { }
+                    foreach (var key in prefab.RootEntity.Components.Keys)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer]   - Component: {key}"); } catch { }
+                    }
+
+                    // Look for MeshRendererComponent in the root entity OR children
+                    JsonElement? meshRendererJson = null;
+                    
+                    if (prefab.RootEntity.Components.TryGetValue("MeshRendererComponent", out var rootMeshRenderer))
+                    {
+                        meshRendererJson = rootMeshRenderer;
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Found MeshRendererComponent in root entity"); } catch { }
+                    }
+                    else
+                    {
+                        // Search in children
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] MeshRendererComponent not in root, searching {prefab.RootEntity.Children.Count} children..."); } catch { }
+                        
+                        foreach (var child in prefab.RootEntity.Children)
+                        {
+                            if (child.Components != null && child.Components.TryGetValue("MeshRendererComponent", out var childMeshRenderer))
+                            {
+                                meshRendererJson = childMeshRenderer;
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ✅ Found MeshRendererComponent in child '{child.Name}'"); } catch { }
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (!meshRendererJson.HasValue)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ MeshRendererComponent not found in prefab (root or children)"); } catch { }
+                        return null;
+                    }
+
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] MeshRendererComponent JSON: {meshRendererJson.Value}"); } catch { }
+
+                    // Parse the CustomMeshGuid from the JSON
+                    if (!meshRendererJson.Value.TryGetProperty("customMeshGuid", out var guidElement))
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ CustomMeshGuid property not found in MeshRendererComponent"); } catch { }
+                        return null;
+                    }
+
+                    string? guidStr = guidElement.GetString();
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] CustomMeshGuid string: '{guidStr}'"); } catch { }
+
+                    if (string.IsNullOrEmpty(guidStr))
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ CustomMeshGuid is null or empty"); } catch { }
+                        return null;
+                    }
+
+                    if (!Guid.TryParse(guidStr, out var modelGuid))
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Failed to parse GUID from string '{guidStr}'"); } catch { }
+                        return null;
+                    }
+
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ✅ Extracted ModelGuid {modelGuid} from Prefab {layer.PrefabGuid.Value}"); } catch { }
+                    return modelGuid;
+                }
+                catch (Exception ex)
+                {
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ Exception extracting ModelGuid from Prefab: {ex.Message}"); } catch { }
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Stack trace: {ex.StackTrace}"); } catch { }
+                }
+            }
+
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ No ModelGuid or PrefabGuid found"); } catch { }
+            return null;
         }
 
         /// <summary>
@@ -505,6 +778,8 @@ namespace Editor.Rendering
         private int _postFbo2 = 0, _postTex2 = 0;  // Second buffer for ping-pong
         // Velocity buffer (camera motion) - generated each frame from depth
         private int _velocityFbo = 0, _velocityTex = 0;
+        // Scene color texture for glass/transparent refraction (opaque scene before transparents)
+        private int _sceneColorTex = 0;
         // Indicates whether the post texture / fbo are healthy and can be used as final target
         private bool _postTexHealthy = false;
         private int _w = 1, _h = 1;
@@ -752,6 +1027,9 @@ namespace Editor.Rendering
 
     // Particle Renderer
     private Engine.Rendering.ParticleRenderer? _particleRenderer = null;
+
+    // Vegetation Renderer (for instanced vegetation with wind animation)
+    private Engine.Rendering.VegetationRenderer? _vegetationRenderer = null;
 
         // Public accessor for UI
         public int GBufferDebugMode
@@ -1002,6 +1280,21 @@ namespace Editor.Rendering
             }
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
+            // Create or resize scene color texture for glass/transparent refraction
+            // This texture captures the opaque scene before rendering transparents
+            if (_sceneColorTex != 0) { GL.DeleteTexture(_sceneColorTex); _sceneColorTex = 0; }
+
+            _sceneColorTex = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, _w, _h, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            // Initialize or resize reflection framebuffer for planar water reflections
+            try { InitReflectionFramebuffer(); } catch { }
+
             if (_gfxShader == 0) InitResources();
             // Lazy-create grid only if enabled
             if (_showGrid && _grid == null) _grid = new GridRenderer();
@@ -1016,7 +1309,6 @@ namespace Editor.Rendering
             {
                 _outlineRenderer = new Engine.Rendering.SelectionOutlineRenderer();
                 _outlineRenderer.Initialize();
-                Editor.Logging.LogManager.LogInfo("Selection Outline Renderer initialized", "Renderer");
             }
             catch (Exception ex)
             {
@@ -1030,7 +1322,6 @@ namespace Editor.Rendering
                 try
                 {
                     _particleRenderer = new Engine.Rendering.ParticleRenderer();
-                    Editor.Logging.LogManager.LogInfo("Particle Renderer initialized", "Renderer");
                 }
                 catch (Exception ex)
                 {
@@ -1065,7 +1356,6 @@ namespace Editor.Rendering
                 {
                     _msaaRenderer?.Dispose();
                     _msaaRenderer = new Engine.Rendering.MSAARenderer(_w, _h, _antiAliasingMode.GetSampleCount());
-                    Editor.Logging.LogManager.LogInfo($"MSAA Renderer initialized/resized: {_w}x{_h} @ {_antiAliasingMode.GetSampleCount()}x samples", "Renderer");
                 }
                 catch (Exception ex)
                 {
@@ -1082,7 +1372,6 @@ namespace Editor.Rendering
                 try
                 {
                     _terrainRenderer = new Engine.Rendering.Terrain.TerrainRenderer();
-                    Editor.Logging.LogManager.LogInfo("Terrain Renderer initialized successfully", "Renderer");
                 }
                 catch (Exception)
                 {
@@ -1090,8 +1379,26 @@ namespace Editor.Rendering
                 }
             }
 
-            // Initialize Water Reflection framebuffer (DISABLED - TO BE REIMPLEMENTED LATER)
-            // InitReflectionFramebuffer();
+            // VegetationRenderer is now initialized in constructor for early availability
+            // Keep fallback initialization here for robustness (in case constructor init failed)
+            if (_vegetationRenderer == null)
+            {
+                try
+                {
+                    _vegetationRenderer = new Engine.Rendering.VegetationRenderer();
+                    if (Engine.Utils.DebugLogger.EnableVerbose)
+                        Editor.Logging.LogManager.LogInfo("VegetationRenderer initialized (fallback in Resize)", "Renderer");
+                }
+                catch (Exception ex)
+                {
+                    if (Engine.Utils.DebugLogger.EnableVerbose)
+                        Editor.Logging.LogManager.LogWarning($"Failed to create VegetationRenderer in Resize: {ex.Message}", "Renderer");
+                    _vegetationRenderer = null;
+                }
+            }
+
+            // Initialize Water Reflection framebuffer
+            InitReflectionFramebuffer();
 
             // seed - à la fin de Resize()
 if (_scene.Entities.Count == 0)
@@ -1290,31 +1597,67 @@ void main(){
             GL.UseProgram(0);
 
             // --- PBR shader initialization ---
+            // Create error material (magenta) for missing/broken materials
+            _errorMaterialRuntime = new Engine.Rendering.MaterialRuntime
+            {
+                AlbedoColor = new float[] { 1.0f, 0.0f, 1.0f, 1.0f }, // Magenta
+                AlbedoTex = Engine.Rendering.TextureCache.White1x1,
+                Metallic = 0.0f,
+                Smoothness = 0.0f // Low smoothness = high roughness
+            };
+            
             try
             {
                 // Clear shader preprocessor cache to ensure fresh shader compilation
                 Engine.Rendering.ShaderPreprocessor.ClearCache();
 
+                Console.WriteLine("[ViewportRenderer] Loading ForwardBase shader...");
+
                 // Prefer the ShaderLibrary-managed instance so all users get the same ShaderProgram
                 _pbrShader = Engine.Rendering.ShaderLibrary.GetShaderByName("ForwardBase");
                 if (_pbrShader == null)
                 {
+                    Console.WriteLine("[ViewportRenderer] ForwardBase not found in ShaderLibrary, loading from files...");
                     // Fallback if ShaderLibrary didn't find it (rare)
                     _pbrShader = Engine.Rendering.ShaderProgram.FromFiles("Engine/Rendering/Shaders/Forward/ForwardBase.vert", "Engine/Rendering/Shaders/Forward/ForwardBase.frag");
                 }
 
-                // Ensure Global UBO binding is set on the chosen shader program
-                try
+                if (_pbrShader != null)
                 {
-                    _pbrShader.Use();
-                    int globalBlockIndex = GL.GetUniformBlockIndex(_pbrShader.Handle, "Global");
-                    if (globalBlockIndex != -1)
+                    Console.WriteLine($"[ViewportRenderer] ForwardBase shader loaded successfully (handle={_pbrShader.Handle})");
+
+                    // Check shader link status
+                    GL.GetProgram(_pbrShader.Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
+                    if (linkStatus == 0)
                     {
-                        GL.UniformBlockBinding(_pbrShader.Handle, globalBlockIndex, 0);
+                        string infoLog = GL.GetProgramInfoLog(_pbrShader.Handle);
+                        Console.WriteLine($"[ViewportRenderer] *** ForwardBase LINK ERROR ***:\n{infoLog}");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[ViewportRenderer] ForwardBase shader linked successfully");
                     }
                 }
-                catch { }
-                GL.UseProgram(0);
+                else
+                {
+                    Console.WriteLine("[ViewportRenderer] *** ForwardBase shader is NULL after loading! ***");
+                }
+
+                // Ensure Global UBO binding is set on the chosen shader program
+                if (_pbrShader != null)
+                {
+                    try
+                    {
+                        _pbrShader.Use();
+                        int globalBlockIndex = GL.GetUniformBlockIndex(_pbrShader.Handle, "Global");
+                        if (globalBlockIndex != -1)
+                        {
+                            GL.UniformBlockBinding(_pbrShader.Handle, globalBlockIndex, 0);
+                        }
+                    }
+                    catch { }
+                    GL.UseProgram(0);
+                }
                 
             }
             catch (System.Exception ex)
@@ -2086,26 +2429,31 @@ void main(){
                     // Only render mesh entities
                     var meshRenderer = entity.GetComponent<Engine.Components.MeshRendererComponent>();
                     if (meshRenderer == null || !meshRenderer.HasMeshToRender()) continue;
-                    if (meshRenderer.MaterialGuid == null || meshRenderer.MaterialGuid == Guid.Empty) continue;
 
-                    var materialGuid = meshRenderer.MaterialGuid.Value;
+                    // Check if material is missing
+                    bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
+                    var materialGuid = hasMaterial ? meshRenderer.MaterialGuid!.Value : Guid.Empty;
 
-                    // Bind material if changed
-                    if (materialGuid != lastBound)
+                    // Bind material if changed or forced rebind requested
+                    if (materialGuid != lastBound || _forceMaterialRebind || !hasMaterial)
                     {
-                        // Use material cache
-                        if (!_materialCache.TryGetValue(materialGuid, out mr))
+                        if (!hasMaterial)
+                        {
+                            // Use magenta error material for missing materials
+                            mr = _errorMaterialRuntime;
+                        }
+                        else
                         {
                             try
                             {
                                 var asset = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid);
                                 Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                                mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
-                                _materialCache[materialGuid] = mr;
+                                mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
                             }
                             catch
                             {
-                                mr = new Engine.Rendering.MaterialRuntime { AlbedoTex = Engine.Rendering.TextureCache.White1x1 };
+                                // Use magenta error material for broken materials/shaders
+                                mr = _errorMaterialRuntime;
                             }
                         }
 
@@ -2117,6 +2465,11 @@ void main(){
                         }
 
                         lastBound = materialGuid;
+                        if (_forceMaterialRebind)
+                        {
+                            // Clear the flag once we've forced a rebind for this material
+                            _forceMaterialRebind = false;
+                        }
                     }
 
                     // Set per-object uniforms
@@ -2148,8 +2501,6 @@ void main(){
                         if (isDoubleSided)
                         {
                             GL.Disable(EnableCap.CullFace);
-                            if (_frameDrawCalls % 120 == 0) // Log every 2 seconds at 60fps
-                                LogManager.LogInfo($"Plane: Culling DISABLED for rendering", "ViewportRenderer");
                         }
 
                         GL.BindVertexArray(vao);
@@ -2250,7 +2601,7 @@ void main(){
             }
             catch (Exception ex)
             {
-                try { Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Error rendering environment for reflection: {ex.Message}"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Error rendering environment for reflection: {ex.Message}"); } catch { }
 
                 // Ensure face culling is restored even on error
                 GL.CullFace(TriangleFace.Back);
@@ -2314,7 +2665,39 @@ void main(){
                 GL.CullFace(TriangleFace.Back); // Cull back faces as normal
                 GL.FrontFace(FrontFaceDirection.Cw); // Flip for reflected camera (Y-mirrored)
 
-                RenderEnvironmentForReflection(reflectedView, reflectedProj);
+                // Compute oblique clip plane in reflected camera space to clip geometry below water
+                var planeWorld = new Vector4(0f, 1f, 0f, -(waterLevel + 0.01f));
+                try
+                {
+                    // Transform plane into reflected view (camera) space using inverse-transpose
+                    var invRefView = reflectedView.Inverted();
+                    var invRefViewT = invRefView.Transposed();
+
+                    // Manual matrix * vector to avoid ambiguous overloads
+                    Vector4 clipCam = new Vector4();
+                    clipCam.X = invRefViewT.M11 * planeWorld.X + invRefViewT.M12 * planeWorld.Y + invRefViewT.M13 * planeWorld.Z + invRefViewT.M14 * planeWorld.W;
+                    clipCam.Y = invRefViewT.M21 * planeWorld.X + invRefViewT.M22 * planeWorld.Y + invRefViewT.M23 * planeWorld.Z + invRefViewT.M24 * planeWorld.W;
+                    clipCam.Z = invRefViewT.M31 * planeWorld.X + invRefViewT.M32 * planeWorld.Y + invRefViewT.M33 * planeWorld.Z + invRefViewT.M34 * planeWorld.W;
+                    clipCam.W = invRefViewT.M41 * planeWorld.X + invRefViewT.M42 * planeWorld.Y + invRefViewT.M43 * planeWorld.Z + invRefViewT.M44 * planeWorld.W;
+
+                    // Adjust projection to clip against the water plane
+                    var obliqueProj = CalculateObliqueMatrix(reflectedProj, clipCam);
+
+                    // Render the environment into the reflection texture using the reflected camera
+                    RenderEnvironmentForReflection(reflectedView, obliqueProj);
+
+                    // Publish reflection texture + view-proj for shaders to sample
+                    try
+                    {
+                        Engine.Rendering.ReflectionBuffer.ReflectionTexture = _reflectionTex;
+                        Engine.Rendering.ReflectionBuffer.ReflectionViewProj = obliqueProj * reflectedView;
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogWarning($"Reflection: Oblique/projection error: {ex.Message}", "ViewportRenderer");
+                }
 
                 // Restore state
                 if (!savedCullFaceEnabled)
@@ -2348,12 +2731,28 @@ void main(){
 
         public void RenderScene()
         {
+            // Update weather system (editor-time weather updates ONLY)
+            // In Play Mode, PlayMode.UpdateSimulation() handles weather updates
+            if (!PlayMode.IsPlaying)
+            {
+                try
+                {
+                    float deltaTime = (float)_weatherDeltaStopwatch.Elapsed.TotalSeconds;
+                    _weatherDeltaStopwatch.Restart();
+                    _weatherSystem.Update(_scene, deltaTime);
+                }
+                catch (System.Exception ex)
+                {
+                    System.Console.WriteLine($"[ViewportRenderer] Weather system error: {ex.Message}");
+                }
+            }
+
             // Start frame timer to measure render time
             if (_frameTimer == null) _frameTimer = System.Diagnostics.Stopwatch.StartNew();
             _frameTimer.Restart();
             // PERF FIX: Removed per-frame LogInfo that was destroying performance (88 fps -> 300+ fps)
             // Original log called LogManager.LogInfo every frame, causing massive I/O overhead
-            
+
             // === Clear any pending GL errors from previous frames ===
             // This prevents "sticky" errors from corrupting subsequent rendering
             ErrorCode error;
@@ -2456,10 +2855,9 @@ void main(){
                     // materials will re-resolve texture handles and display the newly uploaded images.
                     Engine.Rendering.MaterialRuntime.ClearGlobalCache();
 
-                    // Also clear local material cache to force reload with new texture handles
-                    _materialCache.Clear();
+                    // Global cache cleared - no local cache to clear
                     // PERFORMANCE: Disabled log
-                    // Console.WriteLine("[ViewportRenderer] Cleared local material cache after texture upload");
+                    // Console.WriteLine("[ViewportRenderer] Cleared material cache after texture upload");
                 }
 
                 // If the upload processing itself is slow, log it (helps find IO/CPU hotspots)
@@ -2491,13 +2889,15 @@ void main(){
             GL.Viewport(0, 0, _w, _h);
             
             // Clear all buffers first - skybox will provide background color
+            // Always use a visible clear color (not black) to debug viewport issues
             if (_gameMode)
             {
                 GL.ClearColor(0.4f, 0.6f, 0.9f, 1f); // Couleur bleu ciel pour Game Mode
             }
             else
             {
-                GL.ClearColor(0.15f, 0.16f, 0.18f, 1f); // Couleur grise pour Viewport
+                // Changed from very dark grey to slightly lighter grey to ensure visibility
+                GL.ClearColor(0.2f, 0.22f, 0.25f, 1f); // Couleur grise pour Viewport (was 0.15, 0.16, 0.18)
             }
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
@@ -2517,27 +2917,6 @@ void main(){
             // === QUEUE 2000: OPAQUE GEOMETRY ===
             try
             {
-                // Debug: list entities with MeshRenderer and material GUIDs
-                try
-                {
-                    var entsList = Scene?.Entities;
-                    var ents = entsList != null ? System.Runtime.InteropServices.CollectionsMarshal.AsSpan(entsList).ToArray() : Array.Empty<Engine.Scene.Entity>();
-                    int haveMesh = 0;
-                    for (int i = 0; i < ents.Length; i++)
-                    {
-                        var e = ents[i];
-                        if (e.HasComponent<Engine.Components.MeshRendererComponent>())
-                        {
-                            var mr = e.GetComponent<Engine.Components.MeshRendererComponent>();
-                            if (mr != null && mr.HasMeshToRender() && mr.MaterialGuid.HasValue && mr.MaterialGuid.Value != Guid.Empty)
-                            {
-                                haveMesh++;
-                            }
-                        }
-                    }
-                }
-                catch { }
-
                 // Planar reflections removed (was rendering reflection texture here)
 
                 // Render shadow maps for directional light before opaque rendering
@@ -2564,9 +2943,138 @@ void main(){
             {
             }
 
+            // === VEGETATION (rendered as regular entities with MeshRendererComponent) ===
+            // Vegetation entities are now rendered in QUEUE 1000 with other opaque meshes
+            // No special vegetation rendering needed
+
             // === QUEUE 4000: OVERLAY ===
             // Light icons (always visible)
             RenderLightIcons();
+
+            // === QUEUE 3600: VEGETATION (instanced vegetation with wind animation) ===
+            try
+            {
+                if (_vegetationRenderer != null && Scene != null)
+                {
+                    // Ensure WeatherManager is synchronized with any WeatherComponent in the scene
+                    try
+                    {
+                        foreach (var e in Scene.Entities)
+                        {
+                            if (!e.Active) continue;
+                            var w = e.GetComponent<Engine.Components.WeatherComponent>();
+                            if (w != null)
+                            {
+                                Engine.Systems.WeatherManager.UpdateFromComponent(w);
+                                break;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // Get weather parameters from WeatherManager (global system)
+                    var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                    var weatherWindDir = weather.GetWindDirection();
+                    var windDir = new OpenTK.Mathematics.Vector2(weatherWindDir.X, weatherWindDir.Y);
+
+                    // Current time for wind animation
+                    float currentTime = (float)_timeStopwatch.Elapsed.TotalSeconds;
+
+                    // Camera position for LOD/distance culling
+                    var vegetationCamPos = CameraPosition();
+
+                    // Get directional light from scene for lighting
+                    Vector3 lightDir = new Vector3(0, -1, 0);
+                    Vector3 lightColor = new Vector3(1, 1, 1);
+                    Vector3 ambientColor = new Vector3(0.3f, 0.3f, 0.3f);
+
+                    if (Scene != null)
+                    {
+                        foreach (var entity in Scene.Entities.Where(e => e.Active))
+                        {
+                            var light = entity.GetComponent<Engine.Components.LightComponent>();
+                            if (light != null && light.Enabled && light.Type == Engine.Components.LightType.Directional)
+                            {
+                                lightDir = light.Direction;
+                                lightColor = new Vector3(light.Color.X, light.Color.Y, light.Color.Z) * light.Intensity;
+                                break;
+                            }
+                        }
+                    }
+
+                    // DEBUG: Log wind parameters every 60 frames (verbose-only)
+                    if ((_frameCounter++ % 60) == 0)
+                    {
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) LogManager.LogVerbose($"Vegetation render: time={currentTime:F2}s, windStr={weather.WindStrength:F2}, windSpeed={weather.WindSpeed:F2}, windDir=({windDir.X:F2}, {windDir.Y:F2}), branchAmp={weather.BranchAmplitude:F2}, trunkStiff={weather.TrunkStiffness:F2}", "ViewportRenderer"); } catch { }
+                    }
+
+                    // CRITICAL: Ensure Global UBO is bound AND uploaded before vegetation rendering
+                    // The vegetation shader reads lighting from the Global UBO (binding=0)
+                    GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
+                    GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
+                    GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
+                        System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
+                        ref _globalUniforms);
+
+                    // VERBOSE DIAGNOSTIC: log terrain/vegetation state to help debug missing batches
+                    try
+                    {
+                        if (Engine.Utils.DebugLogger.EnableVerbose && Scene != null)
+                        {
+                            int terrainCount = 0;
+                            int totalLayers = 0;
+                            int totalInstances = 0;
+                            foreach (var e in Scene.Entities)
+                            {
+                                var t = e.GetComponent<Engine.Components.Terrain>();
+                                if (t == null) continue;
+                                terrainCount++;
+                                var layers = t.VegetationLayers;
+                                var instances = t.VegetationInstances;
+                                totalLayers += layers?.Length ?? 0;
+                                if (instances != null)
+                                {
+                                    foreach (var kv in instances)
+                                    {
+                                        totalInstances += kv.Value?.Count ?? 0;
+                                    }
+                                }
+                            }
+                            Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Vegetation diagnostic: terrains={terrainCount}, layers={totalLayers}, instances={totalInstances}, vegRendererBatchCount={_vegetationRenderer?.BatchCount ?? 0}");
+                        }
+                    }
+                    catch { }
+
+                    // Render instanced vegetation with wind animation
+                    if (_vegetationRenderer != null)
+                    {
+                        // DEBUG: Log vegetation rendering (using static counter)
+                        // _vegRenderCounter++;
+                        // if (_vegRenderCounter % 120 == 0)
+                        // {
+                        //     System.Console.WriteLine($"[ViewportRenderer] Rendering vegetation, batches={_vegetationRenderer.BatchCount}");
+                        // }
+
+                        _vegetationRenderer.Render(
+                            _viewGL, _projGL, currentTime,
+                            weather.WindStrength, windDir, weather.WindSpeed, weather.WindGustiness,
+                            weather.BranchAmplitude, weather.BranchSpeed, weather.BranchTurbulence,
+                            weather.TrunkStiffness, weather.TrunkBendAmount,
+                            weather.LeafFlutter, weather.LeafFlutterSpeed,
+                            weather.RainIntensity, weather.SnowAccumulation, weather.SnowIntensity, weather.Wetness,
+                            weather.SnowSlopeMin, weather.SnowSlopeMax, weather.SnowSparkle, weather.SnowDisplacement,
+                            vegetationCamPos, lightDir, lightColor, ambientColor,
+                            0 // objectId
+                        );
+                        // (no max draw distance) - vegetation always rendered regardless of per-layer distance
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    LogManager.LogWarning($"Vegetation rendering error: {ex.Message}", "ViewportRenderer");
+            }
 
             // === QUEUE 3500: PARTICLES (rendered after opaque, before post-process) ===
             try
@@ -2591,8 +3099,51 @@ void main(){
             }
             catch (Exception ex)
             {
-                if (Engine.Utils.DebugLogger.EnableVerbose) 
+                if (Engine.Utils.DebugLogger.EnableVerbose)
                     LogManager.LogWarning($"Particle rendering error: {ex.Message}", "ViewportRenderer");
+            }
+
+            // === CAPTURE SCENE FOR GLASS REFRACTION ===
+            // Capture the complete opaque scene (including vegetation and particles) before rendering transparents
+            // This texture will be used by glass shader for refraction
+            if (_sceneColorTex != 0 && _colorTex != 0)
+            {
+                try
+                {
+                    // Copy current framebuffer color to scene color texture for glass refraction
+                    GL.CopyImageSubData(
+                        _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                        _sceneColorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                        _w, _h, 1
+                    );
+
+                    // Bind scene color texture to unit 19 for glass shader refraction
+                    GL.ActiveTexture(TextureUnit.Texture19);
+                    GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+
+                    if (Engine.Utils.DebugLogger.EnableVerbose)
+                        LogManager.LogVerbose("Scene color captured for glass refraction (with vegetation & particles)", "ViewportRenderer");
+                }
+                catch (Exception ex2)
+                {
+                    LogManager.LogWarning($"Failed to capture scene for glass refraction: {ex2.Message}", "ViewportRenderer");
+                }
+            }
+
+            // === QUEUE 3000: TRANSPARENT RENDERING ===
+            // Render transparent objects (glass, etc.) with full scene refraction
+            try
+            {
+                var swTransp = System.Diagnostics.Stopwatch.StartNew();
+                DrawForwardTransparent();
+                swTransp.Stop();
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    LogManager.LogVerbose($"Transparent rendering: {swTransp.Elapsed.TotalMilliseconds:F2}ms", "ViewportRenderer");
+            }
+            catch (Exception ex3)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    LogManager.LogWarning($"Transparent rendering error: {ex3.Message}", "ViewportRenderer");
             }
 
             // Grid overlay placeholder: actual draw happens after post-processing so it's not overwritten
@@ -2643,6 +3194,8 @@ void main(){
                     GL.DrawBuffers(mainBufs.Length, mainBufs);
                 }
             }
+
+            // Vegetation draw distance gizmos removed — no per-layer draw distance visualization
 
             // Render grid into the post-process target so it appears inside the renderer's ColorTexture
             try
@@ -2954,6 +3507,14 @@ void main(){
         {
             var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
 
+            // Respect directional light "CastShadows" from scene lighting
+            var lighting = Engine.Scene.Lighting.Build(_scene);
+            if (!lighting.HasDirectional || !lighting.DirCastShadows)
+            {
+                // Nothing to do when there's no directional light or it shouldn't cast shadows
+                return;
+            }
+
             // Check if shadow system is ready
             if (_shadowDepthShader == null || !shadowSettings.Enabled)
                 return;
@@ -2962,7 +3523,6 @@ void main(){
             int shadowMapSize = Math.Clamp(shadowSettings.ShadowMapSize, 512, 8192);
             if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
             {
-                LogManager.LogInfo($"Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})", "ViewportRenderer");
                 _shadowManager?.Dispose();
                 _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
             }
@@ -3153,6 +3713,36 @@ void main(){
             Matrix4 legacyMat = _shadowManager.LightSpaceMatrix;
             int locLegacy = GL.GetUniformLocation(shader.Handle, "u_ShadowMatrix");
             if (locLegacy >= 0) GL.UniformMatrix4(locLegacy, false, ref legacyMat);
+        }
+
+        // Bind default white textures for snow material fallback
+        private void BindDefaultSnowTextures(Engine.Rendering.ShaderProgram shader)
+        {
+            // CRITICAL FIX: Use units 13-15 to avoid conflict with IBL textures (10-12)
+            // MaterialRuntime.Bind() uses units 10-12 for IBL, which was overwriting snow textures!
+
+            // Bind default white textures for snow material
+            GL.ActiveTexture(TextureUnit.Texture13);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            shader.SetInt("u_SnowAlbedoTex", 13);
+
+            GL.ActiveTexture(TextureUnit.Texture14);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            shader.SetInt("u_SnowNormalTex", 14);
+
+            GL.ActiveTexture(TextureUnit.Texture15);
+            GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
+            shader.SetInt("u_SnowMetallicRoughnessTex", 15);
+
+            // Default snow material properties (realistic snow albedo ~65-70%)
+            shader.SetVec4("u_SnowAlbedoColor", new OpenTK.Mathematics.Vector4(0.65f, 0.68f, 0.75f, 1.0f));
+            shader.SetFloat("u_SnowMetallic", 0.0f);
+            shader.SetFloat("u_SnowRoughness", 0.3f);
+            shader.SetFloat("u_SnowNormalStrength", 1.0f);
+            shader.SetVec2("u_SnowTextureTiling", new OpenTK.Mathematics.Vector2(0.1f, 0.1f));
+
+            // CRITICAL: Restore texture unit 0 as active
+            GL.ActiveTexture(TextureUnit.Texture0);
         }
 
         // Render scene geometry for shadow mapping (shared between simple and cascaded)
@@ -3558,7 +4148,6 @@ void main(){
             // Only recreate shadow manager if shadow map size changed
             if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
             {
-                LogManager.LogInfo($"Recreating ShadowManager with size {shadowMapSize} (was {_shadowManager?.ShadowMapSize ?? 0})", "ViewportRenderer");
                 _shadowManager?.Dispose();
                 _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
             }
@@ -4245,8 +4834,8 @@ void main(){
             }
             catch
             {
-                // Fallback to default material
-                GL.Uniform4(_locAlbColor, 1f, 1f, 1f, 1f);
+                // Fallback to magenta error material
+                GL.Uniform4(_locAlbColor, 1f, 0f, 1f, 1f); // Magenta
                 GL.Uniform1(_locUseTex, 0);
             }
         }
@@ -4285,26 +4874,32 @@ void main(){
                 {
                     var meshRenderer = entity.GetComponent<MeshRendererComponent>();
                     if (meshRenderer == null || !meshRenderer.HasMeshToRender()) continue;
-                    if (meshRenderer.MaterialGuid == null || meshRenderer.MaterialGuid == Guid.Empty) continue;
 
                     entity.GetModelAndNormalMatrix(out var model, out var normalMat3);
 
-                    // Quick Win #2: Use material cache to avoid loading from disk every frame
-                    var materialGuid = meshRenderer.MaterialGuid.Value;
-                    if (!_materialCache.TryGetValue(materialGuid, out var materialRuntime))
+                    // Check if material is missing
+                    bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
+                    Engine.Rendering.MaterialRuntime? materialRuntime;
+                    
+                    if (!hasMaterial)
                     {
-                        // Material not in cache, load it and cache it
+                        // Use magenta error material for missing materials
+                        materialRuntime = _errorMaterialRuntime;
+                    }
+                    else
+                    {
+                        // Use global material cache via FromAsset
+                        var materialGuid = meshRenderer.MaterialGuid!.Value;
                         try
                         {
                             var asset = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid);
                             Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                            materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
-                            _materialCache[materialGuid] = materialRuntime; // Cache it!
+                            materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
                         }
                         catch
                         {
-                            materialRuntime = new Engine.Rendering.MaterialRuntime { AlbedoTex = TextureCache.White1x1 };
-                            _materialCache[materialGuid] = materialRuntime; // Cache even fallback materials
+                            // Use magenta error material for broken materials/shaders
+                            materialRuntime = _errorMaterialRuntime;
                         }
                     }
 
@@ -4357,10 +4952,13 @@ void main(){
                         IndexCount = idxCount,
                         Model = model,
                         NormalMat3 = normalMat3,
-                        MaterialGuid = meshRenderer.MaterialGuid.Value,
+                        MaterialGuid = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty 
+                            ? meshRenderer.MaterialGuid.Value 
+                            : Guid.Empty,
                         MeshType = meshRenderer.Mesh,
-                        MaterialRuntime = materialRuntime,
-                        ObjectId = entity.Id
+                        MaterialRuntime = materialRuntime!, // Always initialized above
+                        ObjectId = entity.Id,
+                        CullingMode = meshRenderer.Culling
                     });
 
                     continue;
@@ -4465,6 +5063,56 @@ void main(){
                             var viewMatrix = _globalUniforms.ViewMatrix;
                             var projMatrix = _globalUniforms.ProjectionMatrix;
 
+                            // CRITICAL: Send weather uniforms BEFORE calling RenderTerrain
+                            // TerrainRenderer no longer sends these to avoid overwriting with defaults
+                            try
+                            {
+                                var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+
+                                // Get the terrain shader to set uniforms
+                                var terrainShader = Engine.Rendering.ShaderLibrary.GetShaderByName("TerrainForward");
+                                if (terrainShader != null)
+                                {
+                                    terrainShader.Use();
+
+                                    // Basic weather uniforms
+                                    terrainShader.SetFloat("u_RainIntensity", weather.RainIntensity);
+                                    terrainShader.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                                    terrainShader.SetFloat("u_SnowIntensity", weather.SnowIntensity);
+                                    terrainShader.SetFloat("u_Wetness", weather.Wetness);
+
+                                    // Advanced snow parameters (get from WeatherComponent)
+                                    float snowSlopeMin = 0.0f;
+                                    float snowSlopeMax = 45.0f;
+                                    float snowSparkle = 0.5f;
+                                    float snowDisplacement = 0.02f;
+
+                                    if (_scene != null)
+                                    {
+                                        foreach (var e in _scene.Entities)
+                                        {
+                                            if (!e.Active) continue;
+                                            var wc = e.GetComponent<Engine.Components.WeatherComponent>();
+                                            if (wc != null)
+                                            {
+                                                snowSlopeMin = wc.SnowSlopeMin;
+                                                snowSlopeMax = wc.SnowSlopeMax;
+                                                snowSparkle = wc.SnowSparkle;
+                                                snowDisplacement = wc.SnowDisplacement;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Send advanced snow uniforms
+                                    terrainShader.SetFloat("u_SnowSlopeMin", snowSlopeMin);
+                                    terrainShader.SetFloat("u_SnowSlopeMax", snowSlopeMax);
+                                    terrainShader.SetFloat("u_SnowSparkle", snowSparkle);
+                                    terrainShader.SetFloat("u_SnowDisplacement", snowDisplacement);
+                                }
+                            }
+                            catch { } // Non-critical if fails
+
                             // Render terrain with all features
                             _terrainRenderer.RenderTerrain(
                                 terrain,
@@ -4494,6 +5142,9 @@ void main(){
                         {
                             LogManager.LogWarning($"Terrain rendering error: {ex.Message}", "ViewportRenderer");
                         }
+
+                        // Render water plane if enabled (using the water material assigned to terrain)
+                                // Water rendering removed (water plane and WaterForward shader purged)
                     }
                 }
             }
@@ -4526,6 +5177,9 @@ void main(){
                     GL.Uniform4(_locAlbColor, 1f, 1f, 1f, 1f);
                     GL.Uniform1(_locUseTex, 0);
 
+                    // Apply culling mode
+                    ApplyCullingMode(meshRenderer);
+
                     // Check if using custom mesh first
                     if (meshRenderer.IsUsingCustomMesh())
                     {
@@ -4545,10 +5199,6 @@ void main(){
                     else
                     {
                         // Use primitive mesh
-                        // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
-                        bool isDoubleSided = meshRenderer.Mesh == MeshKind.Plane;
-                        if (isDoubleSided) GL.Disable(EnableCap.CullFace);
-
                         switch (meshRenderer.Mesh)
                         {
                             case MeshKind.Cube:
@@ -4576,9 +5226,10 @@ void main(){
                                 GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
                                 break;
                         }
-
-                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
                     }
+
+                    // Restore default culling
+                    RestoreDefaultCulling();
                 }
                 // Additionally: if PBR shader is unavailable, draw the modern render items (water, models using PBR materials)
                 // using the simple fallback shader so previews (like water) are still visible.
@@ -4605,20 +5256,16 @@ void main(){
                         GL.Uniform4(_locAlbColor, col[0], col[1], col[2], col[3]);
                         GL.Uniform1(_locUseTex, albedo != Engine.Rendering.TextureCache.White1x1 ? 1 : 0);
 
-                        // Disable culling for plane (double-sided) - Quad is single-sided like Unity
-                        bool isDoubleSided = item.MeshType == MeshKind.Plane;
-                        if (isDoubleSided)
-                        {
-                            GL.Disable(EnableCap.CullFace);
-                            LogManager.LogInfo($"PLANE RENDERING: Culling DISABLED (opaque pass)", "ViewportRenderer");
-                        }
+                        // Apply culling mode from MeshRenderer
+                        ApplyCullingModeFromEnum(item.CullingMode);
 
                         GL.BindVertexArray(item.Vao);
                         GL.BindBuffer(BufferTarget.ElementArrayBuffer, item.Ebo);
                             RecordDraw(PrimitiveType.Triangles, item.IndexCount);
                             GL.DrawElements(PrimitiveType.Triangles, item.IndexCount, DrawElementsType.UnsignedInt, 0);
-
-                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
+                        
+                        // Restore default culling
+                        RestoreDefaultCulling();
                     }
 
                     // TRANSPARENT items (sorted back-to-front)
@@ -4656,13 +5303,8 @@ void main(){
                         GL.Uniform4(_locAlbColor, col[0], col[1], col[2], col[3]);
                         GL.Uniform1(_locUseTex, albedo != Engine.Rendering.TextureCache.White1x1 ? 1 : 0);
 
-                        // Disable culling for double-sided meshes (plane only - quad is single-sided like Unity)
-                        bool isDoubleSided = item.MeshType == MeshKind.Plane;
-                        if (isDoubleSided)
-                        {
-                            GL.Disable(EnableCap.CullFace);
-                            LogManager.LogInfo($"PLANE RENDERING: Culling DISABLED (transparent pass)", "ViewportRenderer");
-                        }
+                        // Apply culling mode from MeshRenderer
+                        ApplyCullingModeFromEnum(item.CullingMode);
 
                         if (item.Vao != lastVaoFb)
                         {
@@ -4677,8 +5319,9 @@ void main(){
 
                         RecordDraw(PrimitiveType.Triangles, item.IndexCount);
                         GL.DrawElements(PrimitiveType.Triangles, item.IndexCount, DrawElementsType.UnsignedInt, 0);
-
-                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
+                        
+                        // Restore default culling
+                        RestoreDefaultCulling();
                     }
 
                     GL.DepthMask(true);
@@ -4716,7 +5359,10 @@ void main(){
 
             // Shadow uniforms for objects (CSM-aware)
             var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
-            SetShadowUniforms(pbr, shadowSettings.Enabled);
+            // Build lighting once and respect the directional light's CastShadows flag
+            var lighting = Engine.Scene.Lighting.Build(_scene);
+            bool shadowsAllowed = shadowSettings.Enabled && lighting.HasDirectional && lighting.DirCastShadows;
+            SetShadowUniforms(pbr, shadowsAllowed);
             pbr.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
 
             // SSAO is now handled as a post-effect, not in PBR shader
@@ -4749,25 +5395,25 @@ void main(){
 
             // === QUEUE 2500: SHADOW MAP GENERATION (NEW) ===
             // Render shadow pass BEFORE main rendering so shadow map is ready
-            RenderShadowPass();
+            // Only run shadow pass if shadows are allowed for the current directional light
+            if (shadowsAllowed) RenderShadowPass();
 
             // Restore main framebuffer and viewport after shadow pass (use MSAA FBO if active)
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
             GL.Viewport(0, 0, _w, _h);
 
-            // === WATER REFLECTION PASS (DISABLED - TO BE REIMPLEMENTED LATER) ===
-            // float waterLevel = 0f;
-            // var waterEntity = _scene.Entities.FirstOrDefault(e => e.HasComponent<Engine.Components.WaterComponent>());
-            // if (waterEntity != null)
-            // {
-            //     waterLevel = waterEntity.WorldMatrix.M42;
-            //     _reflectionFrameCounter++;
-            //     if (_reflectionFrameCounter >= _reflectionUpdateInterval)
-            //     {
-            //         RenderReflectionPass(waterLevel);
-            //         _reflectionFrameCounter = 0;
-            //     }
-            // }
+            // === WATER REFLECTION PASS ===
+            // Simple behavior: render planar reflection around world Y=0 so water materials can sample it.
+            try
+            {
+                float waterLevel = 0f;
+                if (_reflectionFbo != 0)
+                {
+                    // Render every frame for now (could be throttled later)
+                    RenderReflectionPass(waterLevel);
+                }
+            }
+            catch { }
 
             // === RENDER TERRAIN (before SSAO so SSAO can process terrain depth) ===
             RenderTerrain();
@@ -4776,7 +5422,7 @@ void main(){
             // SSAO is now handled as a post-effect, not during main rendering pipeline
 
             // === Configure Simple Shadow Uniforms ===
-                if (_pbrShader != null && shadowSettings.Enabled && _shadowManager != null)
+                if (_pbrShader != null && shadowsAllowed && _shadowManager != null)
                 {
                     // Bind shadow texture to TextureUnit.Texture5
                     _shadowManager.BindShadowTexture(TextureUnit.Texture5);
@@ -4806,8 +5452,111 @@ void main(){
                     _pbrShader.Use();
 
                     // Re-bind shadow uniforms for subsequent objects (using CSM-aware helper)
-                    SetShadowUniforms(_pbrShader, shadowSettings.Enabled);
+                    SetShadowUniforms(_pbrShader, shadowsAllowed);
                     _pbrShader.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
+
+                    // CRITICAL: Bind default snow textures FIRST (always) to avoid shader crash
+                    BindDefaultSnowTextures(_pbrShader);
+
+                    // Set weather uniforms for ForwardBase shader
+                    try
+                    {
+                        var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                        _pbrShader.SetFloat("u_RainIntensity", weather.RainIntensity);
+                        _pbrShader.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                        _pbrShader.SetFloat("u_SnowIntensity", weather.SnowIntensity);
+                        _pbrShader.SetFloat("u_Wetness", weather.Wetness);
+
+                        // Advanced snow parameters (from WeatherComponent)
+                        // CRITICAL: Always initialize with defaults first to avoid uninitialized uniforms
+                        float snowSlopeMin = 0.0f;
+                        float snowSlopeMax = 45.0f;
+                        float snowSparkle = 0.5f;
+                        float snowDisplacement = 0.02f;
+
+                        try
+                        {
+                            if (_scene != null)
+                            {
+                                foreach (var e in _scene.Entities)
+                                {
+                                    if (!e.Active) continue;
+                                    var wc = e.GetComponent<Engine.Components.WeatherComponent>();
+                                    if (wc != null)
+                                    {
+                                        snowSlopeMin = wc.SnowSlopeMin;
+                                        snowSlopeMax = wc.SnowSlopeMax;
+                                        snowSparkle = wc.SnowSparkle;
+                                        snowDisplacement = wc.SnowDisplacement;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+
+                        // Always set the uniforms (with defaults if no WeatherComponent)
+                        _pbrShader.SetFloat("u_SnowSlopeMin", snowSlopeMin);
+                        _pbrShader.SetFloat("u_SnowSlopeMax", snowSlopeMax);
+                        _pbrShader.SetFloat("u_SnowSparkle", snowSparkle);
+                        _pbrShader.SetFloat("u_SnowDisplacement", snowDisplacement);
+
+                        // Load and bind snow material if assigned
+                        if (weather.SnowMapMaterial.HasValue)
+                        {
+                            try
+                            {
+                                var snowMat = Engine.Assets.AssetDatabase.LoadMaterial(weather.SnowMapMaterial.Value);
+                                if (snowMat != null)
+                                {
+                                    // Load snow material runtime from cache
+                                    // Cache is updated by ApplyLiveMaterialUpdate when inspector changes values
+                                    Func<Guid, string?> snowResolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+                                    var snowRuntime = Engine.Rendering.MaterialRuntime.FromAsset(snowMat, snowResolver);
+
+                                    // CRITICAL FIX: Use units 13-15 to avoid conflict with IBL textures (10-12)
+                                    // Bind snow textures
+                                    GL.ActiveTexture(TextureUnit.Texture13);
+                                    GL.BindTexture(TextureTarget.Texture2D, snowRuntime.AlbedoTex);
+                                    _pbrShader.SetInt("u_SnowAlbedoTex", 13);
+
+                                    GL.ActiveTexture(TextureUnit.Texture14);
+                                    GL.BindTexture(TextureTarget.Texture2D, snowRuntime.NormalTex);
+                                    _pbrShader.SetInt("u_SnowNormalTex", 14);
+
+                                    GL.ActiveTexture(TextureUnit.Texture15);
+                                    GL.BindTexture(TextureTarget.Texture2D, snowRuntime.MetallicRoughnessTex);
+                                    _pbrShader.SetInt("u_SnowMetallicRoughnessTex", 15);
+
+                                    _pbrShader.SetVec4("u_SnowAlbedoColor", new OpenTK.Mathematics.Vector4(
+                                        snowRuntime.AlbedoColor[0], snowRuntime.AlbedoColor[1],
+                                        snowRuntime.AlbedoColor[2], snowRuntime.AlbedoColor[3]));
+                                    _pbrShader.SetFloat("u_SnowMetallic", snowRuntime.Metallic);
+                                    _pbrShader.SetFloat("u_SnowRoughness", 1.0f - snowRuntime.Smoothness);
+                                    _pbrShader.SetFloat("u_SnowNormalStrength", snowRuntime.NormalStrength);
+                                    _pbrShader.SetVec2("u_SnowTextureTiling", new OpenTK.Mathematics.Vector2(
+                                        snowRuntime.TextureTiling[0],
+                                        snowRuntime.TextureTiling[1]));
+
+                                    // CRITICAL: Restore texture unit 0 as active
+                                    GL.ActiveTexture(TextureUnit.Texture0);
+                                }
+                                else
+                                {
+                                    BindDefaultSnowTextures(_pbrShader);
+                                }
+                            }
+                            catch
+                            {
+                                BindDefaultSnowTextures(_pbrShader);
+                            }
+                        }
+                        else
+                        {
+                            BindDefaultSnowTextures(_pbrShader);
+                        }
+                    }
+                    catch { } // Ignore if shader doesn't have these uniforms
 
                     // SSAO is now handled as a post-effect
                     // Set disabled defaults for legacy uniforms
@@ -4831,26 +5580,32 @@ void main(){
                     var matGuid = item.MaterialGuid;
                     // Load/bind material once for this material's group
                     Engine.Rendering.MaterialRuntime? mr = null;
-                    if (!_materialCache.TryGetValue(matGuid, out var cached))
+                    
+                    // Check if material is missing
+                    if (matGuid == Guid.Empty)
+                    {
+                        // Use magenta error material for missing materials
+                        mr = _errorMaterialRuntime;
+                    }
+                    else
                     {
                         try
                         {
                             var asset = Engine.Assets.AssetDatabase.LoadMaterial(matGuid);
                             Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                            mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
-                            _materialCache[matGuid] = mr;
+                            mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
                         }
                         catch
                         {
-                            mr = item.MaterialRuntime ?? new Engine.Rendering.MaterialRuntime { AlbedoTex = Engine.Rendering.TextureCache.White1x1 };
+                            // Use magenta error material for broken materials/shaders
+                            mr = item.MaterialRuntime ?? _errorMaterialRuntime;
                         }
                     }
-                    else mr = cached;
 
                     Engine.Rendering.ShaderProgram? shaderToUse = pbr;
                     try
                     {
-                        if (!string.IsNullOrEmpty(mr.ShaderName))
+                        if (!string.IsNullOrEmpty(mr!.ShaderName))
                         {
                             var alt = Engine.Rendering.ShaderLibrary.GetShaderByName(mr.ShaderName);
                             if (alt != null) shaderToUse = alt;
@@ -4861,14 +5616,140 @@ void main(){
                     {
                         shaderToUse.Use();
                         float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
-                        mr.Bind(shaderToUse, time);
+                        mr!.Bind(shaderToUse, time);
                         if (string.Equals(mr.ShaderName, "Water", StringComparison.OrdinalIgnoreCase))
                         {
                             GL.PatchParameter(PatchParameterInt.PatchVertices, 4);
 
                             // Planar reflection uniforms removed
                         }
-                        SetShadowUniforms(shaderToUse, shadowSettings.Enabled);
+
+                        // Get weather parameters from WeatherManager (global system)
+                        var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+
+                        // Set wind/weather uniforms for vegetation shaders
+                        if (string.Equals(mr.ShaderName, "VegetationForward", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Set time for wind animation
+                            float currentTime = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                            shaderToUse.SetFloat("u_Time", currentTime);
+
+                            // Set wind parameters (vegetation-specific)
+                            shaderToUse.SetFloat("u_WindStrength", weather.WindStrength);
+                            var windDir = weather.GetWindDirection();
+                            shaderToUse.SetVec2("u_WindDirection", new OpenTK.Mathematics.Vector2(windDir.X, windDir.Y));
+                            shaderToUse.SetFloat("u_WindSpeed", weather.WindSpeed);
+                            shaderToUse.SetFloat("u_WindGustiness", weather.WindGustiness);
+
+                            // Set advanced wind parameters (Vegetation Detail section)
+                            shaderToUse.SetFloat("u_BranchAmplitude", weather.BranchAmplitude);
+                            shaderToUse.SetFloat("u_BranchSpeed", weather.BranchSpeed);
+                            shaderToUse.SetFloat("u_BranchTurbulence", weather.BranchTurbulence);
+                            shaderToUse.SetFloat("u_TrunkStiffness", weather.TrunkStiffness);
+                            shaderToUse.SetFloat("u_TrunkBendAmount", weather.TrunkBendAmount);
+                            shaderToUse.SetFloat("u_LeafFlutter", weather.LeafFlutter);
+                            shaderToUse.SetFloat("u_LeafFlutterSpeed", weather.LeafFlutterSpeed);
+                        }
+
+                        // Set weather parameters for ALL shaders (ForwardBase, TerrainForward, VegetationForward)
+                        try
+                        {
+                            shaderToUse.SetFloat("u_RainIntensity", weather.RainIntensity);
+                            shaderToUse.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                            shaderToUse.SetFloat("u_SnowIntensity", weather.SnowIntensity);
+                            shaderToUse.SetFloat("u_Wetness", weather.Wetness);
+
+                            // Advanced snow parameters (TerrainForward shader)
+                            // CRITICAL: Always initialize with defaults first to avoid uninitialized uniforms
+                            float snowSlopeMin = 0.0f;
+                            float snowSlopeMax = 45.0f;
+                            float snowSparkle = 0.5f;
+                            float snowDisplacement = 0.02f;
+
+                            try
+                            {
+                                if (_scene != null)
+                                {
+                                    foreach (var e in _scene.Entities)
+                                    {
+                                        if (!e.Active) continue;
+                                        var wc = e.GetComponent<Engine.Components.WeatherComponent>();
+                                        if (wc != null)
+                                        {
+                                            snowSlopeMin = wc.SnowSlopeMin;
+                                            snowSlopeMax = wc.SnowSlopeMax;
+                                            snowSparkle = wc.SnowSparkle;
+                                            snowDisplacement = wc.SnowDisplacement;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            // Always set the uniforms (with defaults if no WeatherComponent)
+                            shaderToUse.SetFloat("u_SnowSlopeMin", snowSlopeMin);
+                            shaderToUse.SetFloat("u_SnowSlopeMax", snowSlopeMax);
+                            shaderToUse.SetFloat("u_SnowSparkle", snowSparkle);
+                            shaderToUse.SetFloat("u_SnowDisplacement", snowDisplacement);
+
+                            // Load and bind snow material if assigned
+                            if (weather.SnowMapMaterial.HasValue)
+                            {
+                                try
+                                {
+                                    var snowMat = Engine.Assets.AssetDatabase.LoadMaterial(weather.SnowMapMaterial.Value);
+                                    if (snowMat != null)
+                                    {
+                                        // Load snow material runtime from cache
+                                        // Cache is updated by ApplyLiveMaterialUpdate when inspector changes values
+                                        Func<Guid, string?> snowResolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+                                        var snowRuntime = Engine.Rendering.MaterialRuntime.FromAsset(snowMat, snowResolver);
+
+                                        // CRITICAL FIX: Use units 13-15 to avoid conflict with IBL textures (10-12)
+                                        GL.ActiveTexture(TextureUnit.Texture13);
+                                        GL.BindTexture(TextureTarget.Texture2D, snowRuntime.AlbedoTex);
+                                        shaderToUse.SetInt("u_SnowAlbedoTex", 13);
+
+                                        GL.ActiveTexture(TextureUnit.Texture14);
+                                        GL.BindTexture(TextureTarget.Texture2D, snowRuntime.NormalTex);
+                                        shaderToUse.SetInt("u_SnowNormalTex", 14);
+
+                                        GL.ActiveTexture(TextureUnit.Texture15);
+                                        GL.BindTexture(TextureTarget.Texture2D, snowRuntime.MetallicRoughnessTex);
+                                        shaderToUse.SetInt("u_SnowMetallicRoughnessTex", 15);
+
+                                        shaderToUse.SetVec4("u_SnowAlbedoColor", new OpenTK.Mathematics.Vector4(
+                                            snowRuntime.AlbedoColor[0], snowRuntime.AlbedoColor[1],
+                                            snowRuntime.AlbedoColor[2], snowRuntime.AlbedoColor[3]));
+                                        shaderToUse.SetFloat("u_SnowMetallic", snowRuntime.Metallic);
+                                        shaderToUse.SetFloat("u_SnowRoughness", 1.0f - snowRuntime.Smoothness);
+                                        shaderToUse.SetFloat("u_SnowNormalStrength", snowRuntime.NormalStrength);
+                                        shaderToUse.SetVec2("u_SnowTextureTiling", new OpenTK.Mathematics.Vector2(
+                                            snowRuntime.TextureTiling[0],
+                                            snowRuntime.TextureTiling[1]));
+
+                                        // CRITICAL: Restore texture unit 0 as active
+                                        GL.ActiveTexture(TextureUnit.Texture0);
+                                    }
+                                    else
+                                    {
+                                        BindDefaultSnowTextures(shaderToUse);
+                                    }
+                                }
+                                catch
+                                {
+                                    BindDefaultSnowTextures(shaderToUse);
+                                }
+                            }
+                            else
+                            {
+                                BindDefaultSnowTextures(shaderToUse);
+                            }
+                        }
+                        catch { } // Ignore if shader doesn't have these uniforms
+
+                        SetShadowUniforms(shaderToUse, shadowsAllowed);
                         // SSAO is now handled as a post-effect, not during main rendering
                         // Set disabled defaults for legacy shaders that still have SSAO uniforms
                         try
@@ -4903,12 +5784,11 @@ void main(){
                         GL.BindVertexArray(first.Vao);
                         GL.BindBuffer(BufferTarget.ElementArrayBuffer, first.Ebo);
 
-                        // Check if this is a double-sided mesh (Plane only - Quad is single-sided like Unity)
-                        bool isDoubleSided = first.MeshType == MeshKind.Plane;
-                        if (isDoubleSided) GL.Disable(EnableCap.CullFace);
-
                         foreach (var it in group)
                         {
+                            // Apply culling mode from MeshRenderer for EACH item
+                            ApplyCullingModeFromEnum(it.CullingMode);
+
                             if (lastShader2 != null)
                             {
                                 lastShader2.SetMat4("u_Model", it.Model);
@@ -4924,8 +5804,9 @@ void main(){
                             RecordDraw(primitiveType, it.IndexCount);
                             GL.DrawElements(primitiveType, it.IndexCount, DrawElementsType.UnsignedInt, 0);
                         }
-
-                        if (isDoubleSided) GL.Enable(EnableCap.CullFace);
+                        
+                        // Restore default culling after group
+                        RestoreDefaultCulling();
                     }
 
                     // Advance idx past all items with this material
@@ -4933,15 +5814,37 @@ void main(){
                     while (nextIdx < items.Count && items[nextIdx].MaterialGuid == matGuid) nextIdx++;
                     idx = nextIdx;
                 }
-            
 
+            // TRANSPARENT rendering moved to DrawForwardTransparent()
+            // Called in Render() AFTER vegetation/particles for correct glass refraction
+        }
+
+        /// <summary>
+        /// Render transparent objects (glass, etc.) with proper refraction of all opaque scene elements.
+        /// MUST be called AFTER all opaque geometry, vegetation, and particles are rendered.
+        /// </summary>
+        private void DrawForwardTransparent()
+        {
+            if (_scene == null) return;
+
+            // Get PBR shader for fallback
+            Engine.Rendering.ShaderProgram? pbr = _pbrShader;
+            if (pbr == null)
+            {
+                try { pbr = Engine.Rendering.ShaderLibrary.GetShaderByName("ForwardBase"); } catch { }
+            }
+
+            // Build render items (reuse opaque items list)
+            var items = _renderItems;
 
             // === QUEUE 3000: TRANSPARENT ===
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-            GL.DepthMask(false); // disable depth writes for proper blending
+            GL.Enable(EnableCap.DepthTest); // CRITICAL: Test depth so glass is hidden behind opaque objects
+            GL.DepthFunc(DepthFunction.Lequal); // Use same depth function as opaque pass
+            GL.DepthMask(false); // disable depth writes for proper blending (test only, don't write)
 
-            lastBound = Guid.Empty;
+            Guid lastBound = Guid.Empty;
             Engine.Rendering.ShaderProgram? lastShader3 = null;
             Engine.Rendering.MaterialRuntime? mr3 = null;
             int lastVao3 = -1;
@@ -4985,30 +5888,32 @@ void main(){
 
                     // Reload MaterialRuntime from cache in case it was updated
                     mr3 = null;
-                    if (!_materialCache.TryGetValue(item.MaterialGuid, out var cached))
+                    
+                    // Check if material is missing
+                    if (item.MaterialGuid == Guid.Empty)
                     {
-                        // Material not in cache, reload it
+                        // Use magenta error material for missing materials
+                        mr3 = _errorMaterialRuntime;
+                    }
+                    else
+                    {
                         try
                         {
                             var asset = Engine.Assets.AssetDatabase.LoadMaterial(item.MaterialGuid);
                             Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                            mr3 = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
-                            _materialCache[item.MaterialGuid] = mr3;
+                            mr3 = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
                         }
                         catch
                         {
-                            mr3 = item.MaterialRuntime ?? new Engine.Rendering.MaterialRuntime { AlbedoTex = Engine.Rendering.TextureCache.White1x1 };
+                            // Use magenta error material for broken materials/shaders
+                            mr3 = item.MaterialRuntime ?? _errorMaterialRuntime;
                         }
-                    }
-                    else
-                    {
-                        mr3 = cached;
                     }
 
                     Engine.Rendering.ShaderProgram? shaderToUse = pbr;
                     try
                     {
-                        if (!string.IsNullOrEmpty(mr3.ShaderName))
+                        if (!string.IsNullOrEmpty(mr3!.ShaderName))
                         {
                             var alt = Engine.Rendering.ShaderLibrary.GetShaderByName(mr3.ShaderName);
                             if (alt != null) shaderToUse = alt;
@@ -5019,7 +5924,7 @@ void main(){
                     {
                         shaderToUse.Use();
                         float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
-                        mr3.Bind(shaderToUse, time);
+                        mr3!.Bind(shaderToUse, time);
                         lastShader3 = shaderToUse;
 
                         // Enable tessellation for Water shader
@@ -5043,9 +5948,8 @@ void main(){
                     lastShader3.SetUInt("u_ObjectId", item.ObjectId);
                 }
 
-                // Check if this is a double-sided mesh (Plane only - Quad is single-sided like Unity)
-                bool isDoubleSided = item.MeshType == MeshKind.Plane;
-                if (isDoubleSided) GL.Disable(EnableCap.CullFace);
+                // Apply culling mode from MeshRenderer
+                ApplyCullingModeFromEnum(item.CullingMode);
 
                 // Avoid redundant VAO / EBO binds when consecutive items share them
                 if (item.Vao != lastVao3)
@@ -5067,8 +5971,9 @@ void main(){
                 // Record draw for overlay/stats counters
                 RecordDraw(primitiveType, item.IndexCount);
                 GL.DrawElements(primitiveType, item.IndexCount, DrawElementsType.UnsignedInt, 0);
-
-                if (isDoubleSided) GL.Enable(EnableCap.CullFace);
+                
+                // Restore default culling after each item
+                RestoreDefaultCulling();
             }
 
             // Draw water preview planes for any terrain entities that requested it.
@@ -5473,35 +6378,31 @@ void main(){
                 bool entitySelected = Editor.State.Selection.Selected.Contains(e.Id) || Editor.State.Selection.ActiveEntityId == e.Id;
                 if (!entitySelected) continue;
 
-                foreach (var comp in e.GetAllComponents())
-                {
-                    if (comp is not Engine.Components.Collider col) continue;
-                    if (!col.Enabled) continue;
-
-                    var colr = new Vector4(0.2f, 1.0f, 1.0f, 1.0f);
-                    if (col.IsTrigger) colr.W = 0.55f;
-
-                    if (comp is Engine.Components.MeshCollider mc)
-                    {
-                        // Dessiner les triangles du MeshCollider
-                        DrawMeshColliderWire(mc, colr);
-                    }
-                    else if (comp is Engine.Components.SphereCollider sc)
-                    {
-                        ComputeSphereWorld(sc, out var c, out var r);
-                        DrawSphereWire(c, r, colr, 32);
-                    }
-                    else if (comp is Engine.Components.CapsuleCollider cc)
-                    {
-                        ComputeCapsuleWorld(cc, out var c, out var axis, out var r, out var halfHeight);
-                        DrawCapsuleWire(c, axis, r, halfHeight, colr, 28);
-                    }
-                    else
-                    {
-                        var obb = col.GetWorldOBB();
-                        DrawObbWire(obb, colr);
-                    }
-                }
+                // Physics system removed - collider gizmo drawing disabled
+                // foreach (var comp in e.GetAllComponents())
+                // {
+                //     if (comp is not Engine.Components.Collider col) continue;
+                //     if (!col.Enabled) continue;
+                //
+                //     var colr = new Vector4(0.2f, 1.0f, 1.0f, 1.0f);
+                //     if (col.IsTrigger) colr.W = 0.55f;
+                //
+                //     if (comp is Engine.Components.SphereCollider sc)
+                //     {
+                //         ComputeSphereWorld(sc, out var c, out var r);
+                //         DrawSphereWire(c, r, colr, 32);
+                //     }
+                //     else if (comp is Engine.Components.CapsuleCollider cc)
+                //     {
+                //         ComputeCapsuleWorld(cc, out var c, out var axis, out var r, out var halfHeight);
+                //         DrawCapsuleWire(c, axis, r, halfHeight, colr, 28);
+                //     }
+                //     else
+                //     {
+                //         var obb = col.GetWorldOBB();
+                //         DrawObbWire(obb, colr);
+                //     }
+                // }
 
                 // Also draw point light range gizmo for selected entities that have a Point light
                 // This mirrors the collider gizmo behavior: only draw when entity is selected
@@ -5667,6 +6568,8 @@ void main(){
                 return new Vector4(0.5f, 0.5f, 1.0f, 0.6f); // Blue when stopped
             }
         }
+
+        // Vegetation draw distance gizmo rendering removed.
 
         /// <summary>
         /// Render Canvas entities as 3D planes in the viewport (like Unity)
@@ -5872,55 +6775,47 @@ void main(){
             GL.DrawArrays(PrimitiveType.Lines, 0, 2);
         }
 
-        /// <summary>
-        /// Draw MeshCollider wireframe by rendering all triangle edges
-        /// </summary>
-        private void DrawMeshColliderWire(Engine.Components.MeshCollider meshCollider, in Vector4 color)
-        {
-            // MeshCollider gizmo disabled - drawing 300k+ triangles or even bounding boxes
-            // causes severe performance issues. Use the mesh renderer visualization instead.
-            // The collision still works perfectly without the gizmo.
-            return;
-        }
 
-        private void DrawObbWire(in Engine.Physics.OBB obb, in Vector4 color)
-        {
-            // Build 8 corners of the OBB
-            var R = obb.Orientation;
-            // Use row vectors as world axes; using columns would apply inverse (transpose) rotation
-            var hx = new Vector3(R.M11, R.M12, R.M13) * obb.HalfSize.X;
-            var hy = new Vector3(R.M21, R.M22, R.M23) * obb.HalfSize.Y;
-            var hz = new Vector3(R.M31, R.M32, R.M33) * obb.HalfSize.Z;
 
-            Vector3 c = obb.Center;
-            Vector3 c000 = c - hx - hy - hz;
-            Vector3 c100 = c + hx - hy - hz;
-            Vector3 c010 = c - hx + hy - hz;
-            Vector3 c110 = c + hx + hy - hz;
-            Vector3 c001 = c - hx - hy + hz;
-            Vector3 c101 = c + hx - hy + hz;
-            Vector3 c011 = c - hx + hy + hz;
-            Vector3 c111 = c + hx + hy + hz;
-
-            // 12 edges
-            GL.LineWidth(1.5f);
-            // bottom face
-            DrawLineWorld(c000, c100, color);
-            DrawLineWorld(c100, c110, color);
-            DrawLineWorld(c110, c010, color);
-            DrawLineWorld(c010, c000, color);
-            // top face
-            DrawLineWorld(c001, c101, color);
-            DrawLineWorld(c101, c111, color);
-            DrawLineWorld(c111, c011, color);
-            DrawLineWorld(c011, c001, color);
-            // verticals
-            DrawLineWorld(c000, c001, color);
-            DrawLineWorld(c100, c101, color);
-            DrawLineWorld(c110, c111, color);
-            DrawLineWorld(c010, c011, color);
-            GL.LineWidth(1f);
-        }
+        // Physics system removed - OBB gizmo disabled
+        // private void DrawObbWire(in Engine.Physics.OBB obb, in Vector4 color)
+        // {
+        //     // Build 8 corners of the OBB
+        //     var R = obb.Orientation;
+        //     // Use row vectors as world axes; using columns would apply inverse (transpose) rotation
+        //     var hx = new Vector3(R.M11, R.M12, R.M13) * obb.HalfSize.X;
+        //     var hy = new Vector3(R.M21, R.M22, R.M23) * obb.HalfSize.Y;
+        //     var hz = new Vector3(R.M31, R.M32, R.M33) * obb.HalfSize.Z;
+        //
+        //     Vector3 c = obb.Center;
+        //     Vector3 c000 = c - hx - hy - hz;
+        //     Vector3 c100 = c + hx - hy - hz;
+        //     Vector3 c010 = c - hx + hy - hz;
+        //     Vector3 c110 = c + hx + hy - hz;
+        //     Vector3 c001 = c - hx - hy + hz;
+        //     Vector3 c101 = c + hx - hy + hz;
+        //     Vector3 c011 = c - hx + hy + hz;
+        //     Vector3 c111 = c + hx + hy + hz;
+        //
+        //     // 12 edges
+        //     GL.LineWidth(1.5f);
+        //     // bottom face
+        //     DrawLineWorld(c000, c100, color);
+        //     DrawLineWorld(c100, c110, color);
+        //     DrawLineWorld(c110, c010, color);
+        //     DrawLineWorld(c010, c000, color);
+        //     // top face
+        //     DrawLineWorld(c001, c101, color);
+        //     DrawLineWorld(c101, c111, color);
+        //     DrawLineWorld(c111, c011, color);
+        //     DrawLineWorld(c011, c001, color);
+        //     // verticals
+        //     DrawLineWorld(c000, c001, color);
+        //     DrawLineWorld(c100, c101, color);
+        //     DrawLineWorld(c110, c111, color);
+        //     DrawLineWorld(c010, c011, color);
+        //     GL.LineWidth(1f);
+        // }
 
         // Record a draw for overlay stats
         private void RecordDraw(PrimitiveType prim, int indexCount)
@@ -5941,43 +6836,44 @@ void main(){
             if (indexCount > 0) _frameRenderedObjects++;
         }
 
-        private void ComputeSphereWorld(Engine.Components.SphereCollider sc, out Vector3 center, out float radius)
-        {
-            var e = sc.Entity!;
-            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
-            // Center in world
-            center = wpos + Vector3.Transform(sc.Center * wscl, wrot);
-            // Approx radius with max scale like runtime OBB
-            float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
-            radius = MathF.Max(1e-6f, sc.Radius * s);
-        }
-
-        private void ComputeCapsuleWorld(Engine.Components.CapsuleCollider cc, out Vector3 center, out Vector3 axisDir, out float radius, out float halfHeight)
-        {
-            var e = cc.Entity!;
-            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
-            // Center in world
-            center = wpos + Vector3.Transform(cc.Center * wscl, wrot);
-
-            // Axis dir from rotation only (unit)
-            Vector3 localAxis = cc.Direction switch { 0 => Vector3.UnitX, 1 => Vector3.UnitY, 2 => Vector3.UnitZ, _ => Vector3.UnitY };
-            var rotM = Matrix3.CreateFromQuaternion(wrot);
-            axisDir = new Vector3(
-                rotM.M11 * localAxis.X + rotM.M12 * localAxis.Y + rotM.M13 * localAxis.Z,
-                rotM.M21 * localAxis.X + rotM.M22 * localAxis.Y + rotM.M23 * localAxis.Z,
-                rotM.M31 * localAxis.X + rotM.M32 * localAxis.Y + rotM.M33 * localAxis.Z
-            );
-            if (axisDir.LengthSquared <= 1e-8f) axisDir = Vector3.UnitY; else axisDir.Normalize();
-
-            // Radius: use max component scale to match broadphase approx
-            float sMax = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
-            radius = MathF.Max(1e-6f, cc.Radius * sMax);
-
-            // Height along axis with axis scale; halfHeight for cylinder part (caps excluded)
-            float axisScale = cc.Direction switch { 0 => MathF.Abs(wscl.X), 1 => MathF.Abs(wscl.Y), 2 => MathF.Abs(wscl.Z), _ => MathF.Abs(wscl.Y) };
-            float fullH = MathF.Max(cc.Height * axisScale, 2f * radius);
-            halfHeight = MathF.Max(0f, 0.5f * fullH - radius);
-        }
+        // Physics system removed - collider gizmo helpers disabled
+        // private void ComputeSphereWorld(Engine.Components.SphereCollider sc, out Vector3 center, out float radius)
+        // {
+        //     var e = sc.Entity!;
+        //     e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+        //     // Center in world
+        //     center = wpos + Vector3.Transform(sc.Center * wscl, wrot);
+        //     // Approx radius with max scale like runtime OBB
+        //     float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+        //     radius = MathF.Max(1e-6f, sc.Radius * s);
+        // }
+        //
+        // private void ComputeCapsuleWorld(Engine.Components.CapsuleCollider cc, out Vector3 center, out Vector3 axisDir, out float radius, out float halfHeight)
+        // {
+        //     var e = cc.Entity!;
+        //     e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+        //     // Center in world
+        //     center = wpos + Vector3.Transform(cc.Center * wscl, wrot);
+        //
+        //     // Axis dir from rotation only (unit)
+        //     Vector3 localAxis = cc.Direction switch { 0 => Vector3.UnitX, 1 => Vector3.UnitY, 2 => Vector3.UnitZ, _ => Vector3.UnitY };
+        //     var rotM = Matrix3.CreateFromQuaternion(wrot);
+        //     axisDir = new Vector3(
+        //         rotM.M11 * localAxis.X + rotM.M12 * localAxis.Y + rotM.M13 * localAxis.Z,
+        //         rotM.M21 * localAxis.X + rotM.M22 * localAxis.Y + rotM.M23 * localAxis.Z,
+        //         rotM.M31 * localAxis.X + rotM.M32 * localAxis.Y + rotM.M33 * localAxis.Z
+        //     );
+        //     if (axisDir.LengthSquared <= 1e-8f) axisDir = Vector3.UnitY; else axisDir.Normalize();
+        //
+        //     // Radius: use max component scale to match broadphase approx
+        //     float sMax = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+        //     radius = MathF.Max(1e-6f, cc.Radius * sMax);
+        //
+        //     // Height along axis with axis scale; halfHeight for cylinder part (caps excluded)
+        //     float axisScale = cc.Direction switch { 0 => MathF.Abs(wscl.X), 1 => MathF.Abs(wscl.Y), 2 => MathF.Abs(wscl.Z), _ => MathF.Abs(wscl.Y) };
+        //     float fullH = MathF.Max(cc.Height * axisScale, 2f * radius);
+        //     halfHeight = MathF.Max(0f, 0.5f * fullH - radius);
+        // }
 
         private void DrawSphereWire(in Vector3 center, float radius, in Vector4 color, int segments = 24)
         {
@@ -7171,7 +8067,8 @@ void main(){
 
         public void ClearMaterialCache()
         {
-            _materialCache.Clear();
+            // Clear global cache - no local cache anymore
+            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
         }
 
         /// <summary>
@@ -7241,82 +8138,28 @@ void main(){
         {
             try
             {
-                // Single resolver instance for the whole method to avoid shadowing
-                Func<Guid, string?> resolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ApplyLiveMaterialUpdate called for {materialGuid}: TransparencyMode={mat.TransparencyMode}"); } catch { }
 
-                // If material is not in cache, load it and add to cache
-                if (!_materialCache.TryGetValue(materialGuid, out var mr))
-                {
-                    try
-                    {
-                        mr = Engine.Rendering.MaterialRuntime.FromAsset(mat, resolver);
-                        _materialCache[materialGuid] = mr;
-                    }
-                    catch (Exception ex)
-                    {
-                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ApplyLiveMaterialUpdate: Failed to load material {materialGuid}: {ex.Message}"); } catch { }
-                        return;
-                    }
-                }
+                // DEBUG: Log incoming material values
+                var tiling0 = mat.TextureTiling != null && mat.TextureTiling.Length > 0 ? mat.TextureTiling[0] : 0f;
+                var tiling1 = mat.TextureTiling != null && mat.TextureTiling.Length > 1 ? mat.TextureTiling[1] : 0f;
+                System.Console.WriteLine($"[ViewportRenderer] ApplyLiveMaterialUpdate - Material '{mat.Name}': NormalStrength={mat.NormalStrength:F2}, Tiling=({tiling0:F2}, {tiling1:F2})");
 
-                // Update scalar / color fields
-                if (mat.AlbedoColor != null && mat.AlbedoColor.Length >= 4)
-                    mr.AlbedoColor = new float[] { mat.AlbedoColor[0], mat.AlbedoColor[1], mat.AlbedoColor[2], mat.AlbedoColor[3] };
+                // CRITICAL: Update BOTH caches - AssetDatabase AND MaterialRuntime
+                // AssetDatabase cache must be updated so LoadMaterial() returns the fresh values
+                // Otherwise renderers (VegetationRenderer, TerrainRenderer) that call LoadMaterial()
+                // will get stale cached values and overwrite the changes!
+                Engine.Assets.AssetDatabase.UpdateMaterialCache(materialGuid, mat);
+                Engine.Rendering.MaterialRuntime.UpdateCacheEntry(materialGuid, mat);
 
-                mr.Metallic = mat.Metallic;
-                mr.Smoothness = 1.0f - mat.Roughness;
-                mr.OcclusionStrength = mat.OcclusionStrength;
-                if (mat.EmissiveColor != null && mat.EmissiveColor.Length >= 3)
-                    mr.EmissiveColor = new float[] { mat.EmissiveColor[0], mat.EmissiveColor[1], mat.EmissiveColor[2] };
-                mr.HeightScale = mat.HeightScale;
-                mr.TextureTiling = mat.TextureTiling ?? new float[] { 1f, 1f };
-                mr.TextureOffset = mat.TextureOffset ?? new float[] { 0f, 0f };
-                mr.NormalStrength = mat.NormalStrength;
-                // DO NOT overwrite TransparencyMode here - it should only change when user explicitly
-                // changes "Render Mode" dropdown, not when editing other properties like Smoothness.
-                // mr.TransparencyMode = mat.TransparencyMode;
-                
-                // Update stylization parameters
-                mr.Saturation = mat.Saturation;
-                mr.Brightness = mat.Brightness;
-                mr.Contrast = mat.Contrast;
-                mr.Hue = mat.Hue;
-                mr.Emission = mat.Emission;
-
-                // If texture GUIDs changed, attempt to update texture handles.
+                // Update TerrainRenderer cache for terrain layers
                 try
                 {
-                    // Base textures
-                    if (mat.AlbedoTexture.HasValue)
-                        mr.AlbedoTex = Engine.Rendering.TextureCache.GetOrLoad(mat.AlbedoTexture.Value, resolver);
-                    if (mat.NormalTexture.HasValue)
-                        mr.NormalTex = Engine.Rendering.TextureCache.GetOrLoad(mat.NormalTexture.Value, resolver);
-                    
-                    // PBR textures
-                    if (mat.MetallicTexture.HasValue)
-                        mr.MetallicTex = Engine.Rendering.TextureCache.GetOrLoad(mat.MetallicTexture.Value, resolver);
-                    if (mat.RoughnessTexture.HasValue)
-                        mr.RoughnessTex = Engine.Rendering.TextureCache.GetOrLoad(mat.RoughnessTexture.Value, resolver);
-                    if (mat.MetallicRoughnessTexture.HasValue)
-                        mr.MetallicRoughnessTex = Engine.Rendering.TextureCache.GetOrLoad(mat.MetallicRoughnessTexture.Value, resolver);
-                    if (mat.OcclusionTexture.HasValue)
-                        mr.OcclusionTex = Engine.Rendering.TextureCache.GetOrLoad(mat.OcclusionTexture.Value, resolver);
-                    if (mat.EmissiveTexture.HasValue)
-                        mr.EmissiveTex = Engine.Rendering.TextureCache.GetOrLoad(mat.EmissiveTexture.Value, resolver);
-                    if (mat.HeightTexture.HasValue)
-                        mr.HeightTex = Engine.Rendering.TextureCache.GetOrLoad(mat.HeightTexture.Value, resolver);
-                    
-                    // Detail textures
-                    if (mat.DetailMaskTexture.HasValue)
-                        mr.DetailMaskTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailMaskTexture.Value, resolver);
-                    if (mat.DetailAlbedoTexture.HasValue)
-                        mr.DetailAlbedoTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailAlbedoTexture.Value, resolver);
-                    if (mat.DetailNormalTexture.HasValue)
-                        mr.DetailNormalTex = Engine.Rendering.TextureCache.GetOrLoad(mat.DetailNormalTexture.Value, resolver);
+                    _terrainRenderer?.UpdateMaterialCache(materialGuid, mat);
                 }
                 catch { }
 
-                // Ensure next draw will rebind uniforms for this material
+                // Force material rebind on next frame to apply changes
                 _forceMaterialRebind = true;
             }
             catch (Exception ex)
@@ -7325,49 +8168,63 @@ void main(){
             }
         }
 
-        /// <summary>
-        /// Update ONLY the TransparencyMode for a cached material. Use this when user explicitly
-        /// changes Render Mode dropdown to avoid unwanted side effects during other property edits.
-        /// </summary>
-        public void UpdateMaterialTransparency(Guid materialGuid, int transparencyMode)
+        public void OnMaterialSaved(System.Guid materialGuid)
         {
-            try
+            // MaterialRuntime global cache is already updated by MaterialSaved event
+            // Just force rebind on next draw to apply changes
+            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Material saved: {materialGuid}, forcing rebind"); } catch { }
+            _forceMaterialRebind = true;
+        }
+
+        /// <summary>
+        /// Apply culling mode for a mesh renderer before drawing.
+        /// </summary>
+        private void ApplyCullingMode(Engine.Components.MeshRendererComponent meshRenderer)
+        {
+            switch (meshRenderer.Culling)
             {
-                if (!_materialCache.TryGetValue(materialGuid, out var mr)) return;
-                mr.TransparencyMode = transparencyMode;
-                _forceMaterialRebind = true;
-            }
-            catch (Exception ex)
-            {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] UpdateMaterialTransparency failed for {materialGuid}: {ex.Message}"); } catch { }
+                case Engine.Components.CullingMode.Back:
+                    GL.Enable(EnableCap.CullFace);
+                    GL.CullFace(TriangleFace.Back);
+                    break;
+                case Engine.Components.CullingMode.Front:
+                    GL.Enable(EnableCap.CullFace);
+                    GL.CullFace(TriangleFace.Front);
+                    break;
+                case Engine.Components.CullingMode.None:
+                    GL.Disable(EnableCap.CullFace);
+                    break;
             }
         }
 
-        public void OnMaterialSaved(System.Guid materialGuid)
+        /// <summary>
+        /// Apply culling mode directly from CullingMode enum.
+        /// </summary>
+        private void ApplyCullingModeFromEnum(Engine.Components.CullingMode cullingMode)
         {
-            // Replace or remove the specific material from cache to force reload.
-            // Previously we only removed the entry; replace it with a freshly-created
-            // MaterialRuntime when possible so any subsequent bind in the same frame
-            // (or very shortly after) will pick up updated uniforms (albedo color,
-            // metallic, smoothness, tiling, etc.) without requiring an explicit
-            // manual refresh by the user.
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Material saved: {materialGuid}, refreshing cache entry"); } catch { }
-            try
+            switch (cullingMode)
             {
-                // Remove cache entry first to ensure a clean reload
-                if (_materialCache.Remove(materialGuid))
-                {
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Material {materialGuid} removed from cache (will reload)"); } catch { }
-                }
-                // Also set a force-rebind flag so any already-bound shader state
-                // will be refreshed on the next draw pass (matches Terrain behaviour)
-                _forceMaterialRebind = true;
+                case Engine.Components.CullingMode.Back:
+                    GL.Enable(EnableCap.CullFace);
+                    GL.CullFace(TriangleFace.Back);
+                    break;
+                case Engine.Components.CullingMode.Front:
+                    GL.Enable(EnableCap.CullFace);
+                    GL.CullFace(TriangleFace.Front);
+                    break;
+                case Engine.Components.CullingMode.None:
+                    GL.Disable(EnableCap.CullFace);
+                    break;
             }
-            catch
-            {
-                try { _materialCache.Remove(materialGuid); } catch { }
-                _forceMaterialRebind = true;
-            }
+        }
+
+        /// <summary>
+        /// Restore default culling (back face culling enabled).
+        /// </summary>
+        private void RestoreDefaultCulling()
+        {
+            GL.Enable(EnableCap.CullFace);
+            GL.CullFace(TriangleFace.Back);
         }
 
         public void Dispose()
@@ -7381,8 +8238,8 @@ void main(){
                 _subscribedToMaterialChanges = false;
             }
 
-            // Clear material cache
-            _materialCache.Clear();
+            // Clear global material cache
+            Engine.Rendering.MaterialRuntime.ClearGlobalCache();
 
             // Dispose terrain renderer
             // Terrain renderer removed - using direct terrain rendering
@@ -7404,6 +8261,7 @@ void main(){
             _skyboxRenderer?.Dispose();
             _terrainRenderer?.Dispose();
             _particleRenderer?.Dispose();
+            _vegetationRenderer?.Dispose();
             _outlineRenderer?.Dispose();
             _taaRenderer?.Dispose();
             _msaaRenderer?.Dispose();
@@ -7436,6 +8294,9 @@ void main(){
             if (_postFbo2 != 0) GL.DeleteFramebuffer(_postFbo2);
             if (_velocityTex != 0) GL.DeleteTexture(_velocityTex);
             if (_velocityFbo != 0) GL.DeleteFramebuffer(_velocityFbo);
+            if (_reflectionTex != 0) GL.DeleteTexture(_reflectionTex);
+            if (_reflectionDepthRbo != 0) GL.DeleteRenderbuffer(_reflectionDepthRbo);
+            if (_reflectionFbo != 0) GL.DeleteFramebuffer(_reflectionFbo);
             _velocityShader?.Dispose();
             _pbrShader?.Dispose();
 
@@ -7450,6 +8311,144 @@ void main(){
             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Dispose: instances={_instanceCount}, this={this.GetHashCode()}"); } catch { }
         }
 
+        // ======= SSAO BEFORE TRANSPARENTS =======
+        /// <summary>
+        /// Apply SSAO BEFORE transparent rendering so glass can refract the SSAO correctly.
+        /// This method:
+        /// 1. Applies SSAO effect on _colorTex -> _postTex
+        /// 2. Copies _postTex -> _sceneColorTex (for glass refraction)
+        /// 3. Copies _postTex -> _colorTex (to continue rendering)
+        /// </summary>
+        private void ApplySSAOBeforeTransparents()
+        {
+            if (_scene == null || _colorTex <= 0 || _w <= 0 || _h <= 0) return;
+
+            try
+            {
+                // Find SSAO effect
+                Engine.Rendering.SSAOEffect? ssaoEffect = null;
+                Engine.Components.IPostProcessRenderer? ssaoRenderer = null;
+
+                foreach (var entity in _scene.Entities)
+                {
+                    if (!entity.Active) continue;
+                    var globalEffects = entity.GetComponent<Engine.Components.GlobalEffects>();
+                    if (globalEffects == null || !globalEffects.Enabled) continue;
+
+                    foreach (var effect in globalEffects.Effects.Where(e => e?.Enabled == true))
+                    {
+                        if (effect is Engine.Rendering.SSAOEffect ssao)
+                        {
+                            ssaoEffect = ssao;
+                            if (Engine.Rendering.PostProcessManager.TryGetRenderer(effect.GetType(), out var renderer))
+                            {
+                                ssaoRenderer = renderer;
+                            }
+                            break;
+                        }
+                    }
+                    if (ssaoEffect != null) break;
+                }
+
+                // If no SSAO effect, just copy _colorTex to _sceneColorTex without SSAO
+                if (ssaoEffect == null || ssaoRenderer == null)
+                {
+                    if (_sceneColorTex != 0 && _colorTex != 0)
+                    {
+                        try
+                        {
+                            GL.CopyImageSubData(
+                                _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _sceneColorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _w, _h, 1
+                            );
+
+                            // Bind scene color texture to unit 19 for glass shader refraction
+                            GL.ActiveTexture(TextureUnit.Texture19);
+                            GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+                        }
+                        catch { }
+                    }
+                    return;
+                }
+
+                // Apply SSAO: _colorTex -> _postTex
+                if (_postFbo != 0 && _postTex != 0)
+                {
+                    var context = new Engine.Components.PostProcessContext(
+                        (uint)_colorTex,
+                        (uint)_postFbo,
+                        _w, _h,
+                        0.016f,
+                        _scene
+                    );
+
+                    // Add depth texture and matrices for SSAO
+                    context.DepthTexture = (uint)_depthTex;
+                    context.ProjectionMatrix = _projGL;
+                    context.ViewMatrix = _viewGL;
+
+                    try
+                    {
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo);
+                        GL.Viewport(0, 0, _w, _h);
+                        GL.Disable(EnableCap.DepthTest);
+                        GL.Disable(EnableCap.Blend);
+                        GL.Disable(EnableCap.CullFace);
+
+                        if (_quadVao != 0)
+                        {
+                            GL.BindVertexArray(_quadVao);
+                            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _quadEbo);
+                        }
+
+                        ssaoRenderer.Render(ssaoEffect, context);
+                    }
+                    catch { }
+                    finally
+                    {
+                        GL.BindVertexArray(0);
+                        GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+                    }
+
+                    // Copy _postTex (with SSAO) -> _sceneColorTex (for glass refraction)
+                    if (_sceneColorTex != 0)
+                    {
+                        try
+                        {
+                            GL.CopyImageSubData(
+                                _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _sceneColorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                                _w, _h, 1
+                            );
+
+                            // Bind scene color texture to unit 19 for glass shader refraction
+                            GL.ActiveTexture(TextureUnit.Texture19);
+                            GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+                        }
+                        catch { }
+                    }
+
+                    // Copy _postTex (with SSAO) -> _colorTex (to continue rendering transparents on top)
+                    try
+                    {
+                        GL.CopyImageSubData(
+                            _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                            _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
+                            _w, _h, 1
+                        );
+                    }
+                    catch { }
+
+                    // Restore main FBO for transparent rendering
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, GetTargetFBO());
+                    var mainBufs = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 };
+                    GL.DrawBuffers(mainBufs.Length, mainBufs);
+                }
+            }
+            catch { }
+        }
+
         // ======= POST-PROCESS EFFECTS =======
         private void ApplyPostProcessEffects()
         {
@@ -7457,12 +8456,9 @@ void main(){
 
             try
             {
-                // Console.WriteLine($"[ViewportRenderer] ApplyPostProcessEffects called - colorTex: {_colorTex}, fbo: {_fbo}, size: {_w}x{_h}");
-
                 // Vérifier que nous avons des textures valides
                 if (_colorTex <= 0 || _w <= 0 || _h <= 0)
                 {
-                    // Console.WriteLine($"[ViewportRenderer] Invalid render state, skipping post-process");
                     return;
                 }
 
@@ -7474,17 +8470,22 @@ void main(){
 
                 // Post-process effects with ping-pong between two buffers to avoid read/write conflicts
                 // Get all active post-process effects from the scene
+                // CRITICAL: Skip SSAO because it was already applied before transparent rendering
                 var allEffects = new List<(Engine.Components.PostProcessEffect effect, Engine.Components.IPostProcessRenderer renderer)>();
-                
+
                 foreach (var entity in _scene.Entities)
                 {
                     if (!entity.Active) continue;
                     var globalEffects = entity.GetComponent<Engine.Components.GlobalEffects>();
                     if (globalEffects == null || !globalEffects.Enabled) continue;
-                    
+
                     foreach (var effect in globalEffects.Effects.Where(e => e?.Enabled == true).OrderBy(e => e?.Priority ?? 0))
                     {
                         if (effect == null) continue;
+
+                        // Skip SSAO - it was already applied before transparent rendering
+                        if (effect is Engine.Rendering.SSAOEffect) continue;
+
                         // Get renderer for this effect type
                         if (Engine.Rendering.PostProcessManager.TryGetRenderer(effect.GetType(), out var renderer))
                         {
@@ -7577,11 +8578,30 @@ void main(){
                             GL.Disable(EnableCap.CullFace);
                             GL.Disable(EnableCap.ScissorTest);
 
+                            // Some post-process renderers call DrawArrays/DrawElements directly
+                            // and expect a fullscreen VAO to be bound. Bind our quad VAO
+                            // to provide a valid VAO for those renderers (prevents black output).
+                            if (_quadVao != 0)
+                            {
+                                GL.BindVertexArray(_quadVao);
+                                GL.BindBuffer(BufferTarget.ElementArrayBuffer, _quadEbo);
+                            }
+
                             renderer.Render(effect, context);
                         }
                         catch (Exception ex)
                         {
                             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Post-effect error: {ex.Message}"); } catch { }
+                        }
+                        finally
+                        {
+                            // Ensure we unbind the VAO/ebo to leave a clean GL state for the next passes
+                            try
+                            {
+                                GL.BindVertexArray(0);
+                                GL.BindBuffer(BufferTarget.ElementArrayBuffer, 0);
+                            }
+                            catch { }
                         }
                         
                         // Ping-pong: for next effect, read from what we just wrote
@@ -7852,14 +8872,14 @@ void main(){
 
                 if (meshAsset == null || meshAsset.SubMeshes.Count == 0)
                 {
-                    Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to load mesh asset {meshGuid} or no submeshes");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to load mesh asset {meshGuid} or no submeshes");
                     return null;
                 }
 
                 // Validate submesh index
                 if (submeshIndex < 0 || submeshIndex >= meshAsset.SubMeshes.Count)
                 {
-                    Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Invalid submesh index {submeshIndex}, using 0");
+                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Invalid submesh index {submeshIndex}, using 0");
                     submeshIndex = 0;
                 }
 
@@ -7871,7 +8891,7 @@ void main(){
             }
             catch (Exception ex)
             {
-                Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Error loading custom mesh {meshGuid}: {ex.Message}");
+                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Error loading custom mesh {meshGuid}: {ex.Message}");
                 return null;
             }
         }
@@ -7912,7 +8932,7 @@ void main(){
             // Cache it
             _customMeshCache[cacheKey] = meshData;
 
-            Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Uploaded custom mesh {cacheKey.Item1} submesh {cacheKey.Item2} to GPU ({vertices.Length / 8} vertices, {indices.Length / 3} triangles)");
+            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Uploaded custom mesh {cacheKey.Item1} submesh {cacheKey.Item2} to GPU ({vertices.Length / 8} vertices, {indices.Length / 3} triangles)");
 
             return meshData;
         }

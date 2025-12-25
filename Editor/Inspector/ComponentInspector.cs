@@ -48,8 +48,9 @@ namespace Editor.Inspector
                     case LightComponent light: LightInspector.Draw(light); break;
                     case CameraComponent camera: CameraInspector.Draw(camera); break;
                     case MeshRendererComponent meshRenderer: MeshRendererInspector.Draw(meshRenderer); break;
-                    case BoxCollider box: BoxColliderInspector.Draw(box); break;
-                    case HeightfieldCollider heightfield: HeightfieldColliderInspector.Draw(heightfield); break;
+                    // OBSOLETE: Old collision system removed
+                    // case BoxCollider box: BoxColliderInspector.Draw(box); break;
+                    // case HeightfieldCollider heightfield: HeightfieldColliderInspector.Draw(heightfield); break;
                     case Engine.Components.Terrain terrain: TerrainInspector.Draw(entity, terrain); break;
                     case Engine.Components.ParticleSystem particleSystem: ParticleSystemInspector.Draw(particleSystem); break;
                     default:

@@ -612,6 +612,10 @@ namespace Engine.Rendering
 
                     // Normal map strength (for frosted glass effects)
                     sh.SetFloat("u_NormalStrength", NormalStrength);
+
+                    // Scene color texture for refraction (bound on unit 19 by ViewportRenderer)
+                    // This texture contains the complete opaque scene (vegetation, particles, etc.)
+                    sh.SetInt("u_SceneColorTex", 19);
                 }
                 catch { }
             }

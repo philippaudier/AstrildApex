@@ -33,27 +33,16 @@ namespace Engine.Physics
         public Vector3 Direction; // normalized
     }
 
-    public struct RaycastHit
-    {
-        public Components.Component? Component; // optional component hit (e.g., collider)
-        public Components.Component? OtherComponent; // reserved
-        public Components.Component? ColliderComponent; // alias for Component
-        public Components.Component? RigidbodyComponent; // reserved for future
-        public Scene.Entity? Entity;
-        public Vector3 Point;
-        public Vector3 Normal;
-        public float Distance;
-    }
+    // RaycastHit moved to separate file: Physics/RaycastHit.cs
 
     public enum QueryTriggerInteraction { UseGlobal, Include, Ignore }
 
-    public struct Collision // info passed to callbacks
+    // Collision struct - kept for backward compatibility (empty stub)
+    public struct Collision
     {
-        public Components.Collider ThisCollider;
-        public Components.Collider OtherCollider;
-        public Scene.Entity ThisEntity => ThisCollider.Entity!;
-        public Scene.Entity OtherEntity => OtherCollider.Entity!;
-        public Vector3 Normal; // best estimate; may be zero in simple overlap
-        public float Penetration; // best estimate; may be zero in simple overlap
+        public Scene.Entity? ThisEntity;
+        public Scene.Entity? OtherEntity;
+        public Vector3 Normal;
+        public float Penetration;
     }
 }

@@ -1,0 +1,92 @@
+{
+  "Guid": "4924bdba-8bdb-4e9c-ad35-676111d4f108",
+  "Name": "pine_tree",
+  "RootEntity": {
+    "guid": "b6d4b177-68ed-45e1-8c45-a3f610c693a0",
+    "name": "pine_tree",
+    "enabled": true,
+    "localPosition": [
+      0,
+      0,
+      0
+    ],
+    "localRotation": [
+      0,
+      0,
+      0
+    ],
+    "localScale": [
+      0.1,
+      0.1,
+      0.1
+    ],
+    "components": {},
+    "children": [
+      {
+        "guid": "4ab90f75-b094-4697-91af-95a5ac98b626",
+        "name": "Leaves/001_Leavs_0",
+        "enabled": true,
+        "localPosition": [
+          0,
+          0,
+          0
+        ],
+        "localRotation": [
+          0,
+          0,
+          0
+        ],
+        "localScale": [
+          1,
+          1,
+          1
+        ],
+        "components": {
+          "MeshRendererComponent": {
+            "mesh": "Cube",
+            "customMeshGuid": "ca561b24-2679-4112-ab4c-d96f2dca0aea",
+            "submeshIndex": 0,
+            "materialGuid": "2349fd96-227d-4478-a0d9-552a6f87a362",
+            "cullingMode": "None",
+            "enabled": true
+          }
+        },
+        "children": []
+      },
+      {
+        "guid": "27580119-91f9-4c1b-abec-0617b9f52ea0",
+        "name": "Trank.001_Trank_0",
+        "enabled": true,
+        "localPosition": [
+          0,
+          0,
+          0
+        ],
+        "localRotation": [
+          0,
+          0,
+          0
+        ],
+        "localScale": [
+          1,
+          1,
+          1
+        ],
+        "components": {
+          "MeshRendererComponent": {
+            "mesh": "Cube",
+            "customMeshGuid": "ca561b24-2679-4112-ab4c-d96f2dca0aea",
+            "submeshIndex": 1,
+            "materialGuid": "e4e31e4a-dc87-4c52-ac7b-28b8869e4b8c",
+            "cullingMode": "Back",
+            "enabled": true
+          }
+        },
+        "children": []
+      }
+    ]
+  },
+  "CreatedAt": "2025-12-21T21:47:00.8567061Z",
+  "ModifiedAt": "2025-12-21T21:47:00.8567063Z",
+  "PreviewIconGuid": null
+}

@@ -138,6 +138,9 @@ namespace Engine.Components
                 // Generate water plane if enabled
                 GenerateWaterPlane();
 
+                // OBSOLETE: HeightfieldCollider removed - old collision system
+                // TODO: Re-implement terrain collision using new physics system
+                /*
                 // Notify HeightfieldCollider to update its bounds
                 if (Entity != null)
                 {
@@ -156,6 +159,7 @@ namespace Engine.Components
                         Console.WriteLine("[Terrain] Updated HeightfieldCollider bounds and resolution after terrain regeneration");
                     }
                 }
+                */
             }
             catch (Exception ex)
             {

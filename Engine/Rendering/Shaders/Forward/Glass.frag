@@ -31,6 +31,9 @@ uniform sampler2D u_NormalTex;
 uniform sampler2D u_RoughnessTex;
 uniform float u_NormalStrength;
 
+// Scene color texture (captured opaque scene for refraction)
+uniform sampler2D u_SceneColorTex;
+
 uniform uint u_ObjectId;
 
 // Calculate Fresnel reflection (Schlick's approximation)
@@ -85,33 +88,50 @@ void main() {
     // Apply distortion by perturbing the refraction direction with the normal
     vec3 perturbedRefract = normalize(mix(refractDir, N, u_DistortionStrength * 0.3));
 
-    // Sample refracted color from environment map (IBL)
+    // === SCREEN-SPACE REFRACTION ===
+    // Calculate screen-space UVs for sampling the scene behind the glass
+    vec2 screenUV = (vScreenPos.xy / vScreenPos.w) * 0.5 + 0.5; // NDC to UV
+
+    // Apply distortion to UVs based on perturbed normal (screen-space offset)
+    vec2 distortion = N.xy * u_DistortionStrength * 0.05; // Scale down for subtle effect
+    vec2 refractedUV = screenUV + distortion;
+    refractedUV = clamp(refractedUV, vec2(0.01), vec2(0.99)); // Clamp to avoid edges
+
+    // Sample scene color texture (objects behind glass) with chromatic aberration
     vec3 refractedColor = vec3(0.0);
 
     if (u_ChromaticAberration > 0.001) {
-        // Chromatic aberration: simulate dispersion by sampling at slightly different angles
-        float dispersion = u_ChromaticAberration * 0.05;
+        // Chromatic aberration: sample RGB channels at slightly different UV offsets
+        float dispersion = u_ChromaticAberration * 0.01; // Subtle chromatic aberration
 
-        // Red light bends less (higher angle)
-        vec3 refractR = normalize(mix(perturbedRefract, N, dispersion));
-        float r = samplePrefilteredEnv(refractR, roughness * 0.5).r;
+        // Red light bends less (sample with positive offset)
+        vec2 refractedUV_R = screenUV + distortion * (1.0 + dispersion);
+        refractedUV_R = clamp(refractedUV_R, vec2(0.01), vec2(0.99));
+        float r = texture(u_SceneColorTex, refractedUV_R).r;
 
-        // Green light (no offset)
-        float g = samplePrefilteredEnv(perturbedRefract, roughness * 0.5).g;
+        // Green light (no offset) - base refraction
+        float g = texture(u_SceneColorTex, refractedUV).g;
 
-        // Blue light bends more (lower angle)
-        vec3 refractB = normalize(mix(perturbedRefract, -N, dispersion));
-        float b = samplePrefilteredEnv(refractB, roughness * 0.5).b;
+        // Blue light bends more (sample with negative offset)
+        vec2 refractedUV_B = screenUV + distortion * (1.0 - dispersion);
+        refractedUV_B = clamp(refractedUV_B, vec2(0.01), vec2(0.99));
+        float b = texture(u_SceneColorTex, refractedUV_B).b;
 
         refractedColor = vec3(r, g, b);
     } else {
-        // No chromatic aberration - sample environment at refracted angle
-        refractedColor = samplePrefilteredEnv(perturbedRefract, roughness * 0.5);
+        // No chromatic aberration - sample scene directly
+        refractedColor = texture(u_SceneColorTex, refractedUV).rgb;
     }
 
-    // Apply glass tint (absorption based on thickness)
-    // Darker tint = more absorption, uses Beer's law approximation
-    float absorption = exp(-u_Thickness * 2.0);
+    // === PHYSICALLY-BASED THICKNESS (view-dependent) ===
+    // Calculate effective thickness based on view angle
+    // Center of sphere (NdotV=1.0) = full diameter, edges (NdotV=0.0) = thin
+    float viewAngleFactor = mix(0.2, 1.0, NdotV); // 20% thickness at edges, 100% at center
+    float effectiveThickness = u_Thickness * viewAngleFactor;
+
+    // Apply glass tint (absorption based on effective thickness)
+    // Beer's law: I = I0 * exp(-μ * d) where d = thickness
+    float absorption = exp(-effectiveThickness * 3.0);
     vec3 tintedColor = refractedColor * mix(u_Tint, vec3(1.0), absorption);
     refractedColor = tintedColor;
 
@@ -126,9 +146,12 @@ void main() {
     // Apply fog
     finalColor = processFog(finalColor, vWorldPos);
 
-    // Calculate alpha based on opacity and Fresnel
-    // Glass is more opaque at grazing angles (Fresnel effect)
-    float alpha = mix(u_Opacity, 1.0, fresnel);
+    // Calculate alpha based on opacity, thickness, and Fresnel
+    // Glass is more opaque at grazing angles (Fresnel effect) AND with thickness
+    // Thick glass absorbs more light → more opaque
+    float thicknessOpacity = 1.0 - absorption; // More absorption = more opaque
+    float baseAlpha = mix(u_Opacity, u_Opacity + thicknessOpacity * 0.5, effectiveThickness);
+    float alpha = mix(baseAlpha, 1.0, fresnel);
 
     outColor = vec4(finalColor, alpha);
     outId = u_ObjectId;

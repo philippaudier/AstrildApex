@@ -464,7 +464,8 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
-            e.AddComponent<Engine.Components.SphereCollider>().Radius = radius;
+            // OBSOLETE: Old collision system removed
+            // e.AddComponent<Engine.Components.SphereCollider>().Radius = radius;
 
             Entities.Add(e);
             return e;
@@ -481,10 +482,13 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
+            // OBSOLETE: Old collision system removed
+            /*
             var cap = e.AddComponent<Engine.Components.CapsuleCollider>();
             cap.Height = height;
             cap.Radius = radius;
             cap.Direction = 1; // Y-up
+            */
 
             Entities.Add(e);
             return e;
@@ -501,9 +505,12 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
+            // OBSOLETE: Old collision system removed
+            /*
             // Use BoxCollider to approximate plane area (thin box)
             var box = e.AddComponent<Engine.Components.BoxCollider>();
             box.Size = new Vector3(1f, 0.01f, 1f);
+            */
 
             Entities.Add(e);
             return e;
@@ -520,9 +527,12 @@ namespace Engine.Scene
             var defaultMaterial = AssetDatabase.EnsureDefaultWhiteMaterial();
             meshRenderer.SetMaterial(defaultMaterial);
 
+            // OBSOLETE: Old collision system removed
+            /*
             // Thin box collider in XY plane (Z=1 depth)
             var box = e.AddComponent<Engine.Components.BoxCollider>();
             box.Size = new Vector3(1f, 1f, 0.01f);
+            */
 
             Entities.Add(e);
             return e;
