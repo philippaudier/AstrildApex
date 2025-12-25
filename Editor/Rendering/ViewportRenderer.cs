@@ -3106,23 +3106,46 @@ void main(){
             // === CAPTURE SCENE FOR GLASS REFRACTION ===
             // Capture the complete opaque scene (including vegetation and particles) before rendering transparents
             // This texture will be used by glass shader for refraction
-            if (_sceneColorTex != 0 && _colorTex != 0)
+            if (_sceneColorTex != 0)
             {
                 try
                 {
-                    // Copy current framebuffer color to scene color texture for glass refraction
-                    GL.CopyImageSubData(
-                        _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
-                        _sceneColorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
-                        _w, _h, 1
+                    // CRITICAL: Ensure all rendering commands are finished before copying
+                    GL.Flush();
+
+                    // Determine which framebuffer we're currently rendering to
+                    int sourceFBO = _msaaRenderer != null && _antiAliasingMode.IsMSAA()
+                        ? (int)_msaaRenderer.FramebufferId
+                        : _fbo;
+
+                    // Create a temporary FBO with _sceneColorTex as color attachment for blitting
+                    int tempFBO = GL.GenFramebuffer();
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, tempFBO);
+                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                        TextureTarget.Texture2D, _sceneColorTex, 0);
+
+                    // Blit from source FBO to temp FBO (this resolves MSAA if needed)
+                    GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, sourceFBO);
+                    GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, tempFBO);
+                    GL.BlitFramebuffer(
+                        0, 0, _w, _h,  // src rect
+                        0, 0, _w, _h,  // dst rect
+                        ClearBufferMask.ColorBufferBit,
+                        BlitFramebufferFilter.Linear
                     );
+
+                    // Cleanup temp FBO (texture remains intact)
+                    GL.DeleteFramebuffer(tempFBO);
+
+                    // Restore original framebuffer for transparent rendering
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, sourceFBO);
 
                     // Bind scene color texture to unit 19 for glass shader refraction
                     GL.ActiveTexture(TextureUnit.Texture19);
                     GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
 
                     if (Engine.Utils.DebugLogger.EnableVerbose)
-                        LogManager.LogVerbose("Scene color captured for glass refraction (with vegetation & particles)", "ViewportRenderer");
+                        LogManager.LogVerbose($"Scene captured for glass refraction: {_w}x{_h}, sourceFBO={sourceFBO}", "ViewportRenderer");
                 }
                 catch (Exception ex2)
                 {
@@ -5999,6 +6022,18 @@ void main(){
                         float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
                         mr3!.Bind(shaderToUse, time);
                         lastShader3 = shaderToUse;
+
+                        // CRITICAL: Re-bind scene color texture for glass shader refraction
+                        // MaterialRuntime.Bind() binds many textures which can disrupt the slot 19 binding
+                        // Re-bind _sceneColorTex on slot 19 to ensure glass shader can access it
+                        if (string.Equals(mr3.ShaderName, "Glass", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (_sceneColorTex != 0)
+                            {
+                                GL.ActiveTexture(TextureUnit.Texture19);
+                                GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+                            }
+                        }
 
                         // Enable tessellation for Water shader
                         if (string.Equals(mr3.ShaderName, "Water", StringComparison.OrdinalIgnoreCase))

@@ -164,6 +164,18 @@ namespace Editor
                 // The TransitionManager guarantees cleanup even on failure
             }
 
+            // CRITICAL: Restore original scene BEFORE clearing references
+            // This ensures the editor returns to the pre-Play Mode scene state
+            if (_originalScene != null && EditorUI.MainViewport.Renderer != null)
+            {
+                EditorUI.MainViewport.Renderer.SetScene(_originalScene);
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Restored original scene with {_originalScene.Entities.Count} entities");
+            }
+            else
+            {
+                LogManager.LogWarning("Original scene was null or viewport renderer not available - cannot restore!", "PlayMode");
+            }
+
             // Clear local state
             _playScene = null;
             _originalScene = null;
