@@ -81,20 +81,47 @@ namespace Engine.Components
 
         /// <summary>
         /// Called when component is attached to an entity - regenerate mesh if heightmap is set
+        /// CRITICAL: When cloned for PlayMode, we need to detect if our OpenGL resources are invalid
         /// </summary>
         public override void OnAttached()
         {
             base.OnAttached();
 
-            Console.WriteLine($"[Terrain] OnAttached() called! HeightmapTextureGuid={HeightmapTextureGuid}, _meshGenerated={_meshGenerated}");
+            Console.WriteLine($"[Terrain] OnAttached() called! HeightmapTextureGuid={HeightmapTextureGuid}, _meshGenerated={_meshGenerated}, _vao={_vao}");
 
-            // If we have a heightmap texture but no mesh, regenerate it
-            // This happens when loading a saved scene
-            if (HeightmapTextureGuid.HasValue && !_meshGenerated)
+            // CRITICAL FIX: After cloning, _meshGenerated might be true but _vao is shared/invalid
+            // Check if VAO is actually valid, not just if _meshGenerated is true
+            bool needsRegeneration = false;
+
+            if (HeightmapTextureGuid.HasValue)
+            {
+                if (!_meshGenerated)
+                {
+                    // No mesh at all, need to generate
+                    needsRegeneration = true;
+                    Console.WriteLine($"[Terrain] OnAttached(): No mesh generated yet");
+                }
+                else if (_vao != 0 && !GL.IsVertexArray(_vao))
+                {
+                    // Mesh was supposed to be generated but VAO is invalid (cloned/shared handle)
+                    needsRegeneration = true;
+                    Console.WriteLine($"[Terrain] OnAttached(): VAO {_vao} is invalid (cloned scene?), regenerating");
+                    _meshGenerated = false; // Reset flag
+                }
+                else if (_vao == 0)
+                {
+                    // No VAO at all
+                    needsRegeneration = true;
+                    Console.WriteLine($"[Terrain] OnAttached(): VAO is 0, regenerating");
+                    _meshGenerated = false; // Reset flag
+                }
+            }
+
+            if (needsRegeneration)
             {
                 try
                 {
-                    Console.WriteLine($"[Terrain] OnAttached(): Regenerating terrain from saved heightmap {HeightmapTextureGuid.Value}");
+                    Console.WriteLine($"[Terrain] OnAttached(): Regenerating terrain from heightmap {HeightmapTextureGuid!.Value}");
                     GenerateTerrain();
                 }
                 catch (Exception ex)
@@ -104,7 +131,65 @@ namespace Engine.Components
             }
             else
             {
-                Console.WriteLine($"[Terrain] OnAttached(): Skipping regeneration - no heightmap or mesh already generated");
+                Console.WriteLine($"[Terrain] OnAttached(): Mesh valid, skipping regeneration (VAO={_vao})");
+            }
+        }
+
+        /// <summary>
+        /// FIX C5: Called when entering Play Mode to regenerate vegetation
+        /// This ensures vegetation entities are created in the Play scene
+        /// </summary>
+        public override void Start()
+        {
+            base.Start();
+
+            // Check if we're in Play Mode by checking if Entity has a valid scene
+            if (Entity?.Scene == null)
+                return;
+
+            // DEBUG: Log terrain state to diagnose invisibility issue
+            // Mesh regeneration disabled - causes freeze and doesn't fix invisibility
+            Console.WriteLine($"[Terrain] Start() in PlayMode: VAO={_vao}, HasMesh={HasMesh()}, Material={TerrainMaterialGuid}");
+
+            // Regenerate vegetation if layers are defined but no vegetation instances exist yet
+            if (VegetationLayers != null && VegetationLayers.Length > 0)
+            {
+                // Check if vegetation already exists (to avoid double-generation)
+                bool vegetationExists = false;
+                try
+                {
+                    // Look for vegetation parent entities
+                    foreach (var layer in VegetationLayers)
+                    {
+                        string layerParentName = $"{Entity.Name}_Vegetation_{layer.Name}";
+                        var layerParent = Entity.Scene.Entities.FirstOrDefault(e =>
+                            e.Name == layerParentName && e.Parent == Entity);
+                        if (layerParent != null)
+                        {
+                            vegetationExists = true;
+                            break;
+                        }
+                    }
+                }
+                catch { }
+
+                // Only regenerate if vegetation doesn't exist yet
+                if (!vegetationExists)
+                {
+                    try
+                    {
+                        Console.WriteLine($"[Terrain] Start(): Regenerating vegetation for Play Mode");
+                        GenerateVegetation(Entity.Scene!);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Terrain] Failed to generate vegetation in Start(): {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[Terrain] Start(): Vegetation already exists, skipping generation");
+                }
             }
         }
 
@@ -351,8 +436,8 @@ namespace Engine.Components
 
             // Build a deterministic key from heightmap guid + parameters
             // Include heightmap file modification time when available so the cache invalidates when the source changes
-            // V2: Fixed winding order and normals calculation
-            string key = $"v2_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}";
+            // V3: Fixed normal calculation to use heightmap resolution instead of mesh resolution
+            string key = $"v3_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}";
             try
             {
                 if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
@@ -717,10 +802,12 @@ namespace Engine.Components
                     float hD = SampleHeightBilinear(u, Math.Max(0f, v - texelSizeV));
                     float hU = SampleHeightBilinear(u, Math.Min(1f, v + texelSizeV));
 
-                    // Calculate gradient in world space
-                    // The horizontal distance between samples in world units
-                    float worldStepX = TerrainWidth / (resolution - 1);
-                    float worldStepZ = TerrainLength / (resolution - 1);
+                    // CRITICAL FIX: Calculate gradient in world space
+                    // The distance between samples is based on HEIGHTMAP resolution, not mesh resolution!
+                    // hL and hR are sampled at u±texelSizeU, so distance = 2*texelSizeU in UV space
+                    // In world space: distance = 2 * texelSizeU * TerrainWidth = 2 * TerrainWidth / (hmWidth - 1)
+                    float worldStepX = TerrainWidth / (hmWidth - 1);   // FIXED: Use heightmap resolution
+                    float worldStepZ = TerrainLength / (hmHeight - 1); // FIXED: Use heightmap resolution
 
                     // Calculate tangent vectors (derivatives of position wrt u and v)
                     // Tangent along X axis: (1, dHeight/dX, 0)
@@ -829,7 +916,7 @@ namespace Engine.Components
             {
                 return;
             }
-            
+
             // Verify VAO is still valid (might be invalidated after PlayMode changes)
             if (!GL.IsVertexArray(_vao))
             {
@@ -1143,7 +1230,17 @@ namespace Engine.Components
                             prefabInstance.Name = $"{layer.Name}_{i}";
                             prefabInstance.Transform.Position = position;
                             prefabInstance.Transform.Rotation = rotation;
-                            prefabInstance.Transform.Scale = scale;
+
+                            // CRITICAL FIX: MULTIPLY random scale with prefab's base scale instead of overwriting!
+                            // This preserves the artist-authored scale from the prefab (e.g., if prefab is 2x size)
+                            // while still allowing random variation via MinScale/MaxScale
+                            // Example: prefab=(2,2,2), random=0.9 -> final=(1.8,1.8,1.8)
+                            var prefabBaseScale = prefabInstance.Transform.Scale;
+                            prefabInstance.Transform.Scale = new OpenTK.Mathematics.Vector3(
+                                prefabBaseScale.X * scale.X,
+                                prefabBaseScale.Y * scale.Y,
+                                prefabBaseScale.Z * scale.Z
+                            );
                         }
                     }
                     catch (Exception ex)

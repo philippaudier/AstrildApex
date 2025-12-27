@@ -125,6 +125,9 @@ namespace Engine.Scene
         /// <summary>Local transform (relative to Parent).</summary>
         public Transform Transform = new Transform();
 
+        /// <summary>FIX C5: Reference to the scene this entity belongs to (set by Scene when entity is added)</summary>
+        internal Scene? Scene { get; set; }
+
         // --- Parenting ---
         public Entity? Parent { get; private set; }
         public System.Collections.Generic.List<Entity> Children { get; } = new();
@@ -433,6 +436,15 @@ namespace Engine.Scene
         public static void NotifyEntityTransformChanged(Entity entity)
         {
             EntityTransformChanged?.Invoke(entity);
+        }
+
+        /// <summary>
+        /// FIX C5: Helper to add entity to scene with proper Scene reference
+        /// </summary>
+        internal void AddEntity(Entity entity)
+        {
+            entity.Scene = this;
+            Entities.Add(entity);
         }
 
         public Entity CreateCube(string name, Vector3 pos, Vector3 scale, Vector4 color)
@@ -906,7 +918,8 @@ namespace Engine.Scene
                 }
             }
 
-            targetScene.Entities.Add(cloned);
+            // FIX C5: Use AddEntity to set Scene reference
+            targetScene.AddEntity(cloned);
             // Special-case: GlobalEffects contains a private readonly list of PostProcessEffect
             // which cannot be assigned by reflection easily. Copy each effect individually
             // so post-processing settings are preserved when cloning the scene for Play Mode.

@@ -530,19 +530,21 @@ namespace Engine.Rendering.Terrain
                                     _shader.SetVec4($"u_LayerStylize[{i}]", stylize);
                                     _shader.SetFloat($"u_LayerEmission[{i}]", emission);
 
+                                    // UNIFIED SLOPE SYSTEM: Send slopes as DEGREES (0-90), NOT normalized
+                                    // This matches the snow system and makes the shader code consistent
                                     _shader.SetVec4($"u_LayerHeightSlope[{i}]", new Vector4(
                                         layer.HeightMin, layer.HeightMax,
-                                        layer.SlopeMinDeg / 90f, layer.SlopeMaxDeg / 90f)); // Normalize slope to [0,1]
+                                        layer.SlopeMinDeg, layer.SlopeMaxDeg)); // Degrees, not normalized!
 
                                     _shader.SetFloat($"u_LayerStrength[{i}]", layer.Strength);
 
-                                    // Underwater parameters
+                                    // Underwater parameters (slopes also in degrees now)
                                     _shader.SetInt($"u_LayerIsUnderwater[{i}]", layer.IsUnderwater ? 1 : 0);
                                     _shader.SetVec4($"u_LayerUnderwaterParams[{i}]", new Vector4(
                                         layer.UnderwaterHeightMax,
                                         layer.UnderwaterBlendDistance,
-                                        layer.UnderwaterSlopeMin / 90f,
-                                        layer.UnderwaterSlopeMax / 90f));
+                                        layer.UnderwaterSlopeMin,  // Degrees, not normalized!
+                                        layer.UnderwaterSlopeMax)); // Degrees, not normalized!
                                     _shader.SetFloat($"u_LayerUnderwaterBlend[{i}]", layer.UnderwaterBlendWithOthers);
 
                                     // PBR properties (from Material or legacy properties)
@@ -673,7 +675,8 @@ namespace Engine.Rendering.Terrain
                 }
                 catch (Exception ex)
                 {
-                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Error loading terrain material: {ex.Message}");
+                    Console.WriteLine($"[TerrainRenderer] ❌ ERROR loading terrain material: {ex.Message}");
+                    Console.WriteLine($"[TerrainRenderer] ❌ StackTrace: {ex.StackTrace}");
                     _shader.SetInt("u_LayerCount", 0);
                     GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                 }
@@ -873,6 +876,53 @@ namespace Engine.Rendering.Terrain
             }
         }
 
+        /// <summary>
+        /// Clear material cache - called when AssetDatabase cache is cleared during PlayMode transitions
+        /// CRITICAL: This prevents using stale material/texture references after PlayMode exit
+        /// </summary>
+        public void ClearMaterialCache()
+        {
+            _materialCache.Clear();
+            Console.WriteLine($"[TerrainRenderer] Material cache cleared ({_materialCache.Count} entries removed)");
+        }
+
+        /// <summary>
+        /// CRITICAL FIX: Force reload shader from ShaderLibrary
+        /// Call this after ShaderLibrary.ReloadShader() to update the cached reference
+        /// </summary>
+        public void ReloadShader()
+        {
+            try
+            {
+                Console.WriteLine($"[TerrainRenderer] Forcing shader reload, old handle={_shader?.Handle ?? 0}");
+                _shader = null; // Clear old reference
+
+                string shaderName = "TerrainForward";
+                try
+                {
+                    if (Environment.GetEnvironmentVariable("TERRAIN_DEBUG_SHADER") == "1")
+                    {
+                        shaderName = "TerrainDebug";
+                    }
+                }
+                catch { }
+
+                _shader = LoadTerrainShader(shaderName);
+                if (_shader == null)
+                {
+                    Engine.Utils.DebugLogger.Log($"[TerrainRenderer] CRITICAL: Failed to reload {shaderName} shader!");
+                }
+                else
+                {
+                    Console.WriteLine($"[TerrainRenderer] ✓ Shader reloaded successfully, new handle={_shader.Handle}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[TerrainRenderer] ERROR reloading shader: {ex.Message}");
+            }
+        }
+
         private MaterialAsset? GetMaterialCached(Guid materialGuid)
         {
             // Try to get from cache first
@@ -882,13 +932,13 @@ namespace Engine.Rendering.Terrain
             }
 
             // Not in cache, load from disk
-            // PERFORMANCE: Disabled log
-            // Console.WriteLine($"[TerrainRenderer] Loading material {materialGuid} from disk (cache miss)");
+            Console.WriteLine($"[TerrainRenderer] CACHE MISS - Loading material {materialGuid} from disk");
             try
             {
                 var material = AssetDatabase.LoadMaterial(materialGuid);
                 if (material != null)
                 {
+                    Console.WriteLine($"[TerrainRenderer] Material loaded successfully: Name={material.Name}, Guid={material.Guid}");
                     // Ensure texture streaming is initiated and upload pending textures
                     try
                     {
@@ -910,16 +960,21 @@ namespace Engine.Rendering.Terrain
                     catch { }
 
                     _materialCache[materialGuid] = material;
-                    // PERFORMANCE: Disabled log
-                    // Console.WriteLine($"[TerrainRenderer] Material {materialGuid} loaded and cached");
+                    Console.WriteLine($"[TerrainRenderer] Material {materialGuid} loaded and cached successfully");
                     return material;
+                }
+                else
+                {
+                    Console.WriteLine($"[TerrainRenderer] ERROR: LoadMaterial returned NULL for {materialGuid}");
                 }
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[TerrainRenderer] EXCEPTION loading material {materialGuid}: {ex.Message}");
                 Engine.Utils.DebugLogger.Log($"[TerrainRenderer] Failed to load material {materialGuid}: {ex.Message}");
             }
 
+            Console.WriteLine($"[TerrainRenderer] Failed to load material {materialGuid} - returning null");
             return null;
         }
 

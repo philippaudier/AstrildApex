@@ -26,11 +26,23 @@ public class ViewportPanelModern
 {
     // === Core State ===
     private ViewportRenderer? _renderer;
-    
-    // === New UI Components ===
+
+    // === Play Mode State ===
+    private bool _isInPlayMode = false;
+    private uint _selectedCameraEntityId = 0;
+    private float _savedEditorYaw;
+    private float _savedEditorPitch;
+    private float _savedEditorDist;
+
+    // === New UI Components (Edit Mode) ===
     private ViewportToolbar _toolbar = new();
     private ViewportTopRightControls _topRightControls = new();
     private ViewportOverlays _overlays = new();
+
+    // === Game Mode UI Components ===
+    private AstrildApex.Editor.UI.GamePlayControls _playControls = new();
+    private AstrildApex.Editor.UI.GameTopRightControls _gameTopRightControls = new();
+    private AstrildApex.Editor.UI.GamePerformanceOverlays _gameOverlays = new();
     
     // === Selection State ===
     private bool _isSelecting = false;
@@ -135,7 +147,58 @@ public class ViewportPanelModern
             }
         }
     }
-    
+
+    /// <summary>
+    /// Switch between Edit Mode and Play Mode
+    /// </summary>
+    public void SetPlayMode(bool isPlayMode)
+    {
+        if (_isInPlayMode == isPlayMode) return; // Already in desired mode
+
+        _isInPlayMode = isPlayMode;
+
+        if (_renderer == null) return;
+
+        if (isPlayMode)
+        {
+            // ENTERING PLAY MODE
+            // Save editor camera state
+            _savedEditorYaw = _yaw;
+            _savedEditorPitch = _pitch;
+            _savedEditorDist = _dist;
+
+            // Switch to Game Mode rendering
+            _renderer.SetGameMode(true);
+            _renderer.GridVisible = false;
+            _renderer.SetGizmoVisible(false);
+            _renderer.ForceEditorCamera = false;
+
+            LogManager.LogInfo("ViewportPanel switched to Play Mode", "ViewportPanel");
+        }
+        else
+        {
+            // EXITING PLAY MODE - RETURN TO EDIT MODE
+            // Restore editor camera state
+            _yaw = _savedEditorYaw;
+            _pitch = _savedEditorPitch;
+            _dist = _savedEditorDist;
+            _targetYaw = _savedEditorYaw;
+            _targetPitch = _savedEditorPitch;
+            _targetDist = _savedEditorDist;
+
+            // Switch back to Edit Mode rendering
+            _renderer.SetGameMode(false);
+            _renderer.GridVisible = _toolbar.ShowGrid;
+            _renderer.SetGizmoVisible(_toolbar.ShowGizmos && Selection.Selected.Count > 0);
+            _renderer.ForceEditorCamera = true;
+
+            // Reset camera selection
+            _selectedCameraEntityId = 0;
+
+            LogManager.LogInfo("ViewportPanel switched to Edit Mode", "ViewportPanel");
+        }
+    }
+
     public void Draw()
     {
         // Update FPS tracking
@@ -155,15 +218,15 @@ public class ViewportPanelModern
         bool hoveredWindow = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
         bool allowHotkeys = (focusedDock || hoveredWindow) && !io.WantTextInput;
         
-        // === Hotkeys ===
-        if (allowHotkeys)
+        // === Hotkeys (Edit Mode only) ===
+        if (allowHotkeys && !_isInPlayMode)
         {
             _toolbar.ProcessHotkeys();
             if (ImGui.IsKeyPressed(ImGuiKey.F)) Renderer?.FrameSelection();
         }
-        
-        // === Apply toolbar state to renderer ===
-        if (Renderer != null)
+
+        // === Apply toolbar state to renderer (Edit Mode only) ===
+        if (Renderer != null && !_isInPlayMode)
         {
             Renderer.SetMode(_toolbar.CurrentMode);
             Renderer.SetSpaceLocal(_toolbar.LocalSpace);
@@ -211,9 +274,30 @@ public class ViewportPanelModern
         int w = Math.Max(1, (int)avail.X);
         int h = Math.Max(1, (int)avail.Y);
         Renderer?.Resize(w, h);
-        
-        HandleCameraInput(hoveredWindow, io);
-        
+
+        // === Camera Handling ===
+        if (_isInPlayMode)
+        {
+            // PLAY MODE: Use game camera (CameraComponent)
+            var scene = PlayMode.PlayScene;
+            if (scene != null && Renderer != null)
+            {
+                var camera = GetSelectedCamera(scene);
+                if (camera != null)
+                {
+                    float aspect = (float)w / Math.Max(1, h);
+                    var viewMat = camera.ViewMatrix;
+                    var projMat = camera.ProjectionMatrix(aspect);
+                    Renderer.SetCameraMatrices(viewMat, projMat);
+                }
+            }
+        }
+        else
+        {
+            // EDIT MODE: Use orbital editor camera
+            HandleCameraInput(hoveredWindow, io);
+        }
+
         // === Render Scene ===
         // Render in both Edit and Play modes (PlayMode needs continuous rendering for animations)
         Renderer?.RenderScene();
@@ -250,8 +334,11 @@ public class ViewportPanelModern
         float imgW = itemMax.X - itemMin.X;
         float imgH = itemMax.Y - itemMin.Y;
         
-        // === Handle Input & Selection ===
-        HandleViewportInput(itemMin, itemMax, imgW, imgH, hoveredWindow, io);
+        // === Handle Input & Selection (Edit Mode only) ===
+        if (!_isInPlayMode)
+        {
+            HandleViewportInput(itemMin, itemMax, imgW, imgH, hoveredWindow, io);
+        }
 
         // === Draw Overlays BEFORE End() to avoid clipping ===
         float imgWf = itemMax.X - itemMin.X;
@@ -259,9 +346,18 @@ public class ViewportPanelModern
 
         if (imgWf > 1.0f && imgHf > 1.0f)
         {
-            _toolbar.Draw(itemMin, itemMax, Renderer, _smoothedFrameTime);
-            Editor.UI.SceneStatsOverlay.Draw(itemMin, itemMax, Renderer, _smoothedFrameTime, ref _showSceneStatsOverlay, _overlays, _toolbar);
-            Editor.UI.TriedreOverlay.Draw(itemMin, itemMax, Renderer);
+            if (_isInPlayMode)
+            {
+                // PLAY MODE UI: No overlays needed - play controls are in main toolbar
+                // The user already has Play/Pause/Step/Stop buttons in the editor's main toolbar
+            }
+            else
+            {
+                // EDIT MODE UI: Show edit toolbar and scene overlays
+                _toolbar.Draw(itemMin, itemMax, Renderer, _smoothedFrameTime);
+                Editor.UI.SceneStatsOverlay.Draw(itemMin, itemMax, Renderer, _smoothedFrameTime, ref _showSceneStatsOverlay, _overlays, _toolbar);
+                Editor.UI.TriedreOverlay.Draw(itemMin, itemMax, Renderer);
+            }
         }
 
         // === Context Menu (must be before End) ===
@@ -1054,6 +1150,8 @@ public class ViewportPanelModern
                 else
                     meshRenderer.SetMaterial(Engine.Assets.AssetDatabase.EnsureDefaultWhiteMaterial());
 
+                // NOTE: Must add to scene.Entities for rendering to work
+                // DeleteRecursive() handles proper cleanup
                 Renderer.Scene.Entities.Add(childEntity);
             }
 
@@ -1253,6 +1351,40 @@ public class ViewportPanelModern
             // Calculate a ray from camera through mouse position and place object 10 units away
             return Vector3.Zero; // Fallback to origin for now
         }
+    }
+
+    /// <summary>
+    /// Get the selected camera for Play Mode rendering
+    /// </summary>
+    private Engine.Components.CameraComponent? GetSelectedCamera(Engine.Scene.Scene scene)
+    {
+        // Try explicit selection first
+        if (_selectedCameraEntityId != 0)
+        {
+            var ent = scene.GetById(_selectedCameraEntityId);
+            if (ent != null)
+            {
+                var cam = ent.GetComponent<Engine.Components.CameraComponent>();
+                if (cam != null) return cam;
+            }
+        }
+
+        // Fallback to main camera
+        foreach (var e in scene.Entities)
+        {
+            var cam = e.GetComponent<Engine.Components.CameraComponent>();
+            if (cam == null) continue;
+            if (cam.IsMain) return cam;
+        }
+
+        // Fallback to first active camera
+        foreach (var e in scene.Entities)
+        {
+            var cam = e.GetComponent<Engine.Components.CameraComponent>();
+            if (cam != null) return cam;
+        }
+
+        return null;
     }
 
     /// <summary>

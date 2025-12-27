@@ -304,7 +304,8 @@ namespace Editor
                 Log.Information($"[TransitionManager] Preloaded {preloadCount} material(s)");
 
                 // CENTRALIZED: Clear all material caches to force reload
-                Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
+                // DISABLED FOR DEBUG: Causes 5-7 second freeze
+                // Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
 
                 // Flush pending texture uploads
                 System.Threading.Thread.Sleep(10);
@@ -493,16 +494,9 @@ namespace Editor
 
         private void ActivatePlayMode()
         {
-            // Maximize/focus game panel if options enabled
-            if (Panels.GamePanel.Options.MaximizeOnPlay)
-            {
-                Panels.GamePanel.SetMaximized(true);
-            }
-
-            if (Panels.GamePanel.Options.FocusOnPlay)
-            {
-                Panels.GamePanel.FocusWindow();
-            }
+            // UNIFIED VIEWPORT: No need to maximize/focus - same panel switches to Play Mode
+            // ViewportPanel automatically switches modes via PlayMode.Play() -> SetPlayMode(true)
+            Log.Information("[TransitionManager] Play Mode activated (unified viewport)");
         }
 
         private void FocusSceneViewport()
@@ -596,8 +590,7 @@ namespace Editor
                 // Reset play mode flag
                 Engine.Core.RuntimeEnvironment.IsPlayMode = false;
 
-                // Exit maximized mode
-                Panels.GamePanel.SetMaximized(false);
+                // UNIFIED VIEWPORT: No need to exit maximized - same panel switches back to Edit Mode
             }
             catch (Exception ex)
             {
@@ -609,12 +602,12 @@ namespace Editor
         {
             try
             {
-                // Reload shaders that might have been modified
-                Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
-                Engine.Rendering.ShaderLibrary.ReloadShader("VegetationForward");
+                // UNIFIED VIEWPORT: Shaders remain valid - no need to reload
+                // The same ViewportRenderer persists across PlayMode transitions
+                // Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
+                // Engine.Rendering.ShaderLibrary.ReloadShader("VegetationForward");
 
-                // Reset game panel
-                Panels.GamePanel.ResetForExit();
+                // UNIFIED VIEWPORT: No GamePanel to reset
 
                 // Flush pending texture uploads
                 System.Threading.Thread.Sleep(10);
@@ -622,7 +615,8 @@ namespace Editor
                 if (uploaded > 0)
                 {
                     Log.Information($"[TransitionManager] Flushed {uploaded} textures on exit");
-                    Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
+                    // DISABLED FOR DEBUG: Causes 5-7 second freeze
+                    // Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
                 }
             }
             catch (Exception ex)

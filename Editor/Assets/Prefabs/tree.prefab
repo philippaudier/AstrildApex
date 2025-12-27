@@ -1,14 +1,14 @@
 {
-  "Guid": "4924bdba-8bdb-4e9c-ad35-676111d4f108",
-  "Name": "pine_tree",
+  "Guid": "92c1cb57-ed18-4ef9-83f6-a5e76c77ec7d",
+  "Name": "tree",
   "RootEntity": {
-    "guid": "b6d4b177-68ed-45e1-8c45-a3f610c693a0",
-    "name": "pine_tree",
+    "guid": "7ac6104b-d496-4c69-abfe-88918b1dd8de",
+    "name": "tree",
     "enabled": true,
     "localPosition": [
-      0,
-      0,
-      0
+      227.62923,
+      2269.2043,
+      -450.17123
     ],
     "localRotation": [
       0,
@@ -23,7 +23,7 @@
     "components": {},
     "children": [
       {
-        "guid": "4ab90f75-b094-4697-91af-95a5ac98b626",
+        "guid": "7acc2be4-8edd-4bd6-a251-74648fdf2e9e",
         "name": "Leaves/001_Leavs_0",
         "enabled": true,
         "localPosition": [
@@ -54,7 +54,7 @@
         "children": []
       },
       {
-        "guid": "27580119-91f9-4c1b-abec-0617b9f52ea0",
+        "guid": "d6f63b65-62dd-4925-bdfd-d4efa4fbe188",
         "name": "Trank.001_Trank_0",
         "enabled": true,
         "localPosition": [
@@ -86,7 +86,7 @@
       }
     ]
   },
-  "CreatedAt": "2025-12-21T21:47:00.8567061Z",
-  "ModifiedAt": "2025-12-21T21:47:00.8567063Z",
+  "CreatedAt": "2025-12-27T21:10:32.1056519Z",
+  "ModifiedAt": "2025-12-27T21:10:32.1056521Z",
   "PreviewIconGuid": null
 }

@@ -9,6 +9,8 @@ namespace Engine.Rendering
     {
         // Global cache shared across renderers to avoid reloading materials when multiple renderers exist
     private static readonly System.Collections.Generic.Dictionary<Guid, MaterialRuntime> _globalCache = new();
+    // THREAD SAFETY: Lock for protecting global cache operations
+    private static readonly object _globalCacheLock = new object();
     // Global default used when binding materials. Renderers can override this per-frame if needed.
     public static int DefaultFlipNormalY = 0; // 0 = no flip, 1 = flip
 
@@ -29,7 +31,10 @@ namespace Engine.Rendering
             try
             {
                 // Silently invalidate cache entry for the saved material
-                _globalCache.Remove(guid);
+                lock (_globalCacheLock)
+                {
+                    _globalCache.Remove(guid);
+                }
             }
             catch (Exception ex)
             {
@@ -45,10 +50,13 @@ namespace Engine.Rendering
         {
             try
             {
-                int count = _globalCache.Count;
-                _globalCache.Clear();
-                // PERFORMANCE: Disabled log
-                // Console.WriteLine($"[MaterialRuntime] ✓ Cleared global cache ({count} materials)");
+                lock (_globalCacheLock)
+                {
+                    int count = _globalCache.Count;
+                    _globalCache.Clear();
+                    // PERFORMANCE: Disabled log
+                    // Console.WriteLine($"[MaterialRuntime] ✓ Cleared global cache ({count} materials)");
+                }
             }
             catch (Exception ex)
             {
@@ -64,7 +72,10 @@ namespace Engine.Rendering
         {
             try
             {
-                _globalCache.Remove(guid);
+                lock (_globalCacheLock)
+                {
+                    _globalCache.Remove(guid);
+                }
             }
             catch (Exception ex)
             {
@@ -80,10 +91,14 @@ namespace Engine.Rendering
         {
             try
             {
-                // First invalidate the old entry
-                _globalCache.Remove(guid);
+                lock (_globalCacheLock)
+                {
+                    // First invalidate the old entry
+                    _globalCache.Remove(guid);
+                }
 
                 // Then reload it into the cache with the provided asset
+                // Note: FromAsset has its own lock, so we don't need to hold the lock here
                 Func<Guid, string?> resolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var rec) ? rec.Path : null;
                 var runtime = FromAsset(asset, resolver);
                 // FromAsset already adds it to the cache, so we're done
@@ -134,7 +149,11 @@ namespace Engine.Rendering
         public float TriplanarBlendSharpness = 4.0f; // Controls blend sharpness (1-10, default 4)
 
         public int TransparencyMode = 0; // 0 = Opaque, 1 = Transparent
-        
+
+        // Alpha clipping parameters
+        public int AlphaClippingEnabled = 0; // 0 = off, 1 = on
+        public float AlphaClipThreshold = 0.5f; // 0.0-1.0
+
         // Stylization parameters
         public float Saturation = 1.0f;   // 0.0 = grayscale, 1.0 = normal, >1.0 = oversaturated
         public float Brightness = 1.0f;   // 0.0 = black, 1.0 = normal, >1.0 = brighter
@@ -194,9 +213,12 @@ namespace Engine.Rendering
             // Return cached runtime if available
             if (a != null && a.Guid != Guid.Empty)
             {
-                if (_globalCache.TryGetValue(a.Guid, out var cached))
+                lock (_globalCacheLock)
                 {
-                    return cached;
+                    if (_globalCache.TryGetValue(a.Guid, out var cached))
+                    {
+                        return cached;
+                    }
                 }
             }
             var albedoPath = a?.AlbedoTexture.HasValue == true ? resolvePath(a.AlbedoTexture.Value) : null;
@@ -249,8 +271,10 @@ namespace Engine.Rendering
                 Contrast = a?.Contrast ?? 1.0f,
                 Hue = a?.Hue ?? 0.0f,
                 Emission = a?.Emission ?? 0.0f,
-                
-                TransparencyMode = a?.Guid != Guid.Empty ? 0 : 0 // placeholder, will be set below
+
+                // Alpha clipping parameters
+                AlphaClippingEnabled = a?.AlphaClippingEnabled == true ? 1 : 0,
+                AlphaClipThreshold = a?.AlphaClipThreshold ?? 0.5f
             };
             // Shader name from asset if present
             try { mr.ShaderName = a?.Shader; } catch { mr.ShaderName = null; }
@@ -337,14 +361,7 @@ namespace Engine.Rendering
             }
             catch { }
             // Determine transparency mode from asset if available
-            try
-            {
-                mr.TransparencyMode = a != null ? a.GetType().GetProperty("TransparencyMode")?.GetValue(a) is int tm ? tm : 0 : 0;
-            }
-            catch
-            {
-                mr.TransparencyMode = 0;
-            }
+            mr.TransparencyMode = a?.TransparencyMode ?? 0;
 
             // Load glass properties if present
             try
@@ -363,8 +380,11 @@ namespace Engine.Rendering
                     mr.GlassFresnelPower = g.FresnelPower;
                     mr.GlassReflectionStrength = g.ReflectionStrength;
 
-                    // Force transparency mode for glass materials
-                    mr.TransparencyMode = 1;
+                    // Force transparency mode ONLY for materials actually using the Glass shader
+                    if (string.Equals(a?.Shader, "Glass", StringComparison.OrdinalIgnoreCase))
+                    {
+                        mr.TransparencyMode = 1;
+                    }
                 }
             }
             catch { }
@@ -433,7 +453,10 @@ namespace Engine.Rendering
             {
                 if (a != null && a.Guid != Guid.Empty)
                 {
-                    _globalCache[a.Guid] = mr;
+                    lock (_globalCacheLock)
+                    {
+                        _globalCache[a.Guid] = mr;
+                    }
                     // PERFORMANCE: Disabled per-frame cache logs
                     // Console.WriteLine($"[MaterialRuntime] Cached new material {a.Name ?? a.Guid.ToString()} - AlbedoTex={mr.AlbedoTex}, NormalTex={mr.NormalTex}");
                 }
@@ -538,7 +561,11 @@ namespace Engine.Rendering
             sh.SetFloat("u_TriplanarBlendSharpness", TriplanarBlendSharpness);
 
             sh.SetInt("u_TransparencyMode", TransparencyMode);
-            
+
+            // Alpha clipping parameters
+            sh.SetInt("u_AlphaClippingEnabled", AlphaClippingEnabled);
+            sh.SetFloat("u_AlphaClipThreshold", AlphaClipThreshold);
+
             // Stylization parameters
             sh.SetFloat("u_Saturation", Saturation);
             sh.SetFloat("u_Brightness", Brightness);
@@ -819,6 +846,10 @@ namespace Engine.Rendering
                 }
             }
             catch { }
+
+            // FIX C4: CRITICAL - Reset active texture unit to 0 to avoid state pollution
+            // This prevents texture binding conflicts in subsequent render calls
+            GL.ActiveTexture(TextureUnit.Texture0);
         }
     }
 }

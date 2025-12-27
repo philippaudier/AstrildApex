@@ -15,7 +15,8 @@ uniform float u_SnowSlopeMin;      // Min slope for snow placement (degrees)
 uniform float u_SnowSlopeMax;      // Max slope for snow placement (degrees)
 
 out vec3 v_WorldPos;
-out vec3 v_Normal;
+out vec3 v_Normal;           // CRITICAL: Original normal for layer blending
+out vec3 v_NormalSmoothed;  // Snow-smoothed normal for lighting only
 out vec2 v_TexCoord;
 
 // Calculate snow placement based on surface angle (same as fragment shader)
@@ -49,13 +50,14 @@ void main()
     // Displace vertex upward along world Y-axis
     worldPos.y += displacementAmount;
 
-    // Smooth normals for rounded snow edges
-    // Blend normal towards up vector based on snow amount
+    // CRITICAL FIX: Keep original normal for layer blending (slope calculation)
+    // Only smooth normals for snow lighting effects
     float normalSmoothFactor = clamp(snowAmount * 0.3, 0.0, 0.7);
     vec3 smoothedNormal = normalize(mix(worldNormal, vec3(0, 1, 0), normalSmoothFactor));
 
     v_WorldPos = worldPos.xyz;
-    v_Normal = smoothedNormal;
+    v_Normal = worldNormal;        // Original normal for layer slope calculation
+    v_NormalSmoothed = smoothedNormal;  // Smoothed normal for snow lighting
     v_TexCoord = a_TexCoord;
     gl_Position = u_Projection * u_View * worldPos;
 }

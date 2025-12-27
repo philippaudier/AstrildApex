@@ -21,9 +21,9 @@ public static class EditorUI
     private static UITheme UI => ThemeManager.UI;
 
     // Panel instances
-    // Using the modern ViewportPanel for iterative work
+    // Using the modern ViewportPanel for iterative work (handles both Edit and Play modes)
     public static ViewportPanelModern MainViewport = new ViewportPanelModern();
-    public static AstrildApex.Editor.UI.GamePanelModern GamePanelModern = new AstrildApex.Editor.UI.GamePanelModern();
+    // REMOVED: GamePanelModern - ViewportPanelModern now handles both Edit and Play modes
     public static PreferencesWindow Preferences = new PreferencesWindow();
     public static AudioMixerPanel AudioMixer = new AudioMixerPanel();
     //private static int _debugFrameCounter = 0;
@@ -551,7 +551,8 @@ public static class EditorUI
         if (ShowRenderingSettings) { PanelProfiler.BeginPanel("RenderingSettings"); RenderingSettingsPanel.Draw(); PanelProfiler.EndPanel("RenderingSettings"); }
         if (ShowAssets) { PanelProfiler.BeginPanel("Assets"); AssetsPanel.Draw(); PanelProfiler.EndPanel("Assets"); }
         if (ShowConsole) { PanelProfiler.BeginPanel("Console"); ConsolePanel.Draw(); PanelProfiler.EndPanel("Console"); }
-        if (ShowGame) { PanelProfiler.BeginPanel("Game"); GamePanel.Draw(); PanelProfiler.EndPanel("Game"); }
+        // REMOVED: GamePanel is now integrated into ViewportPanelModern (switches between Edit/Play modes)
+        // if (ShowGame) { PanelProfiler.BeginPanel("Game"); GamePanel.Draw(); PanelProfiler.EndPanel("Game"); }
         if (ShowAudioMixer) { PanelProfiler.BeginPanel("AudioMixer"); AudioMixer.Draw(); PanelProfiler.EndPanel("AudioMixer"); }
 
         PanelProfiler.BeginPanel("Viewport");

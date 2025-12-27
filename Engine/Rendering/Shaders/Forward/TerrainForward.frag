@@ -9,7 +9,8 @@
 #define MAX_LAYERS 8
 
 in vec3 v_WorldPos;
-in vec3 v_Normal;
+in vec3 v_Normal;           // CRITICAL: Original normal for layer blending
+in vec3 v_NormalSmoothed;  // Snow-smoothed normal for lighting
 in vec2 v_TexCoord;
 
 layout(location=0) out vec4 FragColor;
@@ -74,27 +75,61 @@ uniform float u_SnowRoughness;
 uniform vec2 u_SnowTextureTiling;
 uniform float u_SnowNormalStrength;
 
-float computeSlopeNormalized(vec3 N)
+// UNIFIED SLOPE SYSTEM: Calculate slope angle in DEGREES (0=horizontal, 90=vertical)
+// This matches the snow system and makes layer configuration intuitive
+float computeSlopeDegrees(vec3 N)
 {
     vec3 up = vec3(0.0, 1.0, 0.0);
-    float dotp = dot(normalize(N), up);
-    float slope = clamp(1.0 - dotp, 0.0, 1.0);
-    return slope;
+    float dotProduct = dot(normalize(N), up);
+    // acos(dot) gives angle from vertical, so we need to invert
+    // acos(1.0) = 0deg (pointing up) -> we want 0deg slope
+    // acos(0.0) = 90deg (horizontal) -> we want 90deg slope
+    float angleFromVertical = acos(clamp(dotProduct, -1.0, 1.0));
+    float slopeDegrees = degrees(angleFromVertical);
+    return slopeDegrees;
 }
 
-float inRangeSmooth(float v, float a, float b)
+// UNIFIED: Range check with smooth blend for DEGREES (uses 5° fade width like snow)
+float inRangeSmoothDegrees(float slopeDeg, float minDeg, float maxDeg)
 {
-    if (b <= a)
+    if (slopeDeg < minDeg || slopeDeg > maxDeg)
+        return 0.0;
+
+    float fadeWidth = 5.0; // 5 degrees fade, consistent with snow system
+
+    // CRITICAL FIX: Fade in from min slope ONLY if minDeg > 0
+    // At minDeg = 0 (perfectly flat), we want full coverage, not fade in from nothing!
+    float fadeIn = 1.0;
+    if (minDeg > 0.01 && slopeDeg < minDeg + fadeWidth)
     {
-        float dist = abs(v - a);
+        fadeIn = smoothstep(minDeg, minDeg + fadeWidth, slopeDeg);
+    }
+
+    // CRITICAL FIX: Fade out at max slope ONLY if maxDeg < 90
+    // At maxDeg = 90 (vertical), we want full coverage, not fade out to nothing!
+    float fadeOut = 1.0;
+    if (maxDeg < 89.99 && slopeDeg > maxDeg - fadeWidth)
+    {
+        fadeOut = 1.0 - smoothstep(maxDeg - fadeWidth, maxDeg, slopeDeg);
+    }
+
+    return fadeIn * fadeOut;
+}
+
+// Range check for HEIGHT (world units) - keeps original behavior
+float inRangeSmoothHeight(float height, float minHeight, float maxHeight)
+{
+    if (maxHeight <= minHeight)
+    {
+        float dist = abs(height - minHeight);
         return step(dist, 0.01);
     }
 
-    float rangeWidth = b - a;
+    float rangeWidth = maxHeight - minHeight;
     float blendWidth = rangeWidth * 0.1;
 
-    float fadeIn = smoothstep(a - blendWidth, a, v);
-    float fadeOut = 1.0 - smoothstep(b, b + blendWidth, v);
+    float fadeIn = smoothstep(minHeight - blendWidth, minHeight, height);
+    float fadeOut = 1.0 - smoothstep(maxHeight, maxHeight + blendWidth, height);
 
     return fadeIn * fadeOut;
 }
@@ -151,8 +186,8 @@ float calculateSnowSparkle(vec3 worldPos, vec3 normal, vec3 viewDir, float spark
 
     // Create random micro-facet normal for this sparkle crystal
     // Each ice crystal has a random orientation
-    float theta = random1 * 6.28318; // Random angle around normal (0-360°)
-    float phi = acos(1.0 - random2 * 0.5); // Random tilt (0-60°)
+    float theta = random1 * 6.28318; // Random angle around normal (0-360deg)
+    float phi = acos(1.0 - random2 * 0.5); // Random tilt (0-60deg)
 
     vec3 tangent = normalize(cross(N, vec3(0.0, 1.0, 0.0)));
     if (length(tangent) < 0.1) tangent = normalize(cross(N, vec3(1.0, 0.0, 0.0)));
@@ -194,7 +229,8 @@ void main()
     }
 
     float height = v_WorldPos.y;
-    float slope = computeSlopeNormalized(v_Normal);
+    float slopeDegrees = computeSlopeDegrees(v_Normal); // UNIFIED: Now in degrees (0-90)
+    slopeDegrees = clamp(slopeDegrees, 0.0, 90.0); // FIX: Clamp to valid range to avoid fallback zones
 
     vec3 accumColor = vec3(0.0);
     vec3 accumNormal = vec3(0.0);
@@ -232,8 +268,8 @@ void main()
             {
                 float waterLevel = u_LayerUnderwaterParams[i].x;
                 float blendDist = u_LayerUnderwaterParams[i].y;
-                float slopeMinNorm = u_LayerUnderwaterParams[i].z;
-                float slopeMaxNorm = u_LayerUnderwaterParams[i].w;
+                float slopeMinDeg = u_LayerUnderwaterParams[i].z; // UNIFIED: Now in degrees
+                float slopeMaxDeg = u_LayerUnderwaterParams[i].w; // UNIFIED: Now in degrees
 
                 float heightWeight = 0.0;
                 if (height <= waterLevel)
@@ -249,17 +285,17 @@ void main()
                     }
                 }
 
-                float slopeWeight = inRangeSmooth(slope, slopeMinNorm, slopeMaxNorm);
+                float slopeWeight = inRangeSmoothDegrees(slopeDegrees, slopeMinDeg, slopeMaxDeg); // UNIFIED: degrees
                 weight = heightWeight * slopeWeight;
             }
             else
             {
                 float hmin = u_LayerHeightSlope[i].x;
                 float hmax = u_LayerHeightSlope[i].y;
-                float smin = u_LayerHeightSlope[i].z;
-                float smax = u_LayerHeightSlope[i].w;
-                float wh = inRangeSmooth(height, hmin, hmax);
-                float ws = inRangeSmooth(slope, smin, smax);
+                float sminDeg = u_LayerHeightSlope[i].z; // UNIFIED: Now in degrees (NOT normalized)
+                float smaxDeg = u_LayerHeightSlope[i].w; // UNIFIED: Now in degrees (NOT normalized)
+                float wh = inRangeSmoothHeight(height, hmin, hmax);
+                float ws = inRangeSmoothDegrees(slopeDegrees, sminDeg, smaxDeg); // UNIFIED: degrees
                 weight = wh * ws * u_LayerStrength[i];
             }
 
@@ -546,6 +582,14 @@ void main()
             FragColor = vec4(1.0, 0.0, 0.0, 1.0);
         else
             FragColor = vec4(0.0, 0.0, 1.0, 1.0);
+    }
+    else if (u_DebugFaceColor == 2)
+    {
+        // DEBUG: Visualize slope in degrees (0-90)
+        // 0 deg = blue (flat), 45 deg = green, 90 deg = red (vertical)
+        float normalizedSlope = slopeDegrees / 90.0;
+        vec3 debugColor = vec3(normalizedSlope, 1.0 - abs(normalizedSlope - 0.5) * 2.0, 1.0 - normalizedSlope);
+        FragColor = vec4(debugColor, 1.0);
     }
     else
     {

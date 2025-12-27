@@ -270,19 +270,9 @@ void main() {
     if (u_AlphaClippingEnabled == 1) {
         vec4 albedoSample;
         if (u_UseTriplanar == 1) {
-            vec3 bw = abs(normalize(vNormal));
-            bw = pow(bw, vec3(u_TriplanarBlendSharpness));
-            bw /= (bw.x + bw.y + bw.z);
-            vec2 uvX = vWorldPos.yz * u_TriplanarScale;
-            vec2 uvY = vWorldPos.xz * u_TriplanarScale;
-            vec2 uvZ = vWorldPos.xy * u_TriplanarScale;
-            vec4 sampX = texture(u_AlbedoTex, uvX);
-            vec4 sampY = texture(u_AlbedoTex, uvY);
-            vec4 sampZ = texture(u_AlbedoTex, uvZ);
-            albedoSample = sampX * bw.x + sampY * bw.y + sampZ * bw.z;
+            albedoSample = SampleTriplanarRGBA(u_AlbedoTex, vWorldPos, normalize(vNormal), u_TriplanarScale, u_TriplanarBlendSharpness);
         } else {
-            vec2 uv = vUV * u_TextureTiling + u_TextureOffset;
-            albedoSample = texture(u_AlbedoTex, uv);
+            albedoSample = texture(u_AlbedoTex, vUV);  // vUV already has tiling/offset from vertex shader
         }
 
         float textureAlpha = albedoSample.a;
@@ -293,7 +283,7 @@ void main() {
     
     // Handle triplanar mapping if enabled (EXACTLY like ForwardBase)
     vec3 baseNormal = normalize(vNormal);
-    vec3 sampledAlbedo;
+    vec4 sampledAlbedoAlpha;
     vec3 sampledNormal;
     vec2 effectiveUV;
 
@@ -305,19 +295,18 @@ void main() {
     bool hasEmissiveTex = textureSize(u_EmissiveTex, 0) != ivec2(1, 1);
 
     if (u_UseTriplanar == 1) {
-        sampledAlbedo = SampleTriplanarColor(u_AlbedoTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness);
+        sampledAlbedoAlpha = SampleTriplanarRGBA(u_AlbedoTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness);
         sampledNormal = SampleTriplanarNormalMap(u_NormalTex, vWorldPos, baseNormal, u_TriplanarScale, u_TriplanarBlendSharpness) * u_NormalStrength;
         effectiveUV = vUV;
     } else {
-        vec2 uv = vUV * u_TextureTiling + u_TextureOffset;
-        sampledAlbedo = texture(u_AlbedoTex, uv).rgb;
-        sampledNormal = sampleNormalMap(u_NormalTex, uv, u_NormalStrength, baseNormal);
-        effectiveUV = uv;
+        sampledAlbedoAlpha = texture(u_AlbedoTex, vUV);  // vUV already has tiling/offset from vertex shader
+        sampledNormal = sampleNormalMap(u_NormalTex, vUV, u_NormalStrength, baseNormal);
+        effectiveUV = vUV;
     }
 
     // Create material properties manually
     MaterialProperties material;
-    material.baseColor = sampledAlbedo * u_AlbedoColor.rgb;
+    material.baseColor = sampledAlbedoAlpha.rgb * u_AlbedoColor.rgb;
     material.normal = (u_UseTriplanar == 1) ? normalize(baseNormal + sampledNormal * 0.1) : sampledNormal;
 
     // Sample metallic and roughness (EXACTLY like ForwardBase)
@@ -468,9 +457,8 @@ void main() {
     // Handle transparency
     float outAlpha = 1.0;
     if (u_TransparencyMode != 0) {
-        vec2 uv = vUV * u_TextureTiling + u_TextureOffset;
-        float texAlpha = texture(u_AlbedoTex, uv).a;
-        outAlpha = saturate(texAlpha * u_AlbedoColor.a);
+        // Use the alpha we already sampled earlier (supports both triplanar and standard UVs)
+        outAlpha = saturate(sampledAlbedoAlpha.a * u_AlbedoColor.a);
     }
 
     outColor = vec4(color, outAlpha);

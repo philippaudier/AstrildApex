@@ -131,7 +131,7 @@ namespace Editor.SceneManagement
 
             // Clear GL framebuffers to avoid showing stale render data
             try { rendererToUse?.ClearFramebuffers(); } catch { }
-            try { GamePanel.ClearFramebuffers(); } catch { }
+            // UNIFIED VIEWPORT: GamePanel removed - ViewportPanel handles both modes
 
             // Reset selection/state
             Selection.ActiveEntityId = 0;

@@ -974,6 +974,24 @@ namespace Editor.Panels
                     ImGui.EndMenu();
                 }
 
+                // Audio category
+                if (ImGui.BeginMenu("Audio"))
+                {
+                    if (ImGui.MenuItem("Audio Source") && !entity.HasComponent<Engine.Audio.Components.AudioSource>())
+                    {
+                        entity.AddComponent<Engine.Audio.Components.AudioSource>();
+                        InvalidateComponentCache();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    if (ImGui.MenuItem("Audio Listener") && !entity.HasComponent<Engine.Audio.Components.AudioListenerComponent>())
+                    {
+                        entity.AddComponent<Engine.Audio.Components.AudioListenerComponent>();
+                        InvalidateComponentCache();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    ImGui.EndMenu();
+                }
+
                 // UI category
                 if (ImGui.BeginMenu("UI"))
                 {

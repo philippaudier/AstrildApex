@@ -99,6 +99,17 @@ namespace Editor
                 Engine.Utils.DebugLogger.Log($"[PlayMode] Switched viewport to play scene with {_playScene.Entities.Count} entities");
             }
 
+            // NEW: Switch ViewportPanel to Play Mode
+            try
+            {
+                EditorUI.MainViewport.SetPlayMode(true);
+                Engine.Utils.DebugLogger.Log("[PlayMode] ViewportPanel switched to Play Mode");
+            }
+            catch (Exception ex)
+            {
+                LogManager.LogWarning($"Failed to switch ViewportPanel to Play Mode: {ex.Message}", "PlayMode");
+            }
+
             // Clear component cache and rebuild for Play Mode
             _cachedComponentsByEntity.Clear();
             if (_playScene != null)
@@ -152,16 +163,6 @@ namespace Editor
 
             Engine.Utils.DebugLogger.Log("[PlayMode] Stopping Play Mode...");
 
-            // Reset GamePanel cursor state before transition
-            try
-            {
-                Panels.GamePanel.ResetCursorState();
-            }
-            catch (Exception ex)
-            {
-                Engine.Utils.DebugLogger.Log($"[PlayMode] Warning: Failed to reset cursor state: {ex.Message}");
-            }
-
             // Use the robust transition manager for exiting Play Mode
             var result = _transitionManager.ExitPlayMode();
 
@@ -182,6 +183,17 @@ namespace Editor
             else
             {
                 LogManager.LogWarning("Original scene was null or viewport renderer not available - cannot restore!", "PlayMode");
+            }
+
+            // NEW: Switch ViewportPanel back to Edit Mode
+            try
+            {
+                EditorUI.MainViewport.SetPlayMode(false);
+                Engine.Utils.DebugLogger.Log("[PlayMode] ViewportPanel switched to Edit Mode");
+            }
+            catch (Exception ex)
+            {
+                LogManager.LogWarning($"Failed to switch ViewportPanel to Edit Mode: {ex.Message}", "PlayMode");
             }
 
             // Clear local state

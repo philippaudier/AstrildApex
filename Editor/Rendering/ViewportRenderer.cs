@@ -35,6 +35,9 @@ namespace Editor.Rendering
         private static int _instanceCount = 0;
         public static int InstanceCount => _instanceCount;
 
+        // FIX C8: Dispose guard to prevent double-disposal
+        private bool _isDisposed = false;
+
     // One-shot SSAO debug coordination is handled by ViewportRendererTypeSafeHelpers
 
         // Minimal UI renderer instance (mirrors GameRenderer behavior)
@@ -490,6 +493,11 @@ namespace Editor.Rendering
         {
             _scene = scene ?? throw new ArgumentNullException(nameof(scene));
 
+            // CRITICAL: Clear terrain subscriptions when changing scene
+            // This prevents old terrains from the previous scene (e.g., playScene) from staying subscribed
+            // which caused terrains to disappear when exiting Play Mode
+            _subscribedTerrains.Clear();
+
             // CRITICAL: Initialize WeatherManager from scene's WeatherComponent
             // This ensures weather parameters are available from the moment the scene loads
             try
@@ -811,6 +819,10 @@ namespace Editor.Rendering
     private int _legacyQuadVao, _legacyQuadVbo, _legacyQuadEbo;
 
     private int _sphereIndexCount = 0, _capsuleIndexCount = 0, _planeIndexCount = 0, _quadIndexCount = 0;
+
+    // Fullscreen quad for post-processing (NDC coordinates -1 to 1)
+    private int _fullscreenQuadVao = 0, _fullscreenQuadVbo = 0, _fullscreenQuadEbo = 0;
+    private int _fullscreenQuadIndexCount = 0;
         
         // === Light icon geometry ===
         private int _lightIconVao, _lightIconVbo, _lightIconEbo;
@@ -1040,6 +1052,7 @@ namespace Editor.Rendering
 
         // Terrain Renderer
         private Engine.Rendering.Terrain.TerrainRenderer? _terrainRenderer = null;
+        public Engine.Rendering.Terrain.TerrainRenderer? TerrainRenderer => _terrainRenderer;
 
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
@@ -1721,6 +1734,7 @@ void main(){
             // Initialize modern (PBR) meshes (pos+normal+uv)
             CreateModernPlaneXZ();
             CreateModernQuadXY();
+            CreateFullscreenQuad(); // NDC fullscreen quad for post-processing
             CreateModernSphere(32, 64);  // Increased from (16, 24) for smoother SSAO
             CreateModernCapsule(24, 32); // Increased from (12, 16) for smoother geometry
 
@@ -2050,6 +2064,36 @@ void main(){
             GL.BindBuffer(BufferTarget.ArrayBuffer, _quadVbo);
             GL.BufferData(BufferTarget.ArrayBuffer, verts.Length * sizeof(float), verts, BufferUsageHint.StaticDraw);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _quadEbo);
+            GL.BufferData(BufferTarget.ElementArrayBuffer, idx.Length * sizeof(uint), idx, BufferUsageHint.StaticDraw);
+            int stride = 8 * sizeof(float);
+            GL.EnableVertexAttribArray(0);
+            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, 0);
+            GL.EnableVertexAttribArray(1);
+            GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+            GL.EnableVertexAttribArray(2);
+            GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        }
+
+        private void CreateFullscreenQuad()
+        {
+            // Fullscreen quad in NDC coordinates (-1 to 1) for post-processing
+            // pos(3)+normal(3)+uv(2) to match _gfxShader layout
+            float[] verts = new float[]
+            {
+                -1f,-1f,0f, 0f,0f,1f, 0f,0f,  // bottom-left
+                 1f,-1f,0f, 0f,0f,1f, 1f,0f,  // bottom-right
+                 1f, 1f,0f, 0f,0f,1f, 1f,1f,  // top-right
+                -1f, 1f,0f, 0f,0f,1f, 0f,1f,  // top-left
+            };
+            uint[] idx = new uint[] { 0,1,2, 0,2,3 };
+            _fullscreenQuadIndexCount = idx.Length;
+            _fullscreenQuadVao = GL.GenVertexArray();
+            _fullscreenQuadVbo = GL.GenBuffer();
+            _fullscreenQuadEbo = GL.GenBuffer();
+            GL.BindVertexArray(_fullscreenQuadVao);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, _fullscreenQuadVbo);
+            GL.BufferData(BufferTarget.ArrayBuffer, verts.Length * sizeof(float), verts, BufferUsageHint.StaticDraw);
+            GL.BindBuffer(BufferTarget.ElementArrayBuffer, _fullscreenQuadEbo);
             GL.BufferData(BufferTarget.ElementArrayBuffer, idx.Length * sizeof(uint), idx, BufferUsageHint.StaticDraw);
             int stride = 8 * sizeof(float);
             GL.EnableVertexAttribArray(0);
@@ -2839,7 +2883,21 @@ void main(){
             }
             else
             {
+                // Check what FBO is currently bound before we bind _fbo
+                // int[] currentDrawFbo = new int[1];
+                // GL.GetInteger(GetPName.DrawFramebufferBinding, currentDrawFbo);
+                // Console.WriteLine($"[DEBUG FRAME START] Current DrawFBO before bind: {currentDrawFbo[0]}, about to bind _fbo={_fbo}");
+
                 GL.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+
+                // Verify it was bound
+                // GL.GetInteger(GetPName.DrawFramebufferBinding, currentDrawFbo);
+                // Console.WriteLine($"[DEBUG FRAME START] DrawFBO after bind: {currentDrawFbo[0]}");
+
+                // Check DrawBuffers state (CRITICAL: must be ColorAttachment0 + ColorAttachment1 for _fbo)
+                // int drawBuffer0 = GL.GetInteger(GetPName.DrawBuffer0);
+                // int drawBuffer1 = GL.GetInteger(GetPName.DrawBuffer1);
+                // Console.WriteLine($"[DEBUG FRAME START] DrawBuffers: [0]={drawBuffer0} (expect {(int)DrawBuffersEnum.ColorAttachment0}=36064), [1]={drawBuffer1} (expect {(int)DrawBuffersEnum.ColorAttachment1}=36065)");
             }
             // Finalize a limited number of pending texture uploads prepared by TextureCache background loader.
             // This must run on the GL thread/context so GL texture handles can be created.
@@ -3104,53 +3162,20 @@ void main(){
             }
 
             // === CAPTURE SCENE FOR GLASS REFRACTION ===
+            // CRITICAL: Apply SSAO BEFORE transparent rendering (if enabled)
+            // This ensures glass can refract the SSAO correctly
+            ApplySSAOBeforeTransparents();
+
             // Capture the complete opaque scene (including vegetation and particles) before rendering transparents
             // This texture will be used by glass shader for refraction
+            // NOTE: _sceneColorTex is already populated by ApplySSAOBeforeTransparents() if SSAO is enabled
+            // If SSAO is disabled, we need to manually copy _colorTex -> _sceneColorTex
+            // Check if _sceneColorTex needs manual copy (SSAO would have already done it)
             if (_sceneColorTex != 0)
             {
-                try
-                {
-                    // CRITICAL: Ensure all rendering commands are finished before copying
-                    GL.Flush();
-
-                    // Determine which framebuffer we're currently rendering to
-                    int sourceFBO = _msaaRenderer != null && _antiAliasingMode.IsMSAA()
-                        ? (int)_msaaRenderer.FramebufferId
-                        : _fbo;
-
-                    // Create a temporary FBO with _sceneColorTex as color attachment for blitting
-                    int tempFBO = GL.GenFramebuffer();
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, tempFBO);
-                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
-                        TextureTarget.Texture2D, _sceneColorTex, 0);
-
-                    // Blit from source FBO to temp FBO (this resolves MSAA if needed)
-                    GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, sourceFBO);
-                    GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, tempFBO);
-                    GL.BlitFramebuffer(
-                        0, 0, _w, _h,  // src rect
-                        0, 0, _w, _h,  // dst rect
-                        ClearBufferMask.ColorBufferBit,
-                        BlitFramebufferFilter.Linear
-                    );
-
-                    // Cleanup temp FBO (texture remains intact)
-                    GL.DeleteFramebuffer(tempFBO);
-
-                    // Restore original framebuffer for transparent rendering
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, sourceFBO);
-
-                    // Bind scene color texture to unit 19 for glass shader refraction
-                    GL.ActiveTexture(TextureUnit.Texture19);
-                    GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
-
-                    if (Engine.Utils.DebugLogger.EnableVerbose)
-                        LogManager.LogVerbose($"Scene captured for glass refraction: {_w}x{_h}, sourceFBO={sourceFBO}", "ViewportRenderer");
-                }
-                catch (Exception ex2)
-                {
-                    LogManager.LogWarning($"Failed to capture scene for glass refraction: {ex2.Message}", "ViewportRenderer");
-                }
+                // Bind scene color texture to unit 19 for glass shader refraction
+                GL.ActiveTexture(TextureUnit.Texture19);
+                GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
             }
 
             // === QUEUE 3000: TRANSPARENT RENDERING ===
@@ -3430,7 +3455,7 @@ void main(){
     }
 
     // ===================== SELECTION OUTLINE =====================
-    private void RenderSelectionOutline()
+    private void RenderSelectionOutline(int colorTexture)
         {
             if (_outlineRenderer == null || Scene == null) return;
 
@@ -3477,17 +3502,24 @@ void main(){
                     catch { }
                 }
 
-                // Render outline into _postFbo2 (reading from _postTex, writing to _postTex2)
-                // We must use ping-pong buffers to avoid read/write conflicts
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
+                // Choose destination framebuffer: prefer _postFbo2 (ping-pong) when available,
+                // otherwise render into _postFbo (so the final `ColorTexture` is updated).
+                // Avoid rendering directly to default framebuffer (0) because the UI displays
+                // the renderer's texture (`Renderer.ColorTexture`) and drawing to 0 would
+                // leave that texture stale (causing the frozen-frame symptom).
+                int destFbo = (_postFbo2 != 0) ? _postFbo2 : ((_postFbo != 0) ? _postFbo : _fbo);
+
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, destFbo);
+                var db = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0 };
+                GL.DrawBuffers(db.Length, db);
                 GL.Viewport(0, 0, _w, _h);
 
-                // Render outline using _postTex (color) and _idTex (entity IDs)
+                // Render outline using the provided colorTexture (color) and _idTex (entity IDs)
                 float time = (float)System.DateTime.Now.TimeOfDay.TotalSeconds;
-                _outlineRenderer.RenderOutline(_postTex, _idTex, selectedId, _w, _h, settings, time);
+                _outlineRenderer.RenderOutline(colorTexture, _idTex, selectedId, _w, _h, settings, time);
 
-                // Restore state
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
+                // Restore state: unbind to default (RenderScene will rebind _fbo at next frame start)
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
             }
             catch (Exception ex)
             {
@@ -4999,7 +5031,10 @@ void main(){
         /// </summary>
         private void RenderTerrain()
         {
-            if (_scene?.Entities == null) return;
+            if (_scene?.Entities == null)
+            {
+                return;
+            }
 
             // Initialize terrain renderer if needed
             if (_terrainRenderer == null)
@@ -5592,12 +5627,19 @@ void main(){
                 }
 
                 // Also render opaque objects when SSAO is disabled
+                // CRITICAL FIX: Ensure blending is DISABLED for opaque objects
+                GL.Disable(EnableCap.Blend);
+                GL.DepthMask(true);
+
                 lastBound = Guid.Empty;
                 Engine.Rendering.ShaderProgram? lastShader2 = null;
                 for (int idx = 0; idx < items.Count; )
                 {
                     var item = items[idx];
                     bool isTransparent = item.MaterialRuntime != null && item.MaterialRuntime.TransparencyMode != 0;
+
+                    // Debug logging removed: avoid expensive per-frame console output
+
                     if (isTransparent) { idx++; continue; }
 
                     var matGuid = item.MaterialGuid;
@@ -5615,8 +5657,11 @@ void main(){
                         try
                         {
                             var asset = Engine.Assets.AssetDatabase.LoadMaterial(matGuid);
+
                             Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
                             mr = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
+
+                            // Removed verbose diagnostic logs to avoid high-frequency console spam
                         }
                         catch
                         {
@@ -8257,6 +8302,11 @@ void main(){
                 // AssetDatabase cache must be updated so LoadMaterial() returns the fresh values
                 // Otherwise renderers (VegetationRenderer, TerrainRenderer) that call LoadMaterial()
                 // will get stale cached values and overwrite the changes!
+
+                // CRITICAL FIX: First INVALIDATE the cache completely to avoid race conditions
+                Engine.Rendering.MaterialRuntime.InvalidateCacheEntry(materialGuid);
+
+                // Then update with new values
                 Engine.Assets.AssetDatabase.UpdateMaterialCache(materialGuid, mat);
                 Engine.Rendering.MaterialRuntime.UpdateCacheEntry(materialGuid, mat);
 
@@ -8266,6 +8316,9 @@ void main(){
                     _terrainRenderer?.UpdateMaterialCache(materialGuid, mat);
                 }
                 catch { }
+
+                // Note: VegetationRenderer uses MaterialRuntime global cache (already updated above)
+                // No need to update a local cache as it doesn't have one
 
                 // Force material rebind on next frame to apply changes
                 _forceMaterialRebind = true;
@@ -8337,6 +8390,11 @@ void main(){
 
         public void Dispose()
         {
+            // FIX C8: Guard against double-disposal
+            if (_isDisposed)
+                return;
+            _isDisposed = true;
+
             // Scene.EntityTransformChanged -= OnEntityTransformChanged;
 
             // Unsubscribe from material changes
@@ -8602,39 +8660,57 @@ void main(){
                     }
                 }
 
-                // When no effects are active, copy _colorTex to _postFbo using BlitFramebuffer
-                // (faster than using a shader for a simple copy)
+                // When no effects are active, we still need to copy _colorTex to _postTex
+                // CRITICAL: Use BlitFramebuffer for a guaranteed correct copy
+                // This is important because the outline renderer depends on _postTex being valid
                 if (allEffects.Count == 0)
                 {
-                    if (_postFbo != 0 && _colorTex != 0)
+                    // Console.WriteLine($"[DEBUG] No post-effects, preparing to Blit _fbo → _postFbo");
+                    if (_postFbo != 0 && _colorTex != 0 && _fbo != 0)
                     {
                         try
                         {
-                            // Use glCopyImageSubData for a fast, artifact-free copy
-                            // This is faster than BlitFramebuffer and avoids edge artifacts
-                            GL.CopyImageSubData(
-                                _colorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
-                                _postTex, ImageTarget.Texture2D, 0, 0, 0, 0,
-                                _w, _h, 1
-                            );
-                            _postTexHealthy = true;
-                        }
-                        catch (Exception)
-                        {
-                            // Fallback to blit if CopyImageSubData is not supported
-                            try
+                            // Console.WriteLine($"[DEBUG] Blitting _fbo={_fbo} (_colorTex={_colorTex}) → _postFbo={_postFbo} (_postTex={_postTex})");
+
+                            // DEBUG: Read a pixel from _colorTex to see if it changes between frames
+                            if (Engine.Utils.DebugLogger.EnableVerbose)
                             {
                                 GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
                                 GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
-                                GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
-                                GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
-                                GL.BlitFramebuffer(0, 0, _w, _h, 0, 0, _w, _h, ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
-                                _postTexHealthy = true;
+                                byte[] pixel = new byte[4];
+                                GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, pixel);
+                                Console.WriteLine($"[DEBUG] Center pixel of _colorTex: R={pixel[0]}, G={pixel[1]}, B={pixel[2]} (should change if scene is updating)");
                             }
-                            catch (Exception)
-                            {
-                                _postTexHealthy = false;
-                            }
+
+                            // Use BlitFramebuffer to copy from _fbo (source) to _postFbo (destination)
+                            // Be explicit about which color attachment to copy
+                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+
+                            GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
+                            GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+
+                            GL.BlitFramebuffer(
+                                0, 0, _w, _h,  // source rectangle
+                                0, 0, _w, _h,  // destination rectangle
+                                ClearBufferMask.ColorBufferBit,
+                                BlitFramebufferFilter.Nearest  // use Nearest for exact copy
+                            );
+
+                            // Console.WriteLine($"[DEBUG] Blit complete, checking FBO status...");
+                            var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.DrawFramebuffer);
+                            // Console.WriteLine($"[DEBUG] DrawFramebuffer status: {fboStatus}");
+
+                            // CRITICAL: Restore framebuffer state
+                            // Just unbind to 0 - RenderScene() will rebind _fbo at the start of next frame
+                            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+                            _postTexHealthy = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to blit scene to post buffer: {ex.Message}"); } catch { }
+                            _postTexHealthy = false;
                         }
                     }
                 }
@@ -8744,27 +8820,92 @@ void main(){
                 // === SELECTION OUTLINE POST-PROCESS ===
                 // Render outline AFTER other post-effects so it appears on top and isn't overwritten
                 // IMPORTANT: We check if selection outline should be rendered
-                bool shouldRenderOutline = _postFbo != 0 && _postTex != 0 && _postFbo2 != 0 && 
-                                          _outlineRenderer != null && Scene != null &&
+
+                // Check if outline should be rendered. We no longer require the ping-pong
+                // buffer pair to exist: if they don't, RenderSelectionOutline will draw
+                // directly to the default or available target.
+                bool shouldRenderOutline = _postTex != 0 && _idTex != 0 && _outlineRenderer != null && Scene != null &&
                                           Editor.State.EditorSettings.Outline.Enabled &&
                                           Editor.State.Selection.ActiveEntityId != 0;
-                
+
                 if (shouldRenderOutline)
                 {
-                    // Render outline into _postFbo2 (reading from _postTex, writing to _postTex2)
-                    RenderSelectionOutline();
+                    // Console.WriteLine($"[DEBUG] Rendering outline, _postTex={_postTex}, _postTexHealthy={_postTexHealthy}");
+                    // Ensure we have a safe ping-pong target so RenderSelectionOutline
+                    // can read from `_postTex` and write to a different texture without
+                    // causing read/write feedback (which produces frozen/undefined output).
+                    if (_postFbo2 == 0 || _postTex2 == 0)
+                    {
+                        try
+                        {
+                            // Create postTex2 + postFbo2 lazily (same format as _postTex)
+                            _postTex2 = GL.GenTexture();
+                            GL.BindTexture(TextureTarget.Texture2D, _postTex2);
+                            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba16f, _w, _h, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
 
-                    // PERFORMANCE: Swap texture handles instead of copying pixel data
-                    // This is ~100x faster than BlitFramebuffer or CopyImageSubData
-                    // After swap: _postTex contains the outlined scene, _postTex2 contains the old scene
-                    (_postTex, _postTex2) = (_postTex2, _postTex);
+                            _postFbo2 = GL.GenFramebuffer();
+                            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
+                            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex2, 0);
+                            var status2 = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+                            if (status2 != FramebufferErrorCode.FramebufferComplete)
+                            {
+                                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Warning: lazy post FBO2 incomplete: {status2}");
+                                // If creation failed, clean up
+                                try { GL.DeleteTexture(_postTex2); } catch { }
+                                try { GL.DeleteFramebuffer(_postFbo2); } catch { }
+                                _postTex2 = 0; _postFbo2 = 0;
+                            }
+                            else
+                            {
+                                // Clear the new target
+                                GL.Viewport(0, 0, _w, _h);
+                                GL.ClearColor(0, 0, 0, 0);
+                                GL.Clear(ClearBufferMask.ColorBufferBit);
+                            }
+                            GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                            GL.BindTexture(TextureTarget.Texture2D, 0);
+                        }
+                        catch { _postFbo2 = 0; _postTex2 = 0; }
+                    }
 
-                    // Also swap FBO attachments so they point to the swapped textures
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo);
-                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex, 0);
+                    // Render outline (RenderSelectionOutline will write to _postFbo2 when available)
+                    // Prefer using the raw scene color texture as input to avoid read/write
+                    // feedback when post targets are being ping-ponged.
+                    int srcColor = (_postTex != 0 && _postTexHealthy) ? _postTex : _colorTex;
+                    RenderSelectionOutline(srcColor);
 
-                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _postFbo2);
-                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _postTex2, 0);
+                    // If we have a ping-pong destination (_postFbo2) we still copy it back
+                    // to _postFbo so subsequent code reads the final image from _postTex.
+                    if (_postFbo2 != 0 && _postTex2 != 0)
+                    {
+                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo2);
+                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+
+                        GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
+                        GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+
+                        GL.BlitFramebuffer(
+                            0, 0, _w, _h,  // source rectangle
+                            0, 0, _w, _h,  // destination rectangle
+                            ClearBufferMask.ColorBufferBit,
+                            BlitFramebufferFilter.Nearest
+                        );
+
+                        // Console.WriteLine($"[DEBUG] Outline Blit complete");
+
+                        // Restore default framebuffer binding
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    }
+                    else
+                    {
+                        Console.WriteLine("[DEBUG] Skipping outline blit: no ping-pong buffer available; outline drawn directly to target");
+                        // Nothing else to do - RenderSelectionOutline already drew the outline
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    }
                 }
                 // Note: When no outline is needed, _postTex already contains the final image from post-processing
 
@@ -8802,9 +8943,9 @@ void main(){
                     }
                 }
 
-                // ========== TAA (Temporal Anti-Aliasing) - FINAL STEP ==========
-                // PERFORMANCE-OPTIMIZED: Apply TAA after all other post-processing
-                if (_taaRenderer != null && TAASettings.Enabled && _postTexHealthy && _postTex != 0)
+                // ========== TAA (Temporal Anti-Aliasing) - REMOVED ==========
+                // TAA has been removed in favor of FXAA post-process effect
+                if (false && _taaRenderer != null && TAASettings.Enabled && _postTexHealthy && _postTex != 0)
                 {
                     try
                     {

@@ -37,6 +37,19 @@ void main()
     uint centerId = texture(u_IdTexture, vTexCoord).r;
     uint selectedIdInt = uint(u_SelectedId);
 
+    // === DEBUG MODE: Visualize ID texture ===
+    // Disabled - debug successful, IDs are working correctly
+    // if (centerId == selectedIdInt) {
+    //     FragColor = vec4(1.0, 0.0, 1.0, 1.0); // Magenta = selected object
+    //     return;
+    // } else if (centerId > 0u && centerId < 10000u) {
+    //     FragColor = vec4(0.0, 1.0, 0.0, 1.0); // Green = has an ID
+    //     return;
+    // } else {
+    //     FragColor = vec4(1.0, 0.0, 0.0, 1.0); // Red = no ID
+    //     return;
+    // }
+
     // Skip if selected object is not a valid entity (gizmo, grid, etc.)
     if (!isEntityId(selectedIdInt))
     {

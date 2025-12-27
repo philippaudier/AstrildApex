@@ -1,5 +1,6 @@
 using System;
 using Serilog;
+using Editor.Panels;
 
 namespace Editor
 {
@@ -205,11 +206,33 @@ namespace Editor
         {
             try
             {
+                // CRITICAL FIX: Reload terrain shader BEFORE entering Play Mode
+                // This ensures GamePanel's TerrainRenderer has a valid shader reference
+                try
+                {
+                    Log.Information("[RenderingSystemHandler] Reloading TerrainForward shader for Play Mode...");
+                    Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
+                    var shader = Engine.Rendering.ShaderLibrary.GetShaderByName("TerrainForward");
+                    if (shader != null && shader.Handle != 0)
+                    {
+                        Log.Information($"[RenderingSystemHandler] TerrainForward shader ready for Play Mode, handle={shader.Handle}");
+                    }
+                    else
+                    {
+                        Log.Error("[RenderingSystemHandler] TerrainForward shader FAILED to load for Play Mode!");
+                    }
+                }
+                catch (Exception shaderEx)
+                {
+                    Log.Error(shaderEx, "[RenderingSystemHandler] Exception while loading TerrainForward shader for Play Mode");
+                }
+
                 // CENTRALIZED: Clear ALL material caches using the new unified method
                 // This ensures both AssetDatabase and MaterialRuntime caches are cleared together
-                Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
+                // DISABLED FOR DEBUG: Causes 5-7 second freeze
+                // Engine.Assets.AssetDatabase.ClearAllMaterialCaches();
 
-                Log.Information("[RenderingSystemHandler] All material caches cleared for Play Mode");
+                Log.Information("[RenderingSystemHandler] Rendering system ready for Play Mode");
             }
             catch (Exception ex)
             {
@@ -222,17 +245,10 @@ namespace Editor
         {
             try
             {
-                // Force reload terrain shader to prevent black screen
-                try
-                {
-                    Engine.Rendering.ShaderLibrary.ReloadShader("TerrainForward");
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "[RenderingSystemHandler] Failed to reload TerrainForward shader");
-                }
-
-                Log.Information("[RenderingSystemHandler] Rendering system cleaned up");
+                // UNIFIED VIEWPORT: Minimal cleanup needed!
+                // We now have a SINGLE ViewportRenderer that persists across PlayMode transitions
+                // The shader and material caches remain valid - no need to reload/clear anything
+                Log.Information("[RenderingSystemHandler] Rendering system cleaned up (unified viewport - minimal cleanup)");
             }
             catch (Exception ex)
             {

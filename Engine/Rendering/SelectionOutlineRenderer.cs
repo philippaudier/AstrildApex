@@ -140,19 +140,19 @@ namespace Engine.Rendering
 
             try
             {
-                // Verbose debug: log texture ids, shader and selected id
+                // Verbose debug: log texture ids, shader and selected id (only when verbose logging enabled)
                 if (Engine.Utils.DebugLogger.EnableVerbose)
                 {
                     try
                     {
-                        Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] RenderOutline: shader={_edgeShader}, colorTex={colorTexture}, idTex={idTexture}, selectedId={selectedEntityId}, screen={screenWidth}x{screenHeight}");
-                        // Query texture sizes for additional diagnostics
                         GL.BindTexture(TextureTarget.Texture2D, colorTexture);
                         GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int cW);
                         GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int cH);
                         GL.BindTexture(TextureTarget.Texture2D, idTexture);
                         GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int iW);
                         GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int iH);
+
+                        Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] RenderOutline: shader={_edgeShader}, colorTex={colorTexture}, idTex={idTexture}, selectedId={selectedEntityId}, screen={screenWidth}x{screenHeight}");
                         Engine.Utils.DebugLogger.Log($"[SelectionOutlineRenderer] Textures: color={cW}x{cH}, id={iW}x{iH}");
                     }
                     catch { }
