@@ -217,7 +217,10 @@ public class ViewportPanelModern
         bool focusedDock = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows | ImGuiFocusedFlags.NoPopupHierarchy | ImGuiFocusedFlags.DockHierarchy);
         bool hoveredWindow = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
         bool allowHotkeys = (focusedDock || hoveredWindow) && !io.WantTextInput;
-        
+
+        // Update static focus state for CameraComponent and input systems
+        ViewportPanel.IsWindowFocused = focusedDock || hoveredWindow;
+
         // === Hotkeys (Edit Mode only) ===
         if (allowHotkeys && !_isInPlayMode)
         {

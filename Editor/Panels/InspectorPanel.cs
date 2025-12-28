@@ -792,6 +792,9 @@ namespace Editor.Panels
                 case Engine.Physics.CapsuleCollider capsule:
                     Editor.Inspector.CapsuleColliderInspector.Draw(capsule);
                     break;
+                case Engine.Components.CharacterController characterController:
+                    Editor.Inspector.CharacterControllerInspector.Draw(characterController);
+                    break;
                 case EnvironmentSettings env:
                     DrawEnvironmentSettingsComponent(env);
                     break;
@@ -899,9 +902,9 @@ namespace Editor.Panels
                         InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
-                    if (ImGui.MenuItem("Kinematic Character Controller") && !entity.HasComponent<Engine.Physics.KinematicCharacterController>())
+                    if (ImGui.MenuItem("Character Controller") && !entity.HasComponent<Engine.Components.CharacterController>())
                     {
-                        entity.AddComponent<Engine.Physics.KinematicCharacterController>();
+                        entity.AddComponent<Engine.Components.CharacterController>();
                         InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }

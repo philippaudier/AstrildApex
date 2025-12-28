@@ -6531,31 +6531,42 @@ void main(){
                 bool entitySelected = Editor.State.Selection.Selected.Contains(e.Id) || Editor.State.Selection.ActiveEntityId == e.Id;
                 if (!entitySelected) continue;
 
-                // Physics system removed - collider gizmo drawing disabled
-                // foreach (var comp in e.GetAllComponents())
-                // {
-                //     if (comp is not Engine.Components.Collider col) continue;
-                //     if (!col.Enabled) continue;
-                //
-                //     var colr = new Vector4(0.2f, 1.0f, 1.0f, 1.0f);
-                //     if (col.IsTrigger) colr.W = 0.55f;
-                //
-                //     if (comp is Engine.Components.SphereCollider sc)
-                //     {
-                //         ComputeSphereWorld(sc, out var c, out var r);
-                //         DrawSphereWire(c, r, colr, 32);
-                //     }
-                //     else if (comp is Engine.Components.CapsuleCollider cc)
-                //     {
-                //         ComputeCapsuleWorld(cc, out var c, out var axis, out var r, out var halfHeight);
-                //         DrawCapsuleWire(c, axis, r, halfHeight, colr, 28);
-                //     }
-                //     else
-                //     {
-                //         var obb = col.GetWorldOBB();
-                //         DrawObbWire(obb, colr);
-                //     }
-                // }
+                // Draw collider gizmos
+                foreach (var comp in e.GetAllComponents())
+                {
+                    // Handle regular colliders
+                    if (comp is Engine.Physics.Collider col)
+                    {
+                        if (!col.Enabled) continue;
+
+                        var colr = new Vector4(0.2f, 1.0f, 1.0f, 1.0f);
+                        if (col.IsTrigger) colr.W = 0.55f;
+
+                        if (comp is Engine.Physics.SphereCollider sc)
+                        {
+                            ComputeSphereWorld(sc, out var c, out var r);
+                            DrawSphereWire(c, r, colr, 32);
+                        }
+                        else if (comp is Engine.Physics.CapsuleCollider cc)
+                        {
+                            ComputeCapsuleWorld(cc, out var c, out var axis, out var r, out var halfHeight);
+                            DrawCapsuleWire(c, axis, r, halfHeight, colr, 28);
+                        }
+                        else if (comp is Engine.Physics.BoxCollider box)
+                        {
+                            DrawBoxColliderWire(box, colr);
+                        }
+                    }
+                    // Handle CharacterController (show capsule)
+                    else if (comp is Engine.Components.CharacterController controller)
+                    {
+                        if (!controller.Enabled) continue;
+
+                        var charColr = new Vector4(0.3f, 1.0f, 0.3f, 1.0f); // Green for character controller
+                        ComputeCharacterControllerCapsule(controller, out var c, out var r, out var halfHeight);
+                        DrawCapsuleWire(c, Vector3.UnitY, r, halfHeight, charColr, 28);
+                    }
+                }
 
                 // Also draw point light range gizmo for selected entities that have a Point light
                 // This mirrors the collider gizmo behavior: only draw when entity is selected
@@ -6989,44 +7000,107 @@ void main(){
             if (indexCount > 0) _frameRenderedObjects++;
         }
 
-        // Physics system removed - collider gizmo helpers disabled
-        // private void ComputeSphereWorld(Engine.Components.SphereCollider sc, out Vector3 center, out float radius)
-        // {
-        //     var e = sc.Entity!;
-        //     e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
-        //     // Center in world
-        //     center = wpos + Vector3.Transform(sc.Center * wscl, wrot);
-        //     // Approx radius with max scale like runtime OBB
-        //     float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
-        //     radius = MathF.Max(1e-6f, sc.Radius * s);
-        // }
-        //
-        // private void ComputeCapsuleWorld(Engine.Components.CapsuleCollider cc, out Vector3 center, out Vector3 axisDir, out float radius, out float halfHeight)
-        // {
-        //     var e = cc.Entity!;
-        //     e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
-        //     // Center in world
-        //     center = wpos + Vector3.Transform(cc.Center * wscl, wrot);
-        //
-        //     // Axis dir from rotation only (unit)
-        //     Vector3 localAxis = cc.Direction switch { 0 => Vector3.UnitX, 1 => Vector3.UnitY, 2 => Vector3.UnitZ, _ => Vector3.UnitY };
-        //     var rotM = Matrix3.CreateFromQuaternion(wrot);
-        //     axisDir = new Vector3(
-        //         rotM.M11 * localAxis.X + rotM.M12 * localAxis.Y + rotM.M13 * localAxis.Z,
-        //         rotM.M21 * localAxis.X + rotM.M22 * localAxis.Y + rotM.M23 * localAxis.Z,
-        //         rotM.M31 * localAxis.X + rotM.M32 * localAxis.Y + rotM.M33 * localAxis.Z
-        //     );
-        //     if (axisDir.LengthSquared <= 1e-8f) axisDir = Vector3.UnitY; else axisDir.Normalize();
-        //
-        //     // Radius: use max component scale to match broadphase approx
-        //     float sMax = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
-        //     radius = MathF.Max(1e-6f, cc.Radius * sMax);
-        //
-        //     // Height along axis with axis scale; halfHeight for cylinder part (caps excluded)
-        //     float axisScale = cc.Direction switch { 0 => MathF.Abs(wscl.X), 1 => MathF.Abs(wscl.Y), 2 => MathF.Abs(wscl.Z), _ => MathF.Abs(wscl.Y) };
-        //     float fullH = MathF.Max(cc.Height * axisScale, 2f * radius);
-        //     halfHeight = MathF.Max(0f, 0.5f * fullH - radius);
-        // }
+        // Collider gizmo helpers
+        private void ComputeSphereWorld(Engine.Physics.SphereCollider sc, out Vector3 center, out float radius)
+        {
+            var e = sc.Entity!;
+            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+            // Center in world
+            center = wpos + Vector3.Transform(sc.Center * wscl, wrot);
+            // Approx radius with max scale like runtime OBB
+            float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+            radius = MathF.Max(1e-6f, sc.Radius * s);
+        }
+
+        private void ComputeCapsuleWorld(Engine.Physics.CapsuleCollider cc, out Vector3 center, out Vector3 axisDir, out float radius, out float halfHeight)
+        {
+            var e = cc.Entity!;
+            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+            // Center in world
+            center = wpos + Vector3.Transform(cc.Center * wscl, wrot);
+
+            // Axis dir from rotation only (unit)
+            Vector3 localAxis = cc.Direction switch { 0 => Vector3.UnitX, 1 => Vector3.UnitY, 2 => Vector3.UnitZ, _ => Vector3.UnitY };
+            var rotM = Matrix3.CreateFromQuaternion(wrot);
+            axisDir = new Vector3(
+                rotM.M11 * localAxis.X + rotM.M12 * localAxis.Y + rotM.M13 * localAxis.Z,
+                rotM.M21 * localAxis.X + rotM.M22 * localAxis.Y + rotM.M23 * localAxis.Z,
+                rotM.M31 * localAxis.X + rotM.M32 * localAxis.Y + rotM.M33 * localAxis.Z
+            );
+            if (axisDir.LengthSquared <= 1e-8f) axisDir = Vector3.UnitY; else axisDir.Normalize();
+
+            // Radius: use max component scale to match broadphase approx
+            float sMax = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+            radius = MathF.Max(1e-6f, cc.Radius * sMax);
+
+            // Height along axis with axis scale; halfHeight for cylinder part (caps excluded)
+            float axisScale = cc.Direction switch { 0 => MathF.Abs(wscl.X), 1 => MathF.Abs(wscl.Y), 2 => MathF.Abs(wscl.Z), _ => MathF.Abs(wscl.Y) };
+            float fullH = MathF.Max(cc.Height * axisScale, 2f * radius);
+            halfHeight = MathF.Max(0f, 0.5f * fullH - radius);
+        }
+
+        private void ComputeCharacterControllerCapsule(Engine.Components.CharacterController controller, out Vector3 center, out float radius, out float halfHeight)
+        {
+            var e = controller.Entity!;
+            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+
+            // Center in world (CharacterController center is already in world offset)
+            center = wpos + controller.Center;
+
+            // Radius with max scale
+            float s = MathF.Max(MathF.Max(MathF.Abs(wscl.X), MathF.Abs(wscl.Y)), MathF.Abs(wscl.Z));
+            radius = MathF.Max(1e-6f, controller.Radius * s);
+
+            // Height - CharacterController capsule is always Y-axis
+            float fullH = MathF.Max(controller.Height * MathF.Abs(wscl.Y), 2f * radius);
+            halfHeight = MathF.Max(0f, 0.5f * fullH - radius);
+        }
+
+        private void DrawBoxColliderWire(Engine.Physics.BoxCollider box, in Vector4 color)
+        {
+            var e = box.Entity!;
+            e.GetWorldTRS(out var wpos, out var wrot, out var wscl);
+
+            // Build box corners
+            Vector3 worldCenter = wpos + Vector3.Transform(box.Center * wscl, wrot);
+            Vector3 worldSize = box.WorldSize;
+            Vector3 halfSize = worldSize * 0.5f;
+
+            // Create local axes from rotation
+            var R = Matrix3.CreateFromQuaternion(wrot);
+            var hx = new Vector3(R.M11, R.M21, R.M31) * halfSize.X;
+            var hy = new Vector3(R.M12, R.M22, R.M32) * halfSize.Y;
+            var hz = new Vector3(R.M13, R.M23, R.M33) * halfSize.Z;
+
+            Vector3 c = worldCenter;
+            Vector3 c000 = c - hx - hy - hz;
+            Vector3 c100 = c + hx - hy - hz;
+            Vector3 c010 = c - hx + hy - hz;
+            Vector3 c110 = c + hx + hy - hz;
+            Vector3 c001 = c - hx - hy + hz;
+            Vector3 c101 = c + hx - hy + hz;
+            Vector3 c011 = c - hx + hy + hz;
+            Vector3 c111 = c + hx + hy + hz;
+
+            // Draw 12 edges
+            GL.LineWidth(1.5f);
+            // bottom face
+            DrawLineWorld(c000, c100, color);
+            DrawLineWorld(c100, c110, color);
+            DrawLineWorld(c110, c010, color);
+            DrawLineWorld(c010, c000, color);
+            // top face
+            DrawLineWorld(c001, c101, color);
+            DrawLineWorld(c101, c111, color);
+            DrawLineWorld(c111, c011, color);
+            DrawLineWorld(c011, c001, color);
+            // verticals
+            DrawLineWorld(c000, c001, color);
+            DrawLineWorld(c100, c101, color);
+            DrawLineWorld(c110, c111, color);
+            DrawLineWorld(c010, c011, color);
+            GL.LineWidth(1f);
+        }
 
         private void DrawSphereWire(in Vector3 center, float radius, in Vector4 color, int segments = 24)
         {

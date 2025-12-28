@@ -173,6 +173,9 @@ namespace Engine.Components
         private Vector3 _smoothPosition = Vector3.Zero;
         private Quaternion _smoothRotation = Quaternion.Identity;
         private bool _cursorWasLocked = false;
+        private bool _escapeWasPressed = false;
+        private bool _userRequestedUnlock = false;  // Toggle state: true when user pressed Escape to unlock
+        private bool _wasViewportFocused = false;   // Track focus transitions
         private bool _initialized = false;
 
         // ========== COMPONENT LIFECYCLE ==========
@@ -319,18 +322,18 @@ namespace Engine.Components
 
         private bool HandleCursorState()
         {
-            // Check if GamePanel is focused (runtime only) via reflection to avoid circular dependency
-            bool isGamePanelFocused = true;
+            // Check if ViewportPanel (unified panel) is focused (runtime only) via reflection to avoid circular dependency
+            bool isViewportFocused = true;
             try
             {
                 var editorAssembly = System.Reflection.Assembly.Load("Editor");
-                var gamePanelType = editorAssembly?.GetType("Editor.Panels.GamePanel");
-                var isWindowFocusedProperty = gamePanelType?.GetProperty("IsWindowFocused", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                var viewportPanelType = editorAssembly?.GetType("Editor.Panels.ViewportPanel");
+                var isWindowFocusedProperty = viewportPanelType?.GetProperty("IsWindowFocused", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
                 if (isWindowFocusedProperty != null)
                 {
                     var value = isWindowFocusedProperty.GetValue(null);
                     if (value is bool focused)
-                        isGamePanelFocused = focused;
+                        isViewportFocused = focused;
                 }
             }
             catch
@@ -341,8 +344,42 @@ namespace Engine.Components
             var im = InputManager.Instance;
             bool isMenuOpen = im?.IsMenuVisible ?? false;
 
-            // GamePanel not focused - unlock and skip camera updates
-            if (!isGamePanelFocused)
+            // Detect viewport focus transition (unfocused → focused)
+            // OR mouse click in viewport while focused - reset the unlock request
+            bool mouseClicked = im != null && (im.GetMouseButton(MouseButton.Left) || im.GetMouseButton(MouseButton.Right) || im.GetMouseButton(MouseButton.Middle));
+
+            if ((isViewportFocused && !_wasViewportFocused) || (isViewportFocused && mouseClicked && _userRequestedUnlock))
+            {
+                Console.WriteLine("[CameraComponent] Viewport clicked/focused - resetting unlock request");
+                _userRequestedUnlock = false;
+            }
+            _wasViewportFocused = isViewportFocused;
+
+            // Check for Escape key to unlock cursor
+            // NOTE: Using GetKey + edge detection because GetKeyDown doesn't work in Play Mode
+            bool escapePressed = im != null && im.GetKey(Keys.Escape);
+
+            if (escapePressed && !_escapeWasPressed && _cursorWasLocked)
+            {
+                // Escape just pressed (edge detection) - unlock cursor and set toggle flag
+                Console.WriteLine("[CameraComponent] UNLOCKING CURSOR (Escape pressed)!");
+                Engine.Input.Cursor.lockState = CursorLockMode.None;
+                Engine.Input.Cursor.visible = true;
+                InputManager.Instance?.UnlockCursor();
+                _cursorWasLocked = false;
+                _userRequestedUnlock = true;  // Set toggle flag - stays unlocked until viewport clicked
+                _escapeWasPressed = true;
+                return false; // Skip camera updates this frame
+            }
+
+            // Update escape state for next frame
+            if (!escapePressed)
+            {
+                _escapeWasPressed = false;
+            }
+
+            // ViewportPanel not focused - unlock and skip camera updates
+            if (!isViewportFocused)
             {
                 if (_cursorWasLocked)
                 {
@@ -368,10 +405,12 @@ namespace Engine.Components
             }
 
             // Lock cursor for gameplay (FPS, ThirdPerson, Orbit, FreeCam modes)
+            // ONLY lock if user hasn't requested unlock via Escape
             if (Mode == ControlMode.FirstPerson || Mode == ControlMode.ThirdPerson || Mode == ControlMode.Orbit || Mode == ControlMode.FreeCam)
             {
-                if (!_cursorWasLocked)
+                if (!_cursorWasLocked && !_userRequestedUnlock)
                 {
+                    Console.WriteLine($"[CameraComponent] LOCKING CURSOR! Mode={Mode}, isViewportFocused={isViewportFocused}");
                     Engine.Input.Cursor.lockState = CursorLockMode.Locked;
                     Engine.Input.Cursor.visible = false;
                     _cursorWasLocked = true;
@@ -389,10 +428,11 @@ namespace Engine.Components
             if (follow?.Entity == null) return;
 
             var im = InputManager.Instance;
+            if (im == null) return;
 
             // Mouse look
-            float dx = im?.MouseDelta.X ?? 0f;
-            float dy = im?.MouseDelta.Y ?? 0f;
+            float dx = im.MouseDelta.X;
+            float dy = im.MouseDelta.Y;
 
             _yaw += dx * Sensitivity * (InvertX ? -1f : 1f);
             _pitch += dy * Sensitivity * (InvertY ? 1f : -1f);

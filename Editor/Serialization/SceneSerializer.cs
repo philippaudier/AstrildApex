@@ -332,16 +332,10 @@ namespace Editor.Serialization
                         components["Light"] = JsonSerializer.SerializeToElement(lightData);
                         break;
 
-                    // Physics system removed - serialization disabled
-                    // case CharacterController characterController:
-                    //     var ccData = ComponentSerializer.Serialize(characterController);
-                    //     components["CharacterController"] = JsonSerializer.SerializeToElement(ccData);
-                    //     break;
-                    //
-                    // case KinematicBody kinematicBody:
-                    //     var kbData = ComponentSerializer.Serialize(kinematicBody);
-                    //     components["KinematicBody"] = JsonSerializer.SerializeToElement(kbData);
-                    //     break;
+                    case Engine.Components.CharacterController characterController:
+                        var ccData = ComponentSerializer.Serialize(characterController);
+                        components["CharacterController"] = JsonSerializer.SerializeToElement(ccData);
+                        break;
 
                     case Engine.Scripting.MonoBehaviour script:
                         // Garder le format existant pour MonoBehaviour pour compatibilité
@@ -463,23 +457,36 @@ namespace Editor.Serialization
     private static void LoadMonoBehaviourScript(Scene scene, Entity entity, string typeName, Dictionary<string, JsonElement> scriptData)
         {
             // Get the ScriptHost to create the script instance
-
             var scriptHost = Editor.Program.ScriptHost;
             if (scriptHost == null)
             {
+                Console.WriteLine($"[SceneSerializer] ScriptHost is null! Cannot load script {typeName}");
                 return;
             }
+
+            Console.WriteLine($"[SceneSerializer] Loading script: {typeName}");
+            Console.WriteLine($"[SceneSerializer] Available scripts: {scriptHost.AvailableScripts.Length}");
 
             // Find the type in available scripts
             var scriptType = scriptHost.AvailableScripts.FirstOrDefault(t => t.FullName == typeName);
             if (scriptType == null)
             {
+                Console.WriteLine($"[SceneSerializer] Script type '{typeName}' not found in available scripts!");
+                Console.WriteLine($"[SceneSerializer] Available: {string.Join(", ", scriptHost.AvailableScripts.Select(t => t.FullName))}");
                 return;
             }
 
+            Console.WriteLine($"[SceneSerializer] Found script type: {scriptType.FullName}");
+
             // Add the script to the entity
             var script = scriptHost.AddScriptToEntity(entity, scriptType);
-            if (script == null) return;
+            if (script == null)
+            {
+                Console.WriteLine($"[SceneSerializer] Failed to add script to entity!");
+                return;
+            }
+
+            Console.WriteLine($"[SceneSerializer] Script '{scriptType.Name}' successfully added to entity '{entity.Name}'");
 
             // Deserialize fields
             if (scriptData.TryGetValue("fields", out var fieldsElement))
@@ -927,22 +934,35 @@ namespace Editor.Serialization
                 catch { }
             }
 
-            // Load physics components
-            // KinematicCharacterController
-            if (components.TryGetValue("KinematicCharacterController", out var kccElement))
+            // Load CharacterController
+            if (components.TryGetValue("CharacterController", out var ccElement))
             {
                 try
                 {
-                    var kcc = entity.AddComponent<Engine.Physics.KinematicCharacterController>();
-                    var kccData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(kccElement);
-                    if (kccData != null)
+                    var cc = entity.AddComponent<Engine.Components.CharacterController>();
+                    var ccData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(ccElement);
+                    if (ccData != null)
                     {
-                        ComponentSerializer.Deserialize(kcc, kccData);
+                        ComponentSerializer.Deserialize(cc, ccData);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[SceneSerializer] Failed to load KinematicCharacterController: {ex.Message}");
+                    Console.WriteLine($"[SceneSerializer] Failed to load CharacterController: {ex.Message}");
+                }
+            }
+
+            // Legacy: Load old KinematicCharacterController and convert to new CharacterController
+            if (components.TryGetValue("KinematicCharacterController", out var kccElement))
+            {
+                try
+                {
+                    var cc = entity.AddComponent<Engine.Components.CharacterController>();
+                    Console.WriteLine($"[SceneSerializer] Converted legacy KinematicCharacterController to CharacterController");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[SceneSerializer] Failed to convert legacy KinematicCharacterController: {ex.Message}");
                 }
             }
 

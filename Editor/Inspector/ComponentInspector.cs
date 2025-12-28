@@ -60,7 +60,13 @@ namespace Editor.Inspector
                     case Engine.Physics.BoxCollider box: BoxColliderInspector.Draw(box); break;
                     case Engine.Physics.SphereCollider sphere: SphereColliderInspector.Draw(sphere); break;
                     case Engine.Physics.CapsuleCollider capsule: CapsuleColliderInspector.Draw(capsule); break;
-                    // case Engine.Physics.KinematicCharacterController kcc: KinematicCharacterControllerInspector.Draw(kcc); break; // File removed
+                    case Engine.Components.CharacterController cc: CharacterControllerInspector.Draw(cc); break;
+
+                    // Custom scripts (MonoBehaviour)
+                    case Engine.Scripting.MonoBehaviour script:
+                        ReflectionInspector.DrawMembers(script, script.GetType(), "");
+                        break;
+
                     default:
                         ImGui.TextDisabled("No custom inspector for this component type.");
                         break;

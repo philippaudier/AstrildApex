@@ -21,6 +21,9 @@ namespace Editor.Panels;
 /// </summary>
 public class ViewportPanel
 {
+    // === Static Focus State (for CameraComponent and input systems) ===
+    public static bool IsWindowFocused { get; internal set; } = false;
+
     // === Core State ===
     private ViewportRenderer? _renderer;
     private OverlayManager _overlayManager;
@@ -154,6 +157,9 @@ public class ViewportPanel
         bool focusedDock = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows | ImGuiFocusedFlags.NoPopupHierarchy | ImGuiFocusedFlags.DockHierarchy);
         bool hoveredWindow = ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem | ImGuiHoveredFlags.AllowWhenBlockedByPopup);
         bool allowHotkeys = (focusedDock || hoveredWindow) && !io.WantTextInput;
+
+        // Update static focus state for CameraComponent and input systems
+        IsWindowFocused = focusedDock || hoveredWindow;
 
         // === Build Toolbar ===
         BuildToolbar();

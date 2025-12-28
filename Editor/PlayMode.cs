@@ -16,7 +16,9 @@ namespace Editor
         private static Scene? _originalScene;
         private static Scene? _playScene;
 
-        // REMOVED: _fixedTimeAccumulator and _fixedDeltaTime - now handled by PhysicsManager
+        // Fixed timestep for FixedUpdate (60 Hz)
+        private static float _fixedTimeAccumulator = 0f;
+        private const float _fixedDeltaTime = 1.0f / 60.0f;
 
         // PERFORMANCE: Cache component lists to avoid repeated GetAllComponents() allocations
         private static readonly Dictionary<uint, List<Engine.Components.Component>> _cachedComponentsByEntity
@@ -127,6 +129,9 @@ namespace Editor
             // Physics system removed
             // Engine.Physics.PhysicsManager.Instance.SetActiveScene(_playScene);
 
+            // Reset fixed timestep accumulator
+            _fixedTimeAccumulator = 0f;
+
             _state = PlayState.Playing;
             LogManager.LogInfo("Play Mode started", "PlayMode");
         }
@@ -214,7 +219,7 @@ namespace Editor
 
         /// <summary>
         /// Met à jour la simulation (appelé depuis la boucle principale)
-        /// Now uses unified PhysicsManager - no more double accumulator!
+        /// Uses fixed timestep accumulator for FixedUpdate (60 Hz)
         /// </summary>
         public static void UpdateSimulation(float deltaTime)
         {
@@ -236,10 +241,16 @@ namespace Editor
             // Physics system removed
             // Engine.Physics.PhysicsManager.Instance.Update(deltaTime);
 
-            // === STEP 3: FixedUpdate for other components (CameraComponent, etc.) ===
-            FixedUpdateComponents(1.0f / 60.0f);
+            // === STEP 2: FixedUpdate with fixed timestep accumulator (60 Hz) ===
+            // Accumulate time and call FixedUpdate multiple times if needed to catch up
+            _fixedTimeAccumulator += deltaTime;
+            while (_fixedTimeAccumulator >= _fixedDeltaTime)
+            {
+                FixedUpdateComponents(_fixedDeltaTime);
+                _fixedTimeAccumulator -= _fixedDeltaTime;
+            }
 
-            // === STEP 4: Late update ===
+            // === STEP 3: Late update ===
             LateUpdateComponents(deltaTime);
         }
 
