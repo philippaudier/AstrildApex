@@ -422,6 +422,26 @@ namespace Engine.Components
 
         // ========== MODE IMPLEMENTATIONS ==========
 
+        /// <summary>
+        /// Get the position to use for camera tracking.
+        /// Uses RenderPosition from CharacterController if available (for smooth interpolation),
+        /// otherwise uses Transform.Position.
+        /// </summary>
+        private Vector3 GetTargetPosition(Scene.Entity entity)
+        {
+            // Check if entity has CharacterController
+            var controller = entity.GetComponent<CharacterController>();
+            if (controller != null)
+            {
+                // Use interpolated render position for smooth camera
+                return controller.RenderPosition;
+            }
+
+            // Fallback to regular transform position
+            entity.GetWorldTRS(out var pos, out _, out _);
+            return pos;
+        }
+
         private void UpdateFirstPerson(float deltaTime)
         {
             var follow = FollowTarget;
@@ -444,8 +464,8 @@ namespace Engine.Components
             var rotation = Quaternion.FromAxisAngle(Vector3.UnitY, _yaw) *
                           Quaternion.FromAxisAngle(Vector3.UnitX, _pitch);
 
-            // Position at eye height
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            // Position at eye height - use RenderPosition if CharacterController exists
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
             var eyePosition = targetPos + FPSEyeOffset;
 
             // Optional WASD movement
@@ -495,8 +515,8 @@ namespace Engine.Components
                 _currentDistance = MathHelper.Clamp(_currentDistance - zoomDelta, MinDistance, MaxDistance);
             }
 
-            // Calculate desired position
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            // Calculate desired position - use RenderPosition if CharacterController exists
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
             var pivot = targetPos + TargetOffset;
 
             var rotation = Quaternion.FromAxisAngle(Vector3.UnitY, _yaw) *
@@ -527,7 +547,7 @@ namespace Engine.Components
             if (follow?.Entity == null) return;
 
             var im = InputManager.Instance;
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
 
             // Optional rotation with mouse or keys
             if (TopDownAllowRotation)
@@ -566,7 +586,7 @@ namespace Engine.Components
             var follow = FollowTarget;
             if (follow?.Entity == null) return;
 
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
 
             // Isometric: typically 30° pitch looking down from above, 45° yaw for diagonal view
             // IsometricAngle: angle DOWN from horizontal (30° is standard isometric)
@@ -593,7 +613,7 @@ namespace Engine.Components
             var follow = FollowTarget;
             if (follow?.Entity == null) return;
 
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
 
             // Calculate look-ahead based on target velocity (if available)
             // TODO: Add Rigidbody component support when physics is implemented
@@ -644,7 +664,7 @@ namespace Engine.Components
                 _currentDistance = MathHelper.Clamp(_currentDistance - zoomDelta, MinDistance, MaxDistance);
             }
 
-            follow.Entity.GetWorldTRS(out var targetPos, out _, out _);
+            Vector3 targetPos = GetTargetPosition(follow.Entity);
             var pivot = targetPos + TargetOffset;
 
             var rotation = Quaternion.FromAxisAngle(Vector3.UnitY, _yaw) *

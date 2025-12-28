@@ -38,6 +38,32 @@ namespace Editor.Inspector
                     ImGui.TextColored(UI.Warning, "Physics mode requires BulletSharp integration (coming soon).");
                 }
 
+                ImGui.Separator();
+
+                // Interpolation mode
+                ImGui.Text("Interpolation");
+                int interpolationIndex = (int)controller.Interpolation;
+                string[] interpolationLabels = { "None", "Interpolate (Recommended)", "Extrapolate" };
+
+                if (ImGui.Combo("##Interpolation", ref interpolationIndex, interpolationLabels, interpolationLabels.Length))
+                {
+                    controller.Interpolation = (InterpolationMode)interpolationIndex;
+                }
+
+                // Info message based on interpolation
+                if (controller.Interpolation == InterpolationMode.None)
+                {
+                    ImGui.TextDisabled("No smoothing - may appear stuttery.");
+                }
+                else if (controller.Interpolation == InterpolationMode.Interpolate)
+                {
+                    ImGui.TextDisabled("Smooth movement with slight latency (~16ms).");
+                }
+                else if (controller.Interpolation == InterpolationMode.Extrapolate)
+                {
+                    ImGui.TextDisabled("Responsive but may overshoot on direction changes.");
+                }
+
                 InspectorWidgets.EndSection();
             }
 

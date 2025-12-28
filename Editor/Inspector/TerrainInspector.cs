@@ -14,6 +14,8 @@ namespace Editor.Inspector
     /// </summary>
     public static class TerrainInspector
     {
+        private static TerrainPreview? _preview = null;
+
         public static void Draw(Entity entity, Terrain terrain)
         {
             ImGui.PushID(terrain.GetHashCode());
@@ -78,21 +80,40 @@ namespace Editor.Inspector
 
             ImGui.Separator();
 
-            // === HEIGHTMAP TEXTURE ===
-            var newHeightmap = EditorWidgets.AssetField(
-                "Heightmap Texture",
-                terrain.HeightmapTextureGuid,
-                "Texture2D",
-                "16-bit grayscale PNG recommended",
-                showPreview: true,
-                dragDropHeight: ThemeManager.UI.DragDropLargeHeight);
-            
-            if (newHeightmap != terrain.HeightmapTextureGuid)
+            // === HEIGHTMAP SOURCE ===
+            ImGui.Text("Heightmap Source");
+
+            bool useProcedural = terrain.UseProceduralGeneration;
+            if (ImGui.Checkbox("Use Procedural Generation", ref useProcedural))
             {
-                terrain.HeightmapTextureGuid = newHeightmap;
-                if (newHeightmap.HasValue)
+                terrain.UseProceduralGeneration = useProcedural;
+            }
+
+            ImGui.Separator();
+
+            if (terrain.UseProceduralGeneration)
+            {
+                // === PROCEDURAL GENERATION PARAMETERS ===
+                DrawProceduralParameters(terrain);
+            }
+            else
+            {
+                // === HEIGHTMAP TEXTURE ===
+                var newHeightmap = EditorWidgets.AssetField(
+                    "Heightmap Texture",
+                    terrain.HeightmapTextureGuid,
+                    "Texture2D",
+                    "16-bit grayscale PNG recommended",
+                    showPreview: true,
+                    dragDropHeight: ThemeManager.UI.DragDropLargeHeight);
+
+                if (newHeightmap != terrain.HeightmapTextureGuid)
                 {
-                    LogManager.LogInfo($"Heightmap texture assigned: {AssetDatabase.GetName(newHeightmap.Value)}", "TerrainInspector");
+                    terrain.HeightmapTextureGuid = newHeightmap;
+                    if (newHeightmap.HasValue)
+                    {
+                        LogManager.LogInfo($"Heightmap texture assigned: {AssetDatabase.GetName(newHeightmap.Value)}", "TerrainInspector");
+                    }
                 }
             }
 
@@ -140,7 +161,7 @@ namespace Editor.Inspector
             ImGui.Spacing();
             ImGui.Spacing();
 
-            bool canGenerate = terrain.HeightmapTextureGuid.HasValue;
+            bool canGenerate = terrain.UseProceduralGeneration || terrain.HeightmapTextureGuid.HasValue;
 
             if (!canGenerate)
             {
@@ -177,7 +198,7 @@ namespace Editor.Inspector
 
             if (!canGenerate)
             {
-                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Assign a heightmap texture first!");
+                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Enable procedural generation or assign a heightmap texture first!");
             }
 
             ImGui.Spacing();
@@ -233,6 +254,546 @@ namespace Editor.Inspector
                 ImGui.TextDisabled($"Total Triangles: {(terrain.MeshResolution - 1) * (terrain.MeshResolution - 1) * 2:N0}");
                 ImGui.TreePop();
             }
+
+            ImGui.PopID();
+        }
+
+        private static void DrawProceduralParameters(Terrain terrain)
+        {
+            ImGui.PushID("ProceduralParams");
+
+            // === PRESETS ===
+            if (ThemedImGui.CollapsingHeader("Terrain Presets", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.Indent();
+                ImGui.TextWrapped("Quick start with common terrain types:");
+                ImGui.Spacing();
+
+                var presets = Engine.Rendering.Terrain.TerrainPresets.GetAllPresets();
+                int presetsPerRow = 3;
+
+                for (int i = 0; i < presets.Length; i++)
+                {
+                    var preset = presets[i];
+
+                    if (ImGui.Button(preset.Name, new System.Numerics.Vector2(120, 30)))
+                    {
+                        Engine.Rendering.Terrain.TerrainPresets.ApplyPreset(terrain, preset);
+                        LogManager.LogInfo($"Applied preset: {preset.Name}", "TerrainInspector");
+                    }
+
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip(preset.Description);
+                    }
+
+                    // Arrange buttons in rows
+                    if ((i + 1) % presetsPerRow != 0 && i < presets.Length - 1)
+                    {
+                        ImGui.SameLine();
+                    }
+                }
+
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // === 2D PREVIEW ===
+            if (ThemedImGui.CollapsingHeader("2D Preview"))
+            {
+                ImGui.Indent();
+
+                // Preview texture display
+                if (_preview != null && _preview.TextureId != 0)
+                {
+                    ImGui.Image(
+                        (IntPtr)_preview.TextureId,
+                        new System.Numerics.Vector2(256, 256),
+                        new System.Numerics.Vector2(0, 1),  // UV start (flip Y)
+                        new System.Numerics.Vector2(1, 0)); // UV end
+                }
+                else
+                {
+                    ImGui.TextDisabled("No preview generated yet");
+                }
+
+                ImGui.Spacing();
+
+                if (ImGui.Button("Generate Preview", new System.Numerics.Vector2(-1, 0)))
+                {
+                    try
+                    {
+                        // Generate heightmap for preview
+                        var parameters = new Engine.Rendering.Terrain.ProceduralHeightmapParams
+                        {
+                            Seed = terrain.ProceduralSeed,
+                            NoiseScale = terrain.NoiseScale,
+                            Octaves = terrain.Octaves,
+                            Persistence = terrain.Persistence,
+                            Lacunarity = terrain.Lacunarity,
+                            OffsetX = terrain.NoiseOffsetX,
+                            OffsetY = terrain.NoiseOffsetY,
+                            NoiseType = terrain.NoiseType,
+                            IslandMode = terrain.IslandMode,
+                            IslandFalloff = terrain.IslandFalloff,
+                            EnableTerracing = terrain.EnableTerracing,
+                            TerraceCount = terrain.TerraceCount,
+                            HeightMultiplier = terrain.HeightMultiplier,
+                            HeightPower = terrain.HeightPower,
+                            UseDomainWarping = terrain.UseDomainWarping,
+                            DomainWarpStrength = terrain.DomainWarpStrength,
+                            ApplyErosion = terrain.ApplyErosion,
+                            HydraulicIterations = terrain.HydraulicIterations,
+                            HydraulicStrength = terrain.HydraulicStrength,
+                            ThermalIterations = terrain.ThermalIterations,
+                            ThermalTalusAngle = terrain.ThermalTalusAngle,
+                            ThermalStrength = terrain.ThermalStrength
+                        };
+
+                        // Generate at preview resolution (512x512)
+                        var heightmap = Engine.Rendering.Terrain.ProceduralHeightmapGenerator.Generate(
+                            512, 512, parameters);
+
+                        // Handle blending if enabled
+                        if (terrain.BlendWithTexture && terrain.HeightmapTextureGuid.HasValue)
+                        {
+                            var textureMap = Engine.Rendering.HeightmapLoader.LoadHeightmapFromTexture(
+                                terrain.HeightmapTextureGuid.Value);
+
+                            if (textureMap != null)
+                            {
+                                heightmap = Engine.Rendering.Terrain.HeightmapBlending.Blend(
+                                    textureMap, heightmap, terrain.BlendMode, terrain.BlendStrength);
+                            }
+                        }
+
+                        // Create or update preview
+                        if (_preview == null)
+                        {
+                            _preview = new TerrainPreview();
+                        }
+
+                        _preview.GeneratePreview(heightmap, 256);
+                        LogManager.LogInfo("Preview generated successfully!", "TerrainInspector");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Failed to generate preview: {ex.Message}", "TerrainInspector");
+                    }
+                }
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Generate a 2D preview of the heightmap (512x512 resolution)");
+
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // === SEED ===
+            int seed = terrain.ProceduralSeed;
+            if (ImGui.DragInt("Seed", ref seed))
+            {
+                terrain.ProceduralSeed = seed;
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Randomize"))
+            {
+                terrain.ProceduralSeed = new Random().Next();
+            }
+
+            ImGui.Spacing();
+
+            // === NOISE TYPE ===
+            ImGui.Text("Noise Type");
+            string[] noiseTypes = { "Fractal", "Ridged", "Billow" };
+            int currentNoiseType = (int)terrain.NoiseType;
+            if (ImGui.Combo("##NoiseType", ref currentNoiseType, noiseTypes, noiseTypes.Length))
+            {
+                terrain.NoiseType = (Engine.Rendering.Terrain.NoiseType)currentNoiseType;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.BeginTooltip();
+                ImGui.Text("Fractal: Natural hills and valleys");
+                ImGui.Text("Ridged: Mountain ridges");
+                ImGui.Text("Billow: Cloud-like formations");
+                ImGui.EndTooltip();
+            }
+
+            ImGui.Spacing();
+
+            // === BASIC PARAMETERS ===
+            if (ThemedImGui.CollapsingHeader("Basic Parameters", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.Indent();
+
+                float noiseScale = terrain.NoiseScale;
+                if (ImGui.DragFloat("Scale", ref noiseScale, 0.5f, 1f, 500f))
+                {
+                    terrain.NoiseScale = noiseScale;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Zoom level of the noise (lower = zoomed in)");
+
+                int octaves = terrain.Octaves;
+                if (ImGui.SliderInt("Octaves", ref octaves, 1, 8))
+                {
+                    terrain.Octaves = octaves;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Number of detail layers (more = more detail)");
+
+                float persistence = terrain.Persistence;
+                if (ImGui.SliderFloat("Persistence", ref persistence, 0.1f, 1f))
+                {
+                    terrain.Persistence = persistence;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Amplitude falloff per octave (lower = smoother)");
+
+                float lacunarity = terrain.Lacunarity;
+                if (ImGui.SliderFloat("Lacunarity", ref lacunarity, 1f, 4f))
+                {
+                    terrain.Lacunarity = lacunarity;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Frequency multiplier per octave (higher = more variation)");
+
+                ImGui.Unindent();
+            }
+
+            // === OFFSET ===
+            if (ThemedImGui.CollapsingHeader("Offset"))
+            {
+                ImGui.Indent();
+
+                float offsetX = terrain.NoiseOffsetX;
+                if (ImGui.DragFloat("Offset X", ref offsetX, 0.1f))
+                {
+                    terrain.NoiseOffsetX = offsetX;
+                }
+
+                float offsetY = terrain.NoiseOffsetY;
+                if (ImGui.DragFloat("Offset Y", ref offsetY, 0.1f))
+                {
+                    terrain.NoiseOffsetY = offsetY;
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === BLEND WITH TEXTURE ===
+            if (ThemedImGui.CollapsingHeader("Blend with Texture Heightmap"))
+            {
+                ImGui.Indent();
+
+                bool blendWithTexture = terrain.BlendWithTexture;
+                if (ImGui.Checkbox("Enable Blending", ref blendWithTexture))
+                {
+                    terrain.BlendWithTexture = blendWithTexture;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Combine procedural generation with a texture heightmap");
+                    ImGui.Text("Useful for adding procedural details to existing terrain");
+                    ImGui.EndTooltip();
+                }
+
+                if (terrain.BlendWithTexture)
+                {
+                    // Show texture selector
+                    var heightmapGuid = EditorWidgets.AssetField(
+                        "Base Heightmap",
+                        terrain.HeightmapTextureGuid,
+                        "Texture2D",
+                        "Base terrain to blend with procedural",
+                        showPreview: true,
+                        dragDropHeight: 80);
+
+                    if (heightmapGuid != terrain.HeightmapTextureGuid)
+                    {
+                        terrain.HeightmapTextureGuid = heightmapGuid;
+                    }
+
+                    ImGui.Spacing();
+
+                    // Blend mode selector
+                    string[] blendModes = { "Replace", "Add", "Multiply", "Overlay", "Screen", "Min", "Max", "Average" };
+                    int currentBlendMode = (int)terrain.BlendMode;
+                    if (ImGui.Combo("Blend Mode", ref currentBlendMode, blendModes, blendModes.Length))
+                    {
+                        terrain.BlendMode = (Engine.Rendering.Terrain.HeightmapBlendMode)currentBlendMode;
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.BeginTooltip();
+                        ImGui.Text("Add: Base + Procedural");
+                        ImGui.Text("Multiply: Base * Procedural");
+                        ImGui.Text("Overlay: Photoshop-style overlay");
+                        ImGui.Text("Screen: Brightening blend");
+                        ImGui.EndTooltip();
+                    }
+
+                    // Blend strength
+                    float blendStrength = terrain.BlendStrength;
+                    if (ImGui.SliderFloat("Blend Strength", ref blendStrength, 0f, 1f))
+                    {
+                        terrain.BlendStrength = blendStrength;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How much to blend (0=base only, 1=full blend)");
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === DOMAIN WARPING ===
+            if (ThemedImGui.CollapsingHeader("Domain Warping"))
+            {
+                ImGui.Indent();
+
+                bool useDomainWarping = terrain.UseDomainWarping;
+                if (ImGui.Checkbox("Enable Domain Warping", ref useDomainWarping))
+                {
+                    terrain.UseDomainWarping = useDomainWarping;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Distorts noise space for more organic patterns");
+                    ImGui.Text("Highly recommended for natural-looking terrain!");
+                    ImGui.EndTooltip();
+                }
+
+                if (terrain.UseDomainWarping)
+                {
+                    float warpStrength = terrain.DomainWarpStrength;
+                    if (ImGui.SliderFloat("Warp Strength", ref warpStrength, 0f, 2f))
+                    {
+                        terrain.DomainWarpStrength = warpStrength;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How much to distort the noise (0=none, 2=extreme)");
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === HEIGHT ADJUSTMENT ===
+            if (ThemedImGui.CollapsingHeader("Height Adjustment"))
+            {
+                ImGui.Indent();
+
+                float heightMultiplier = terrain.HeightMultiplier;
+                if (ImGui.SliderFloat("Multiplier", ref heightMultiplier, 0.1f, 2f))
+                {
+                    terrain.HeightMultiplier = heightMultiplier;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Overall height scale");
+
+                float heightPower = terrain.HeightPower;
+                if (ImGui.SliderFloat("Power Curve", ref heightPower, 0.5f, 3f))
+                {
+                    terrain.HeightPower = heightPower;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("< 1.0: More plateaus");
+                    ImGui.Text("= 1.0: Linear");
+                    ImGui.Text("> 1.0: More valleys");
+                    ImGui.EndTooltip();
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === ISLAND MODE ===
+            if (ThemedImGui.CollapsingHeader("Island Mode"))
+            {
+                ImGui.Indent();
+
+                bool islandMode = terrain.IslandMode;
+                if (ImGui.Checkbox("Enable Island Mode", ref islandMode))
+                {
+                    terrain.IslandMode = islandMode;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Creates circular falloff for island generation");
+
+                if (terrain.IslandMode)
+                {
+                    float falloff = terrain.IslandFalloff;
+                    if (ImGui.SliderFloat("Falloff", ref falloff, 1f, 10f))
+                    {
+                        terrain.IslandFalloff = falloff;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How quickly the terrain drops off at edges");
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === EROSION SIMULATION ===
+            if (ThemedImGui.CollapsingHeader("Erosion Simulation"))
+            {
+                ImGui.Indent();
+
+                bool applyErosion = terrain.ApplyErosion;
+                if (ImGui.Checkbox("Enable Erosion", ref applyErosion))
+                {
+                    terrain.ApplyErosion = applyErosion;
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.BeginTooltip();
+                    ImGui.Text("Simulate water and gravity erosion for realistic terrain");
+                    ImGui.Text("WARNING: Can be slow with high iterations!");
+                    ImGui.EndTooltip();
+                }
+
+                if (terrain.ApplyErosion)
+                {
+                    ImGui.TextColored(new System.Numerics.Vector4(1f, 0.8f, 0.2f, 1f), "Hydraulic Erosion (Water Flow)");
+
+                    int hydraulicIterations = terrain.HydraulicIterations;
+                    if (ImGui.SliderInt("Hydraulic Iterations", ref hydraulicIterations, 1000, 200000))
+                    {
+                        terrain.HydraulicIterations = hydraulicIterations;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Number of water droplets to simulate (more = more detail, slower)");
+
+                    float hydraulicStrength = terrain.HydraulicStrength;
+                    if (ImGui.SliderFloat("Hydraulic Strength", ref hydraulicStrength, 0.1f, 1f))
+                    {
+                        terrain.HydraulicStrength = hydraulicStrength;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How much erosion to apply per droplet");
+
+                    ImGui.Spacing();
+                    ImGui.TextColored(new System.Numerics.Vector4(0.8f, 1f, 0.8f, 1f), "Thermal Erosion (Gravity Slides)");
+
+                    int thermalIterations = terrain.ThermalIterations;
+                    if (ImGui.SliderInt("Thermal Iterations", ref thermalIterations, 1, 20))
+                    {
+                        terrain.ThermalIterations = thermalIterations;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Number of thermal erosion passes (creates natural slopes)");
+
+                    float talusAngle = terrain.ThermalTalusAngle;
+                    if (ImGui.SliderFloat("Talus Angle", ref talusAngle, 0.01f, 0.2f))
+                    {
+                        terrain.ThermalTalusAngle = talusAngle;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Maximum stable slope angle (lower = gentler slopes)");
+
+                    float thermalStrength = terrain.ThermalStrength;
+                    if (ImGui.SliderFloat("Thermal Strength", ref thermalStrength, 0.1f, 1f))
+                    {
+                        terrain.ThermalStrength = thermalStrength;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How much material slides down per iteration");
+
+                    ImGui.Spacing();
+                    ImGui.TextWrapped("Tip: Use thermal erosion for smooth slopes, hydraulic for valleys and rivers.");
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === TERRACING ===
+            if (ThemedImGui.CollapsingHeader("Terracing"))
+            {
+                ImGui.Indent();
+
+                bool enableTerracing = terrain.EnableTerracing;
+                if (ImGui.Checkbox("Enable Terracing", ref enableTerracing))
+                {
+                    terrain.EnableTerracing = enableTerracing;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Creates step-like layers for stylized look");
+
+                if (terrain.EnableTerracing)
+                {
+                    int terraceCount = terrain.TerraceCount;
+                    if (ImGui.SliderInt("Terrace Count", ref terraceCount, 2, 20))
+                    {
+                        terrain.TerraceCount = terraceCount;
+                    }
+                }
+
+                ImGui.Unindent();
+            }
+
+            // === EXPORT BUTTON ===
+            ImGui.Spacing();
+            if (ImGui.Button("Export to PNG", new System.Numerics.Vector2(-1, 0)))
+            {
+                try
+                {
+                    // Generate heightmap
+                    var parameters = new Engine.Rendering.Terrain.ProceduralHeightmapParams
+                    {
+                        Seed = terrain.ProceduralSeed,
+                        NoiseScale = terrain.NoiseScale,
+                        Octaves = terrain.Octaves,
+                        Persistence = terrain.Persistence,
+                        Lacunarity = terrain.Lacunarity,
+                        OffsetX = terrain.NoiseOffsetX,
+                        OffsetY = terrain.NoiseOffsetY,
+                        NoiseType = terrain.NoiseType,
+                        IslandMode = terrain.IslandMode,
+                        IslandFalloff = terrain.IslandFalloff,
+                        EnableTerracing = terrain.EnableTerracing,
+                        TerraceCount = terrain.TerraceCount,
+                        HeightMultiplier = terrain.HeightMultiplier,
+                        HeightPower = terrain.HeightPower,
+                        UseDomainWarping = terrain.UseDomainWarping,
+                        DomainWarpStrength = terrain.DomainWarpStrength,
+                        ApplyErosion = terrain.ApplyErosion,
+                        HydraulicIterations = terrain.HydraulicIterations,
+                        HydraulicStrength = terrain.HydraulicStrength,
+                        ThermalIterations = terrain.ThermalIterations,
+                        ThermalTalusAngle = terrain.ThermalTalusAngle,
+                        ThermalStrength = terrain.ThermalStrength
+                    };
+
+                    var heightmap = Engine.Rendering.Terrain.ProceduralHeightmapGenerator.Generate(
+                        terrain.MeshResolution, terrain.MeshResolution, parameters);
+
+                    // Save to file
+                    string exportPath = $"Assets/Heightmaps/procedural_{terrain.ProceduralSeed}_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+                    string? directory = System.IO.Path.GetDirectoryName(exportPath);
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        System.IO.Directory.CreateDirectory(directory);
+                    }
+
+                    Engine.Rendering.Terrain.ProceduralHeightmapGenerator.ExportToPng(heightmap, exportPath);
+                    LogManager.LogInfo($"Exported procedural heightmap to {exportPath}", "TerrainInspector");
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogWarning($"Failed to export heightmap: {ex.Message}", "TerrainInspector");
+                }
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Export current procedural heightmap to 16-bit PNG file");
 
             ImGui.PopID();
         }

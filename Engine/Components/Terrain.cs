@@ -32,6 +32,87 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("terrainMaterialGuid")]
         public Guid? TerrainMaterialGuid { get; set; } = null;
 
+        // Procedural generation properties
+        [Engine.Serialization.SerializableAttribute("useProceduralGeneration")]
+        public bool UseProceduralGeneration { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("proceduralSeed")]
+        public int ProceduralSeed { get; set; } = 0;
+
+        [Engine.Serialization.SerializableAttribute("noiseScale")]
+        public float NoiseScale { get; set; } = 50f;
+
+        [Engine.Serialization.SerializableAttribute("octaves")]
+        public int Octaves { get; set; } = 4;
+
+        [Engine.Serialization.SerializableAttribute("persistence")]
+        public float Persistence { get; set; } = 0.5f;
+
+        [Engine.Serialization.SerializableAttribute("lacunarity")]
+        public float Lacunarity { get; set; } = 2.0f;
+
+        [Engine.Serialization.SerializableAttribute("noiseOffsetX")]
+        public float NoiseOffsetX { get; set; } = 0f;
+
+        [Engine.Serialization.SerializableAttribute("noiseOffsetY")]
+        public float NoiseOffsetY { get; set; } = 0f;
+
+        [Engine.Serialization.SerializableAttribute("noiseType")]
+        public Engine.Rendering.Terrain.NoiseType NoiseType { get; set; } = Engine.Rendering.Terrain.NoiseType.Fractal;
+
+        [Engine.Serialization.SerializableAttribute("islandMode")]
+        public bool IslandMode { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("islandFalloff")]
+        public float IslandFalloff { get; set; } = 3f;
+
+        [Engine.Serialization.SerializableAttribute("enableTerracing")]
+        public bool EnableTerracing { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("terraceCount")]
+        public int TerraceCount { get; set; } = 5;
+
+        [Engine.Serialization.SerializableAttribute("heightMultiplier")]
+        public float HeightMultiplier { get; set; } = 1f;
+
+        [Engine.Serialization.SerializableAttribute("heightPower")]
+        public float HeightPower { get; set; } = 1f;
+
+        [Engine.Serialization.SerializableAttribute("useDomainWarping")]
+        public bool UseDomainWarping { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("domainWarpStrength")]
+        public float DomainWarpStrength { get; set; } = 0.5f;
+
+        // Blending with texture heightmap
+        [Engine.Serialization.SerializableAttribute("blendWithTexture")]
+        public bool BlendWithTexture { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("blendMode")]
+        public Engine.Rendering.Terrain.HeightmapBlendMode BlendMode { get; set; } = Engine.Rendering.Terrain.HeightmapBlendMode.Add;
+
+        [Engine.Serialization.SerializableAttribute("blendStrength")]
+        public float BlendStrength { get; set; } = 0.5f;
+
+        // Erosion simulation
+        [Engine.Serialization.SerializableAttribute("applyErosion")]
+        public bool ApplyErosion { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("hydraulicIterations")]
+        public int HydraulicIterations { get; set; } = 50000;
+
+        [Engine.Serialization.SerializableAttribute("hydraulicStrength")]
+        public float HydraulicStrength { get; set; } = 0.3f;
+
+        [Engine.Serialization.SerializableAttribute("thermalIterations")]
+        public int ThermalIterations { get; set; } = 5;
+
+        [Engine.Serialization.SerializableAttribute("thermalTalusAngle")]
+        public float ThermalTalusAngle { get; set; } = 0.05f;
+
+        [Engine.Serialization.SerializableAttribute("thermalStrength")]
+        public float ThermalStrength { get; set; } = 0.5f;
+
         // Terrain layers (moved from MaterialAsset for better workflow)
         [Engine.Serialization.SerializableAttribute("terrainLayers")]
         public Engine.Assets.TerrainLayer[]? TerrainLayers { get; set; } = null;
@@ -51,6 +132,7 @@ namespace Engine.Components
         private int _vao = 0, _vbo = 0, _ebo = 0;
         private int _indexCount = 0;
         private bool _meshGenerated = false;
+        private bool _checkedGenerationOnLoad = false; // Prevents duplicate generation checks
 
         // Public accessors for rendering
         public int VAO => _vao;
@@ -87,13 +169,16 @@ namespace Engine.Components
         {
             base.OnAttached();
 
-            Console.WriteLine($"[Terrain] OnAttached() called! HeightmapTextureGuid={HeightmapTextureGuid}, _meshGenerated={_meshGenerated}, _vao={_vao}");
+            Console.WriteLine($"[Terrain] OnAttached() called! UseProceduralGeneration={UseProceduralGeneration}, HeightmapTextureGuid={HeightmapTextureGuid}, _meshGenerated={_meshGenerated}, _vao={_vao}");
 
             // CRITICAL FIX: After cloning, _meshGenerated might be true but _vao is shared/invalid
             // Check if VAO is actually valid, not just if _meshGenerated is true
             bool needsRegeneration = false;
 
-            if (HeightmapTextureGuid.HasValue)
+            // Check if we have a valid heightmap source (texture or procedural)
+            bool hasHeightmapSource = UseProceduralGeneration || HeightmapTextureGuid.HasValue;
+
+            if (hasHeightmapSource)
             {
                 if (!_meshGenerated)
                 {
@@ -121,7 +206,8 @@ namespace Engine.Components
             {
                 try
                 {
-                    Console.WriteLine($"[Terrain] OnAttached(): Regenerating terrain from heightmap {HeightmapTextureGuid!.Value}");
+                    string source = UseProceduralGeneration ? "procedural" : $"heightmap {HeightmapTextureGuid}";
+                    Console.WriteLine($"[Terrain] OnAttached(): Regenerating terrain from {source}");
                     GenerateTerrain();
                 }
                 catch (Exception ex)
@@ -136,9 +222,35 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// FIX C5: Called when entering Play Mode to regenerate vegetation
-        /// This ensures vegetation entities are created in the Play scene
+        /// Called when component starts - used for both PlayMode and after scene load.
+        /// This ensures terrain is generated even if OnAttached() was called before deserialization.
         /// </summary>
+        public override void OnEnable()
+        {
+            base.OnEnable();
+
+            // Check if we have a valid source but no mesh - works in both Edit and Play mode
+            // This ensures terrain is generated when opening a scene OR entering play mode
+            if (!_checkedGenerationOnLoad)
+            {
+                _checkedGenerationOnLoad = true;
+
+                bool hasHeightmapSource = UseProceduralGeneration || HeightmapTextureGuid.HasValue;
+                if (hasHeightmapSource && !_meshGenerated)
+                {
+                    try
+                    {
+                        Console.WriteLine($"[Terrain] OnEnable(): Detected missing mesh, generating terrain (UseProceduralGeneration={UseProceduralGeneration})");
+                        GenerateTerrain();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Terrain] Failed to generate terrain in OnEnable(): {ex.Message}");
+                    }
+                }
+            }
+        }
+
         public override void Start()
         {
             base.Start();
@@ -146,6 +258,28 @@ namespace Engine.Components
             // Check if we're in Play Mode by checking if Entity has a valid scene
             if (Entity?.Scene == null)
                 return;
+
+            // One-time check after scene load: ensure terrain is generated if needed
+            // This is a backup in case OnEnable didn't run (shouldn't happen normally)
+            if (!_checkedGenerationOnLoad)
+            {
+                _checkedGenerationOnLoad = true;
+
+                // Check if we have a valid source but no mesh
+                bool hasHeightmapSource = UseProceduralGeneration || HeightmapTextureGuid.HasValue;
+                if (hasHeightmapSource && !_meshGenerated)
+                {
+                    try
+                    {
+                        Console.WriteLine($"[Terrain] Start(): Detected missing mesh after scene load, generating terrain (UseProceduralGeneration={UseProceduralGeneration})");
+                        GenerateTerrain();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Terrain] Failed to generate terrain in Start(): {ex.Message}");
+                    }
+                }
+            }
 
             // DEBUG: Log terrain state to diagnose invisibility issue
             // Mesh regeneration disabled - causes freeze and doesn't fix invisibility
@@ -194,7 +328,8 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Generate terrain mesh from heightmap. Call this after setting HeightmapTextureGuid.
+        /// Generate terrain mesh from heightmap (texture or procedural).
+        /// Call this after setting HeightmapTextureGuid or enabling UseProceduralGeneration.
         /// </summary>
         public void GenerateTerrain()
         {
@@ -203,14 +338,15 @@ namespace Engine.Components
                 // Clear old terrain data first
                 ClearTerrain();
 
-                // Check GUID
-                if (!HeightmapTextureGuid.HasValue)
+                // Check if we have a valid source (texture or procedural)
+                if (!UseProceduralGeneration && !HeightmapTextureGuid.HasValue)
                 {
-                    Console.WriteLine("[Terrain] ERROR: No heightmap texture GUID assigned");
+                    Console.WriteLine("[Terrain] ERROR: No heightmap source - enable procedural generation or assign a heightmap texture");
                     return;
                 }
 
-                Console.WriteLine($"[Terrain] Starting terrain generation with HeightmapTextureGuid={HeightmapTextureGuid.Value}");
+                string source = UseProceduralGeneration ? "Procedural" : $"Texture={HeightmapTextureGuid}";
+                Console.WriteLine($"[Terrain] Starting terrain generation with source={source}");
 
                 // Debug: log mesh parameters
                 Console.WriteLine($"[Terrain] Parameters: Width={TerrainWidth}, Length={TerrainLength}, Height={TerrainHeight}, Resolution={MeshResolution}");
@@ -269,11 +405,24 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Load heightmap from texture asset. Returns normalized float[,] with values [0,1].
-        /// Uses disk cache to avoid expensive PNG decoding on subsequent loads.
+        /// Load or generate heightmap. Returns normalized float[,] with values [0,1].
+        /// Uses disk cache to avoid expensive PNG decoding or regeneration on subsequent loads.
         /// </summary>
         private float[,]? LoadHeightmap()
         {
+            // Blend mode: procedural + texture
+            if (UseProceduralGeneration && BlendWithTexture && HeightmapTextureGuid.HasValue)
+            {
+                return GenerateBlendedHeightmap();
+            }
+
+            // Procedural generation mode only
+            if (UseProceduralGeneration)
+            {
+                return GenerateProceduralHeightmap();
+            }
+
+            // Texture-based mode (legacy)
             if (!HeightmapTextureGuid.HasValue)
             {
                 Console.WriteLine("[Terrain] No heightmap texture assigned");
@@ -301,6 +450,108 @@ namespace Engine.Components
             catch (Exception ex)
             {
                 Console.WriteLine($"[Terrain] Failed to load heightmap: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Generate blended heightmap from procedural + texture sources
+        /// </summary>
+        private float[,]? GenerateBlendedHeightmap()
+        {
+            try
+            {
+                Console.WriteLine("[Terrain] Generating blended heightmap (procedural + texture)...");
+
+                // Generate procedural heightmap
+                var proceduralMap = GenerateProceduralHeightmap();
+                if (proceduralMap == null)
+                {
+                    Console.WriteLine("[Terrain] Failed to generate procedural heightmap for blending");
+                    return null;
+                }
+
+                // Load texture heightmap
+                var textureMap = Engine.Rendering.HeightmapLoader.LoadHeightmapFromTexture(HeightmapTextureGuid!.Value);
+                if (textureMap == null)
+                {
+                    Console.WriteLine("[Terrain] Failed to load texture heightmap for blending, using procedural only");
+                    return proceduralMap;
+                }
+
+                // Blend the two heightmaps
+                var blended = Engine.Rendering.Terrain.HeightmapBlending.Blend(
+                    textureMap, proceduralMap, BlendMode, BlendStrength);
+
+                Console.WriteLine($"[Terrain] Blended heightmap generated: {blended.GetLength(0)}x{blended.GetLength(1)} (mode={BlendMode}, strength={BlendStrength})");
+                return blended;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Terrain] Failed to generate blended heightmap: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Generate procedural heightmap using noise algorithms.
+        /// Uses cache to avoid regenerating identical terrains.
+        /// </summary>
+        private float[,]? GenerateProceduralHeightmap()
+        {
+            // Try to load from cache first
+            if (TryLoadHeightmapFromCache(out var cachedHeightmap))
+            {
+                Console.WriteLine($"[Terrain] ⚡ Loaded procedural heightmap from cache ({cachedHeightmap.GetLength(0)}x{cachedHeightmap.GetLength(1)})");
+                return cachedHeightmap;
+            }
+
+            try
+            {
+                Console.WriteLine("[Terrain] Generating procedural heightmap...");
+
+                // Use mesh resolution as heightmap resolution for consistency
+                int resolution = MeshResolution;
+
+                var parameters = new Engine.Rendering.Terrain.ProceduralHeightmapParams
+                {
+                    Seed = ProceduralSeed,
+                    NoiseScale = NoiseScale,
+                    Octaves = Octaves,
+                    Persistence = Persistence,
+                    Lacunarity = Lacunarity,
+                    OffsetX = NoiseOffsetX,
+                    OffsetY = NoiseOffsetY,
+                    NoiseType = NoiseType,
+                    IslandMode = IslandMode,
+                    IslandFalloff = IslandFalloff,
+                    EnableTerracing = EnableTerracing,
+                    TerraceCount = TerraceCount,
+                    HeightMultiplier = HeightMultiplier,
+                    HeightPower = HeightPower,
+                    UseDomainWarping = UseDomainWarping,
+                    DomainWarpStrength = DomainWarpStrength,
+                    ApplyErosion = ApplyErosion,
+                    HydraulicIterations = HydraulicIterations,
+                    HydraulicStrength = HydraulicStrength,
+                    ThermalIterations = ThermalIterations,
+                    ThermalTalusAngle = ThermalTalusAngle,
+                    ThermalStrength = ThermalStrength
+                };
+
+                var heightmap = Engine.Rendering.Terrain.ProceduralHeightmapGenerator.Generate(
+                    resolution, resolution, parameters);
+
+                Console.WriteLine($"[Terrain] Generated procedural heightmap: {resolution}x{resolution}");
+
+                // Save to cache for next time
+                SaveHeightmapToCache(heightmap);
+
+                return heightmap;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Terrain] Failed to generate procedural heightmap: {ex.Message}");
                 return null;
             }
         }
@@ -470,22 +721,37 @@ namespace Engine.Components
             string cacheDir = System.IO.Path.Combine("Cache", "Terrain");
             System.IO.Directory.CreateDirectory(cacheDir);
 
-            // Build a deterministic key from heightmap guid + file timestamp
-            // We don't include terrain parameters here since heightmap is independent of terrain size
-            string key = $"heightmap_{HeightmapTextureGuid}";
-            try
+            string key;
+
+            if (UseProceduralGeneration)
             {
-                if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
-                {
-                    try
-                    {
-                        var ticks = System.IO.File.GetLastWriteTimeUtc(rec.Path).Ticks;
-                        key += $"_{ticks}";
-                    }
-                    catch { /* ignore filesystem issues, key without timestamp still valid */ }
-                }
+                // Build key from all procedural parameters
+                key = $"heightmap_procedural_{ProceduralSeed}_{NoiseScale}_{Octaves}_{Persistence}_{Lacunarity}_" +
+                      $"{NoiseOffsetX}_{NoiseOffsetY}_{NoiseType}_{IslandMode}_{IslandFalloff}_" +
+                      $"{EnableTerracing}_{TerraceCount}_{HeightMultiplier}_{HeightPower}_{UseDomainWarping}_{DomainWarpStrength}_" +
+                      $"{BlendWithTexture}_{BlendMode}_{BlendStrength}_{HeightmapTextureGuid}_" +
+                      $"{ApplyErosion}_{HydraulicIterations}_{HydraulicStrength}_{ThermalIterations}_{ThermalTalusAngle}_{ThermalStrength}_" +
+                      $"{MeshResolution}";
             }
-            catch { /* defensive: AssetDatabase may not be available at very early startup */ }
+            else
+            {
+                // Build a deterministic key from heightmap guid + file timestamp
+                // We don't include terrain parameters here since heightmap is independent of terrain size
+                key = $"heightmap_{HeightmapTextureGuid}";
+                try
+                {
+                    if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
+                    {
+                        try
+                        {
+                            var ticks = System.IO.File.GetLastWriteTimeUtc(rec.Path).Ticks;
+                            key += $"_{ticks}";
+                        }
+                        catch { /* ignore filesystem issues, key without timestamp still valid */ }
+                    }
+                }
+                catch { /* defensive: AssetDatabase may not be available at very early startup */ }
+            }
 
             // Use SHA256 to create a stable filename
             using var sha = SHA256.Create();
@@ -1694,6 +1960,218 @@ namespace Engine.Components
 
             // Fallback to Back culling (most common default)
             return Engine.Components.CullingMode.Back;
+        }
+
+        // ===========================
+        // COLLISION & PHYSICS
+        // ===========================
+
+        /// <summary>
+        /// Get terrain height at world position using bilinear interpolation.
+        /// Returns 0 if position is outside terrain bounds.
+        /// </summary>
+        /// <param name="worldX">World X coordinate</param>
+        /// <param name="worldZ">World Z coordinate</param>
+        /// <returns>Terrain height in world space</returns>
+        public float GetHeightAtPosition(float worldX, float worldZ)
+        {
+            if (_heightData == null)
+            {
+                Console.WriteLine("[Terrain] Cannot get height: heightmap not loaded");
+                return 0f;
+            }
+
+            // Get terrain world position (from entity transform)
+            var terrainWorldPos = Entity?.Transform.Position ?? OpenTK.Mathematics.Vector3.Zero;
+
+            // Convert world coordinates to local terrain space
+            float localX = worldX - terrainWorldPos.X;
+            float localZ = worldZ - terrainWorldPos.Z;
+
+            // Convert local coords to normalized [0, 1] range
+            float normalizedX = (localX / TerrainWidth) + 0.5f;
+            float normalizedZ = (localZ / TerrainLength) + 0.5f;
+
+            // Clamp to valid range (outside terrain = return 0)
+            if (normalizedX < 0f || normalizedX > 1f || normalizedZ < 0f || normalizedZ > 1f)
+                return terrainWorldPos.Y; // Return terrain base height
+
+            // Sample heightmap with bilinear interpolation
+            int width = _heightData.GetLength(0);
+            int height = _heightData.GetLength(1);
+
+            float u = normalizedX * (width - 1);
+            float v = normalizedZ * (height - 1);
+
+            int x0 = (int)Math.Floor(u);
+            int z0 = (int)Math.Floor(v);
+            int x1 = Math.Min(x0 + 1, width - 1);
+            int z1 = Math.Min(z0 + 1, height - 1);
+
+            float fx = u - x0;
+            float fz = v - z0;
+
+            // Bilinear interpolation
+            float h00 = _heightData[x0, z0];
+            float h10 = _heightData[x1, z0];
+            float h01 = _heightData[x0, z1];
+            float h11 = _heightData[x1, z1];
+
+            float h0 = h00 * (1f - fx) + h10 * fx;
+            float h1 = h01 * (1f - fx) + h11 * fx;
+            float normalizedHeight = h0 * (1f - fz) + h1 * fz;
+
+            // Convert to world height
+            return terrainWorldPos.Y + (normalizedHeight * TerrainHeight);
+        }
+
+        /// <summary>
+        /// Get terrain surface normal at world position.
+        /// Used for slope calculations, physics, lighting, etc.
+        /// </summary>
+        /// <param name="worldX">World X coordinate</param>
+        /// <param name="worldZ">World Z coordinate</param>
+        /// <returns>Normal vector (normalized)</returns>
+        public OpenTK.Mathematics.Vector3 GetNormalAtPosition(float worldX, float worldZ)
+        {
+            if (_heightData == null)
+                return OpenTK.Mathematics.Vector3.UnitY; // Default to up
+
+            // Sample heights in a cross pattern around the point
+            float sampleDistance = 1.0f; // 1 meter sampling distance
+
+            float h = GetHeightAtPosition(worldX, worldZ);
+            float hL = GetHeightAtPosition(worldX - sampleDistance, worldZ);
+            float hR = GetHeightAtPosition(worldX + sampleDistance, worldZ);
+            float hD = GetHeightAtPosition(worldX, worldZ - sampleDistance);
+            float hU = GetHeightAtPosition(worldX, worldZ + sampleDistance);
+
+            // Calculate normal using central differences
+            // This gives a smooth, accurate normal
+            OpenTK.Mathematics.Vector3 normal = new OpenTK.Mathematics.Vector3(
+                hL - hR,                    // X component (slope in X direction)
+                2.0f * sampleDistance,      // Y component (vertical)
+                hD - hU                     // Z component (slope in Z direction)
+            );
+
+            return OpenTK.Mathematics.Vector3.Normalize(normal);
+        }
+
+        /// <summary>
+        /// Raycast against terrain heightmap.
+        /// Performs heightmap-based raycast for accurate terrain collision.
+        /// </summary>
+        /// <param name="origin">Ray origin in world space</param>
+        /// <param name="direction">Ray direction (should be normalized)</param>
+        /// <param name="maxDistance">Maximum raycast distance</param>
+        /// <param name="hit">Output hit information</param>
+        /// <returns>True if ray hit the terrain</returns>
+        public bool RaycastTerrain(OpenTK.Mathematics.Vector3 origin, OpenTK.Mathematics.Vector3 direction, float maxDistance, out Engine.Physics.RaycastHit hit)
+        {
+            hit = default;
+
+            if (_heightData == null)
+                return false;
+
+            // Normalize direction
+            direction = OpenTK.Mathematics.Vector3.Normalize(direction);
+
+            // Ray marching parameters
+            float stepSize = 0.5f; // Step 0.5m at a time
+            int maxSteps = (int)(maxDistance / stepSize);
+
+            OpenTK.Mathematics.Vector3 currentPos = origin;
+
+            for (int i = 0; i < maxSteps; i++)
+            {
+                // Get terrain height at current position
+                float terrainHeight = GetHeightAtPosition(currentPos.X, currentPos.Z);
+
+                // Check if we're below terrain (hit!)
+                if (currentPos.Y <= terrainHeight)
+                {
+                    // Refine hit point with binary search for accuracy
+                    OpenTK.Mathematics.Vector3 hitPoint = RefinedHitPoint(currentPos - direction * stepSize, currentPos, 4);
+
+                    float distance = (hitPoint - origin).Length;
+                    OpenTK.Mathematics.Vector3 normal = GetNormalAtPosition(hitPoint.X, hitPoint.Z);
+
+                    hit = new Engine.Physics.RaycastHit(
+                        Entity,
+                        null, // Terrain doesn't have a traditional collider
+                        hitPoint,
+                        normal,
+                        distance
+                    );
+
+                    return true;
+                }
+
+                // Move along ray
+                currentPos += direction * stepSize;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Refine raycast hit point using binary search for better accuracy
+        /// </summary>
+        private OpenTK.Mathematics.Vector3 RefinedHitPoint(OpenTK.Mathematics.Vector3 start, OpenTK.Mathematics.Vector3 end, int iterations)
+        {
+            for (int i = 0; i < iterations; i++)
+            {
+                OpenTK.Mathematics.Vector3 mid = (start + end) * 0.5f;
+                float terrainHeight = GetHeightAtPosition(mid.X, mid.Z);
+
+                if (mid.Y > terrainHeight)
+                {
+                    start = mid; // Hit is further along
+                }
+                else
+                {
+                    end = mid; // Hit is earlier
+                }
+            }
+
+            return (start + end) * 0.5f;
+        }
+
+        /// <summary>
+        /// Check if a world position is within terrain bounds
+        /// </summary>
+        /// <param name="worldX">World X coordinate</param>
+        /// <param name="worldZ">World Z coordinate</param>
+        /// <returns>True if position is on terrain</returns>
+        public bool IsPositionOnTerrain(float worldX, float worldZ)
+        {
+            if (_heightData == null)
+                return false;
+
+            var terrainWorldPos = Entity?.Transform.Position ?? OpenTK.Mathematics.Vector3.Zero;
+
+            float localX = worldX - terrainWorldPos.X;
+            float localZ = worldZ - terrainWorldPos.Z;
+
+            float normalizedX = (localX / TerrainWidth) + 0.5f;
+            float normalizedZ = (localZ / TerrainLength) + 0.5f;
+
+            return normalizedX >= 0f && normalizedX <= 1f && normalizedZ >= 0f && normalizedZ <= 1f;
+        }
+
+        /// <summary>
+        /// Get slope angle at position in degrees (0 = flat, 90 = vertical)
+        /// Useful for gameplay (can character walk here? can place object?)
+        /// </summary>
+        /// <param name="worldX">World X coordinate</param>
+        /// <param name="worldZ">World Z coordinate</param>
+        /// <returns>Slope angle in degrees</returns>
+        public float GetSlopeAngleAtPosition(float worldX, float worldZ)
+        {
+            var normal = GetNormalAtPosition(worldX, worldZ);
+            float dotProduct = OpenTK.Mathematics.Vector3.Dot(normal, OpenTK.Mathematics.Vector3.UnitY);
+            float angleRad = (float)Math.Acos(Math.Clamp(dotProduct, -1.0, 1.0));
+            return angleRad * (180f / (float)Math.PI); // Convert to degrees
         }
     }
 }

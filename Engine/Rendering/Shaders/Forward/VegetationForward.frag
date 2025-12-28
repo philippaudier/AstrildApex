@@ -95,8 +95,22 @@ float calculateSnowPlacement(vec3 normal, float slopeMinDeg, float slopeMaxDeg)
     float angleDeg = angleRad * 57.29577951;
 
     float fadeWidth = 5.0;
-    float fadeIn = smoothstep(slopeMinDeg, slopeMinDeg + fadeWidth, angleDeg);
-    float fadeOut = 1.0 - smoothstep(slopeMaxDeg - fadeWidth, slopeMaxDeg, angleDeg);
+
+    // CRITICAL FIX: Fade in from min slope ONLY if minDeg > 0
+    // At minDeg = 0 (perfectly flat), we want full coverage, not fade in from nothing!
+    float fadeIn = 1.0;
+    if (slopeMinDeg > 0.01 && angleDeg < slopeMinDeg + fadeWidth)
+    {
+        fadeIn = smoothstep(slopeMinDeg, slopeMinDeg + fadeWidth, angleDeg);
+    }
+
+    // CRITICAL FIX: Fade out at max slope ONLY if maxDeg < 90
+    // At maxDeg = 90 (vertical), we want full coverage, not fade out to nothing!
+    float fadeOut = 1.0;
+    if (slopeMaxDeg < 89.99 && angleDeg > slopeMaxDeg - fadeWidth)
+    {
+        fadeOut = 1.0 - smoothstep(slopeMaxDeg - fadeWidth, slopeMaxDeg, angleDeg);
+    }
 
     return clamp(fadeIn * fadeOut, 0.0, 1.0);
 }

@@ -300,7 +300,7 @@ namespace Engine.Rendering
                 // DEBUG: Print every 120 frames to see WeatherManager state
                 if (_renderCallCounter++ % 120 == 0)
                 {
-                    System.Console.WriteLine($"[VegetationRenderer] WeatherManager: SnowAccumulation={wm.SnowAccumulation:F3}, SnowMapMaterial={wm.SnowMapMaterial?.ToString() ?? "null"}");
+                    // System.Console.WriteLine($"[VegetationRenderer] WeatherManager: SnowAccumulation={wm.SnowAccumulation:F3}, SnowMapMaterial={wm.SnowMapMaterial?.ToString() ?? "null"}");
                 }
 
                 // Override caller-supplied weather params to ensure consistent, thread-safe values
@@ -547,12 +547,12 @@ namespace Engine.Rendering
                                 // DEBUG: Log snow material properties every 120 frames
                                 if (_renderCallCounter % 120 == 0)
                                 {
-                                    System.Console.WriteLine($"[VegetationRenderer] Snow material: {snowMat.Name}, NormalStrength={snowRuntime.NormalStrength:F2}, Tiling=({snowRuntime.TextureTiling[0]:F2}, {snowRuntime.TextureTiling[1]:F2})");
+                                    // System.Console.WriteLine($"[VegetationRenderer] Snow material: {snowMat.Name}, NormalStrength={snowRuntime.NormalStrength:F2}, Tiling=({snowRuntime.TextureTiling[0]:F2}, {snowRuntime.TextureTiling[1]:F2})");
                                 }
                             }
                             else
                             {
-                                System.Console.WriteLine($"[VegetationRenderer] Snow material GUID found but LoadMaterial returned null: {wm.SnowMapMaterial.Value}");
+                                //System.Console.WriteLine($"[VegetationRenderer] Snow material GUID found but LoadMaterial returned null: {wm.SnowMapMaterial.Value}");
                                 BindDefaultSnowTextures(shToUse);
                             }
                         }

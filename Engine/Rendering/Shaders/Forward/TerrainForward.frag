@@ -153,14 +153,23 @@ float calculateSnowPlacement(vec3 normal, float slopeMinDeg, float slopeMaxDeg)
     // Smooth transition at boundaries (5 degrees fade)
     float fadeWidth = 5.0;
 
-    // Fade in from min angle (0.0 below min, 1.0 above min+fadeWidth)
-    float fadeIn = smoothstep(slopeMinDeg, slopeMinDeg + fadeWidth, angleDeg);
+    // CRITICAL FIX: Fade in from min slope ONLY if minDeg > 0
+    // At minDeg = 0 (perfectly flat), we want full coverage, not fade in from nothing!
+    float fadeIn = 1.0;
+    if (slopeMinDeg > 0.01 && angleDeg < slopeMinDeg + fadeWidth)
+    {
+        fadeIn = smoothstep(slopeMinDeg, slopeMinDeg + fadeWidth, angleDeg);
+    }
 
-    // Fade out at max angle (1.0 below max-fadeWidth, 0.0 above max)
-    float fadeOut = 1.0 - smoothstep(slopeMaxDeg - fadeWidth, slopeMaxDeg, angleDeg);
+    // CRITICAL FIX: Fade out at max slope ONLY if maxDeg < 90
+    // At maxDeg = 90 (vertical), we want full coverage, not fade out to nothing!
+    float fadeOut = 1.0;
+    if (slopeMaxDeg < 89.99 && angleDeg > slopeMaxDeg - fadeWidth)
+    {
+        fadeOut = 1.0 - smoothstep(slopeMaxDeg - fadeWidth, slopeMaxDeg, angleDeg);
+    }
 
     // Combine: fadeIn * fadeOut gives 1.0 within range, smooth transitions outside
-    // FIXED: Was (1.0 - fadeIn) * fadeOut which inverted the logic
     return clamp(fadeIn * fadeOut, 0.0, 1.0);
 }
 
