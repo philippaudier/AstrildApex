@@ -132,12 +132,12 @@ namespace Engine.Components
         // RenderPosition = Interpolated position for camera/rendering
 
         private Vector3 _previousPhysicsPosition = Vector3.Zero;  // Position at previous FixedUpdate
-        private Vector3 _currentPhysicsPosition = Vector3.Zero;   // Position at current FixedUpdate
-        private float _timeSinceLastFixedUpdate = 0f;
+        private float _lastFixedUpdateTime = 0f;  // Absolute time of last FixedUpdate
 
         /// <summary>
         /// Position to use for rendering (camera should read this instead of Transform.Position).
         /// This is the interpolated position between physics frames.
+        /// Uses absolute time to avoid stuttering from frame timing issues.
         /// </summary>
         public Vector3 RenderPosition
         {
@@ -148,18 +148,30 @@ namespace Engine.Components
 
                 if (Interpolation == InterpolationMode.Interpolate)
                 {
-                    // Interpolate between previous and current physics positions
-                    float alpha = _timeSinceLastFixedUpdate / Engine.Core.Time.FixedDeltaTime;
+                    // Calculate time since last FixedUpdate using absolute time
+                    // This avoids stuttering issues from delta time accumulation
+                    float timeSinceFixed = Engine.Core.Time.TimeValue - _lastFixedUpdateTime;
+                    float alpha = timeSinceFixed / Engine.Core.Time.FixedDeltaTime;
                     alpha = MathF.Max(0f, MathF.Min(1f, alpha));
-                    return Vector3.Lerp(_previousPhysicsPosition, _currentPhysicsPosition, alpha);
+
+                    // CRITICAL FIX: When FixedUpdate just executed (alpha ~= 0), show current position
+                    // Otherwise interpolation shows the OLD position causing stuttering!
+                    if (alpha < 0.1f)
+                    {
+                        return Entity.Transform.Position;
+                    }
+
+                    // Interpolate between previous and current physics state
+                    return Vector3.Lerp(_previousPhysicsPosition, Entity.Transform.Position, alpha);
                 }
                 else if (Interpolation == InterpolationMode.Extrapolate)
                 {
                     // Extrapolate based on velocity
-                    return _currentPhysicsPosition + Velocity * _timeSinceLastFixedUpdate;
+                    float timeSinceFixed = Engine.Core.Time.TimeValue - _lastFixedUpdateTime;
+                    return Entity.Transform.Position + Velocity * timeSinceFixed;
                 }
 
-                return _currentPhysicsPosition;
+                return Entity.Transform.Position;
             }
         }
 
@@ -169,23 +181,23 @@ namespace Engine.Components
         {
             base.OnEnable();
 
-            // Initialize interpolation positions to avoid jump on first frame
+            // Initialize interpolation to avoid jump on first frame
             if (Entity != null)
             {
                 _previousPhysicsPosition = Entity.Transform.Position;
-                _currentPhysicsPosition = Entity.Transform.Position;
+                _lastFixedUpdateTime = Engine.Core.Time.TimeValue;
             }
         }
 
-        public override void FixedUpdate(float deltaTime)
+        public override void Update(float deltaTime)
         {
-            base.FixedUpdate(deltaTime);
+            base.Update(deltaTime);
 
             if (Entity == null || Mode != CharacterControllerMode.Kinematic)
                 return;
 
-            // Store previous physics position for interpolation
-            _previousPhysicsPosition = _currentPhysicsPosition;
+            // KINEMATIC MODE: Movement in Update (synchronized with camera LateUpdate)
+            // No interpolation needed - everything runs in the same frame loop
 
             // Apply gravity only when NOT grounded
             if (EnableGravity && !IsGrounded)
@@ -216,23 +228,14 @@ namespace Engine.Components
             {
                 Velocity = new Vector3(Velocity.X * 0.9f, 0f, Velocity.Z * 0.9f);
             }
-
-            // Store current physics position (Transform.Position is the ground truth)
-            _currentPhysicsPosition = Entity.Transform.Position;
-
-            // Reset interpolation timer
-            _timeSinceLastFixedUpdate = 0f;
         }
 
-        public override void Update(float deltaTime)
+        public override void FixedUpdate(float deltaTime)
         {
-            base.Update(deltaTime);
+            base.FixedUpdate(deltaTime);
 
-            if (Entity == null || Mode != CharacterControllerMode.Kinematic)
-                return;
-
-            // Accumulate time since last FixedUpdate
-            _timeSinceLastFixedUpdate += deltaTime;
+            // FixedUpdate is for Physics mode (future BulletSharp integration)
+            // Kinematic mode uses Update() to stay synchronized with camera
         }
 
         public override void LateUpdate(float deltaTime)
@@ -538,7 +541,7 @@ namespace Engine.Components
 
         /// <summary>
         /// Move on terrain with horizontal collision detection and vertical terrain following.
-        /// This is called when grounded on terrain - completely bypasses vertical physics.
+        /// Calculates vertical velocity to smoothly follow terrain height.
         /// </summary>
         private void MoveOnTerrain(Vector3 motion)
         {
@@ -549,62 +552,77 @@ namespace Engine.Components
 
             Vector3 currentPos = Entity.Transform.Position;
 
-            // STEP 1: Move horizontally only (ignore motion.Y, we'll calculate Y from terrain)
+            // STEP 1: Calculate target XZ position (horizontal movement with collisions)
             Vector3 horizontalMotion = new Vector3(motion.X, 0f, motion.Z);
+            Vector3 targetXZ = currentPos;
 
-            if (horizontalMotion.LengthSquared < MinMoveDistance * MinMoveDistance)
+            if (horizontalMotion.LengthSquared >= MinMoveDistance * MinMoveDistance)
             {
-                // No horizontal movement - just update Y to terrain height
-                UpdateHeightToTerrain(currentPos.X, currentPos.Z);
-                return;
+                // Check horizontal collisions
+                Vector3 origin = currentPos + Center;
+                Vector3 direction = Vector3.Normalize(horizontalMotion);
+                float distance = horizontalMotion.Length;
+
+                if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.9f, direction, out RaycastHit hit, distance, CollisionMask))
+                {
+                    // Hit something - slide along surface
+                    float safeDistance = MathF.Max(0, hit.Distance - SkinWidth);
+                    Vector3 slideMotion = horizontalMotion - Vector3.Dot(horizontalMotion, hit.Normal) * hit.Normal;
+                    targetXZ = currentPos + Vector3.Normalize(horizontalMotion) * safeDistance + slideMotion * 0.5f;
+                }
+                else
+                {
+                    // No collision - move full distance
+                    targetXZ = currentPos + horizontalMotion;
+                }
             }
 
-            // STEP 2: Check horizontal collisions (walls, obstacles)
-            Vector3 desiredPos = currentPos + horizontalMotion;
-            Vector3 finalPos = currentPos;
+            // STEP 2: Calculate target Y from terrain height at new XZ
+            float targetY = CalculateTerrainTargetY(targetXZ.X, targetXZ.Z);
 
-            // Use capsule cast for horizontal collision (only check middle sphere to allow climbing)
-            Vector3 origin = currentPos + Center;
-            Vector3 direction = Vector3.Normalize(horizontalMotion);
-            float distance = horizontalMotion.Length;
+            // STEP 3: Calculate vertical movement to reach target height smoothly
+            // This creates smooth interpolation instead of direct snapping
+            float currentY = currentPos.Y;
+            float heightDiff = targetY - currentY;
 
-            if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.9f, direction, out RaycastHit hit, distance, CollisionMask))
-            {
-                // Hit something - slide along surface
-                float safeDistance = MathF.Max(0, hit.Distance - SkinWidth);
-                Vector3 slideMotion = horizontalMotion - Vector3.Dot(horizontalMotion, hit.Normal) * hit.Normal;
-                finalPos = currentPos + Vector3.Normalize(horizontalMotion) * safeDistance + slideMotion * 0.5f;
-            }
-            else
-            {
-                // No collision - move full distance
-                finalPos = desiredPos;
-            }
+            // Use exponential smoothing for vertical movement (prevents overshoot)
+            // This gives smooth, damped movement that converges to target without oscillation
+            const float verticalSmoothSpeed = 20f; // Higher = more responsive
+            float smoothFactor = 1f - MathF.Exp(-verticalSmoothSpeed * Engine.Core.Time.FixedDeltaTime);
+            float verticalMotion = heightDiff * smoothFactor;
 
-            // STEP 3: Update Y position to match terrain height at new XZ position
-            UpdateHeightToTerrain(finalPos.X, finalPos.Z);
+            // Update velocity for interpolation (but don't accumulate, use calculated motion)
+            Velocity = new Vector3(
+                Velocity.X,
+                verticalMotion / Engine.Core.Time.FixedDeltaTime,
+                Velocity.Z
+            );
+
+            // STEP 4: Apply full motion (horizontal + smooth vertical)
+            Vector3 fullMotion = new Vector3(
+                targetXZ.X - currentPos.X,
+                verticalMotion,
+                targetXZ.Z - currentPos.Z
+            );
+
+            Entity.Transform.Position = currentPos + fullMotion;
         }
 
         /// <summary>
-        /// Set entity Y position to match terrain height (perfect capsule alignment)
+        /// Calculate the target Y position for perfect capsule alignment on terrain
         /// </summary>
-        private void UpdateHeightToTerrain(float worldX, float worldZ)
+        private float CalculateTerrainTargetY(float worldX, float worldZ)
         {
-            if (Entity == null) return;
-
             var terrain = FindTerrain();
             if (terrain == null || !terrain.IsPositionOnTerrain(worldX, worldZ))
-                return;
+                return Entity?.Transform.Position.Y ?? 0f;
 
             // Query terrain height
             float terrainHeight = terrain.GetHeightAtPosition(worldX, worldZ);
 
             // Calculate correct entity Y for capsule alignment
             float halfCylinderHeight = (Height - 2f * Radius) * 0.5f;
-            float targetY = terrainHeight - Center.Y + halfCylinderHeight + Radius;
-
-            // Set position directly (no snapping, no corrections)
-            Entity.Transform.Position = new Vector3(worldX, targetY, worldZ);
+            return terrainHeight - Center.Y + halfCylinderHeight + Radius;
         }
 
         /// <summary>

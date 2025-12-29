@@ -174,9 +174,11 @@ namespace Engine.Components
         private Quaternion _smoothRotation = Quaternion.Identity;
         private bool _cursorWasLocked = false;
         private bool _escapeWasPressed = false;
+        private bool _leftClickWasPressed = false;  // Edge detection for left click
         private bool _userRequestedUnlock = false;  // Toggle state: true when user pressed Escape to unlock
         private bool _wasViewportFocused = false;   // Track focus transitions
         private bool _initialized = false;
+        private float _timeSinceEscape = float.MaxValue; // Time since last Escape press
 
         // ========== COMPONENT LIFECYCLE ==========
 
@@ -241,9 +243,10 @@ namespace Engine.Components
             _smoothPosition = pos;
             _smoothRotation = rot;
 
-            // Don't auto-lock cursor - wait for GamePanel focus
+            // Don't auto-lock cursor - wait for user to click in viewport
             InputManager.Instance?.UnlockCursor();
             _cursorWasLocked = false;
+            _userRequestedUnlock = true; // Start unlocked - user must click to engage
         }
 
         private void CleanupCursorState()
@@ -259,6 +262,9 @@ namespace Engine.Components
         private void UpdateCamera(float deltaTime)
         {
             if (Entity == null) return;
+
+            // Accumulate time since last Escape press
+            _timeSinceEscape += deltaTime;
 
             // Handle cursor locking based on GamePanel focus
             if (!HandleCursorState()) return;
@@ -344,16 +350,37 @@ namespace Engine.Components
             var im = InputManager.Instance;
             bool isMenuOpen = im?.IsMenuVisible ?? false;
 
-            // Detect viewport focus transition (unfocused → focused)
-            // OR mouse click in viewport while focused - reset the unlock request
-            bool mouseClicked = im != null && (im.GetMouseButton(MouseButton.Left) || im.GetMouseButton(MouseButton.Right) || im.GetMouseButton(MouseButton.Middle));
-
-            if ((isViewportFocused && !_wasViewportFocused) || (isViewportFocused && mouseClicked && _userRequestedUnlock))
+            // Track viewport focus changes
+            // CRITICAL: If viewport loses focus, unlock cursor and require re-click to engage
+            // This prevents lock loops when clicking UI buttons
+            if (_wasViewportFocused && !isViewportFocused && _cursorWasLocked)
             {
-                Console.WriteLine("[CameraComponent] Viewport clicked/focused - resetting unlock request");
-                _userRequestedUnlock = false;
+                Console.WriteLine("[CameraComponent] Viewport lost focus - unlocking cursor");
+                Engine.Input.Cursor.lockState = CursorLockMode.None;
+                Engine.Input.Cursor.visible = true;
+                InputManager.Instance?.UnlockCursor();
+                _cursorWasLocked = false;
+                _userRequestedUnlock = true; // Require click to re-engage
             }
             _wasViewportFocused = isViewportFocused;
+
+            // Detect left-click in viewport to engage cursor lock (edge-triggered)
+            bool leftClickDown = im != null && im.GetMouseButton(MouseButton.Left);
+            bool leftClickPressed = leftClickDown && !_leftClickWasPressed; // Rising edge
+
+            // Engage on left-click IF viewport is focused AND we're unlocked
+            // Grace period prevents accidental re-lock after Escape
+            if (leftClickPressed && isViewportFocused && _userRequestedUnlock)
+            {
+                const float escapeClickGracePeriod = 0.3f;
+                if (_timeSinceEscape > escapeClickGracePeriod)
+                {
+                    Console.WriteLine("[CameraComponent] Left-click in viewport - engaging cursor lock");
+                    _userRequestedUnlock = false;
+                }
+            }
+
+            _leftClickWasPressed = leftClickDown;
 
             // Check for Escape key to unlock cursor
             // NOTE: Using GetKey + edge detection because GetKeyDown doesn't work in Play Mode
@@ -369,6 +396,7 @@ namespace Engine.Components
                 _cursorWasLocked = false;
                 _userRequestedUnlock = true;  // Set toggle flag - stays unlocked until viewport clicked
                 _escapeWasPressed = true;
+                _timeSinceEscape = 0f; // Reset timer - ignore clicks for grace period
                 return false; // Skip camera updates this frame
             }
 
@@ -424,20 +452,12 @@ namespace Engine.Components
 
         /// <summary>
         /// Get the position to use for camera tracking.
-        /// Uses RenderPosition from CharacterController if available (for smooth interpolation),
-        /// otherwise uses Transform.Position.
+        /// In kinematic mode, CharacterController movement is in Update (same loop as camera LateUpdate),
+        /// so we read Transform.Position directly without interpolation.
         /// </summary>
         private Vector3 GetTargetPosition(Scene.Entity entity)
         {
-            // Check if entity has CharacterController
-            var controller = entity.GetComponent<CharacterController>();
-            if (controller != null)
-            {
-                // Use interpolated render position for smooth camera
-                return controller.RenderPosition;
-            }
-
-            // Fallback to regular transform position
+            // Kinematic movement is synchronized with camera - just read Transform.Position
             entity.GetWorldTRS(out var pos, out _, out _);
             return pos;
         }
@@ -735,7 +755,42 @@ namespace Engine.Components
 
         private float PerformCollisionCheck(Vector3 pivot, Vector3 desiredPosition, Vector3 forward, float distance)
         {
-            // Physics system removed - collision detection disabled
+            // Raycast from pivot (character) towards camera to detect obstacles
+            Vector3 direction = -forward; // Direction from pivot to camera
+            float checkDistance = distance;
+
+            var physicsManager = Physics.PhysicsManager.Instance;
+            if (physicsManager == null)
+                return distance;
+
+            // Check collision with physics colliders
+            if (physicsManager.Raycast(pivot, direction, out var hit, checkDistance, CollisionLayerMask))
+            {
+                // Hit something - move camera closer
+                float hitDistance = hit.Distance - CollisionMargin;
+                return MathF.Max(0.1f, hitDistance); // Minimum 0.1 to avoid being inside character
+            }
+
+            // Check collision with terrain if available
+            if (Entity?.Scene != null)
+            {
+                foreach (var entity in Entity.Scene.Entities)
+                {
+                    var terrain = entity.GetComponent<Terrain>();
+                    if (terrain != null)
+                    {
+                        if (terrain.RaycastTerrain(pivot, direction, checkDistance, out var terrainHit))
+                        {
+                            // Hit terrain - move camera closer
+                            float hitDistance = terrainHit.Distance - CollisionMargin;
+                            return MathF.Max(0.1f, hitDistance);
+                        }
+                        break; // Only check first terrain
+                    }
+                }
+            }
+
+            // No collision - use full distance
             return distance;
         }
 
