@@ -57,6 +57,12 @@ namespace Editor.Inspector
                 DrawColorOverLifetime(ps);
             }
 
+            // Fade
+            if (ThemedImGui.CollapsingHeader("Fade"))
+            {
+                DrawFade(ps);
+            }
+
             // Size over lifetime
             if (ThemedImGui.CollapsingHeader("Size Over Lifetime"))
             {
@@ -67,6 +73,12 @@ namespace Editor.Inspector
             if (ThemedImGui.CollapsingHeader("Rotation Over Lifetime"))
             {
                 DrawRotationOverLifetime(ps);
+            }
+
+            // Trails
+            if (ThemedImGui.CollapsingHeader("Trails"))
+            {
+                DrawTrails(ps);
             }
 
             // Renderer settings
@@ -287,6 +299,40 @@ namespace Editor.Inspector
             ImGui.Text("Start Rotation (degrees)");
             DrawMinMaxCurve(ps.StartRotation, 1.0f, -360, 360);
 
+            // 3D Rotation
+            bool use3DRotation = ps.Use3DRotation;
+            if (ImGui.Checkbox("Use 3D Rotation", ref use3DRotation))
+            {
+                ps.Use3DRotation = use3DRotation;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Enable random 3D rotation on all axes (X, Y, Z)");
+
+            if (ps.Use3DRotation)
+            {
+                ImGui.Indent();
+
+                // Min rotation 3D
+                var rotMin = new Vector3(ps.StartRotation3DMin.X, ps.StartRotation3DMin.Y, ps.StartRotation3DMin.Z);
+                if (ImGui.DragFloat3("Min Rotation (X, Y, Z)", ref rotMin, 1.0f, -360, 360))
+                {
+                    ps.StartRotation3DMin = new OpenTK.Mathematics.Vector3(rotMin.X, rotMin.Y, rotMin.Z);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Minimum rotation in degrees for each axis");
+
+                // Max rotation 3D
+                var rotMax = new Vector3(ps.StartRotation3DMax.X, ps.StartRotation3DMax.Y, ps.StartRotation3DMax.Z);
+                if (ImGui.DragFloat3("Max Rotation (X, Y, Z)", ref rotMax, 1.0f, -360, 360))
+                {
+                    ps.StartRotation3DMax = new OpenTK.Mathematics.Vector3(rotMax.X, rotMax.Y, rotMax.Z);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Maximum rotation in degrees for each axis");
+
+                ImGui.Unindent();
+            }
+
             // Start Color
             var color = ps.StartColor;
             var colorVec = new Vector4(color.R, color.G, color.B, color.A);
@@ -393,6 +439,59 @@ namespace Editor.Inspector
             ImGui.Unindent();
         }
 
+        private static void DrawFade(ParticleSystem ps)
+        {
+            ImGui.Indent();
+
+            // Fade In
+            bool fadeInEnabled = ps.FadeInEnabled;
+            if (ImGui.Checkbox("Fade In", ref fadeInEnabled))
+            {
+                ps.FadeInEnabled = fadeInEnabled;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Gradually fade in particles when they spawn");
+
+            if (fadeInEnabled)
+            {
+                ImGui.Indent();
+                float fadeInDuration = ps.FadeInDuration;
+                if (ImGui.DragFloat("Duration (seconds)##FadeIn", ref fadeInDuration, 0.01f, 0.0f, 10.0f))
+                {
+                    ps.FadeInDuration = Math.Max(0.0f, fadeInDuration);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("How long the fade in takes");
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+
+            // Fade Out
+            bool fadeOutEnabled = ps.FadeOutEnabled;
+            if (ImGui.Checkbox("Fade Out", ref fadeOutEnabled))
+            {
+                ps.FadeOutEnabled = fadeOutEnabled;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Gradually fade out particles before they die");
+
+            if (fadeOutEnabled)
+            {
+                ImGui.Indent();
+                float fadeOutDuration = ps.FadeOutDuration;
+                if (ImGui.DragFloat("Duration (seconds)##FadeOut", ref fadeOutDuration, 0.01f, 0.0f, 10.0f))
+                {
+                    ps.FadeOutDuration = Math.Max(0.0f, fadeOutDuration);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("How long before death the fade out starts");
+                ImGui.Unindent();
+            }
+
+            ImGui.Unindent();
+        }
+
         private static void DrawSizeOverLifetime(ParticleSystem ps)
         {
             ImGui.Indent();
@@ -425,12 +524,141 @@ namespace Editor.Inspector
             if (enabled)
             {
                 float speed = ps.RotationOverLifetimeSpeed;
-                if (ImGui.DragFloat("Angular Velocity", ref speed, 1.0f, -360, 360))
+                if (ImGui.DragFloat("Angular Velocity (2D)", ref speed, 1.0f, -360, 360))
                 {
                     ps.RotationOverLifetimeSpeed = speed;
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Rotation speed in degrees per second");
+                    ImGui.SetTooltip("2D rotation speed in degrees per second");
+            }
+
+            // 3D Rotation Over Lifetime
+            if (ps.Use3DRotation)
+            {
+                ImGui.Separator();
+                ImGui.Text("3D Rotation Over Lifetime");
+
+                var rot3D = new Vector3(ps.RotationOverLifetime3D.X, ps.RotationOverLifetime3D.Y, ps.RotationOverLifetime3D.Z);
+                if (ImGui.DragFloat3("Angular Velocity 3D (X, Y, Z)", ref rot3D, 1.0f, -360, 360))
+                {
+                    ps.RotationOverLifetime3D = new OpenTK.Mathematics.Vector3(rot3D.X, rot3D.Y, rot3D.Z);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Rotation speed for each axis in degrees per second");
+            }
+
+            ImGui.Unindent();
+        }
+
+        private static void DrawTrails(ParticleSystem ps)
+        {
+            ImGui.Indent();
+
+            bool trailsEnabled = ps.TrailsEnabled;
+            if (ImGui.Checkbox("Enable Trails", ref trailsEnabled))
+            {
+                ps.TrailsEnabled = trailsEnabled;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Add trails/streaks behind particles (useful for rain, projectiles, smoke, etc.)");
+
+            if (trailsEnabled)
+            {
+                ImGui.Separator();
+
+                // Lifetime
+                float lifetime = ps.TrailLifetime;
+                if (ImGui.DragFloat("Lifetime (seconds)", ref lifetime, 0.01f, 0.01f, 10.0f))
+                {
+                    ps.TrailLifetime = Math.Max(0.01f, lifetime);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("How long trail points stay visible");
+
+                // Width
+                ImGui.Text("Width");
+                ImGui.Indent();
+                float widthStart = ps.TrailWidthStart;
+                if (ImGui.DragFloat("Start##TrailWidth", ref widthStart, 0.01f, 0.01f, 10.0f))
+                {
+                    ps.TrailWidthStart = Math.Max(0.01f, widthStart);
+                }
+
+                float widthEnd = ps.TrailWidthEnd;
+                if (ImGui.DragFloat("End##TrailWidth", ref widthEnd, 0.01f, 0.001f, 10.0f))
+                {
+                    ps.TrailWidthEnd = Math.Max(0.001f, widthEnd);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Width tapers from start to end over lifetime");
+                ImGui.Unindent();
+
+                // Color
+                ImGui.Text("Color");
+                ImGui.Indent();
+                var colorStart = ps.TrailColorStart;
+                var colorStartVec = new Vector4(colorStart.R, colorStart.G, colorStart.B, colorStart.A);
+                if (ImGui.ColorEdit4("Start##TrailColor", ref colorStartVec))
+                {
+                    ps.TrailColorStart = new OpenTK.Mathematics.Color4(colorStartVec.X, colorStartVec.Y, colorStartVec.Z, colorStartVec.W);
+                }
+
+                var colorEnd = ps.TrailColorEnd;
+                var colorEndVec = new Vector4(colorEnd.R, colorEnd.G, colorEnd.B, colorEnd.A);
+                if (ImGui.ColorEdit4("End##TrailColor", ref colorEndVec))
+                {
+                    ps.TrailColorEnd = new OpenTK.Mathematics.Color4(colorEndVec.X, colorEndVec.Y, colorEndVec.Z, colorEndVec.W);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Color fades from start to end over lifetime");
+                ImGui.Unindent();
+
+                // Generate Mode
+                ImGui.Separator();
+                int generateMode = (int)ps.TrailGenerateMode;
+                string[] generateModeNames = { "Per Second", "Per Unit Distance" };
+                if (ImGui.Combo("Generate Mode", ref generateMode, generateModeNames, generateModeNames.Length))
+                {
+                    ps.TrailGenerateMode = (TrailGenerateMode)generateMode;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("How trail points are generated:\n- Per Second: Time-based generation\n- Per Unit: Distance-based generation");
+
+                // Generate Rate
+                if (ps.TrailGenerateMode == TrailGenerateMode.PerSecond)
+                {
+                    float rate = ps.TrailGenerateRate;
+                    if (ImGui.DragFloat("Points Per Second", ref rate, 0.1f, 0.1f, 100.0f))
+                    {
+                        ps.TrailGenerateRate = Math.Max(0.1f, rate);
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("How many trail points to generate per second");
+                }
+                else
+                {
+                    float minDistance = ps.TrailMinVertexDistance;
+                    if (ImGui.DragFloat("Min Vertex Distance", ref minDistance, 0.01f, 0.01f, 10.0f))
+                    {
+                        ps.TrailMinVertexDistance = Math.Max(0.01f, minDistance);
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Minimum distance particle must travel to create a new trail point");
+                }
+
+                // Texture
+                ImGui.Separator();
+                var newTrailTexture = EditorWidgets.AssetField(
+                    "Texture",
+                    ps.TrailTextureGuid == Guid.Empty ? (Guid?)null : ps.TrailTextureGuid,
+                    "Texture",
+                    "Optional texture for the trail ribbon",
+                    showPreview: true);
+
+                if (newTrailTexture != ps.TrailTextureGuid)
+                {
+                    ps.TrailTextureGuid = newTrailTexture ?? Guid.Empty;
+                }
             }
 
             ImGui.Unindent();
@@ -448,10 +676,95 @@ namespace Editor.Inspector
                 ps.RenderMode = (RenderMode)renderMode;
             }
 
-            // Material
-            ImGui.Text("Material: " + (ps.MaterialGuid == Guid.Empty ? "None" : ps.MaterialGuid.ToString()));
+            // Blend mode
+            int blendMode = (int)ps.BlendMode;
+            string[] blendModeNames = { "Alpha Blend", "Additive", "Multiply" };
+            if (ImGui.Combo("Blend Mode", ref blendMode, blendModeNames, blendModeNames.Length))
+            {
+                ps.BlendMode = (BlendMode)blendMode;
+            }
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Drag a material here (TODO: implement material drag-drop)");
+                ImGui.SetTooltip("Alpha Blend: Standard transparency\nAdditive: Glowing/fire effects\nMultiply: Darkening/smoke effects");
+
+            // Texture with drag and drop
+            var newTexture = EditorWidgets.AssetField(
+                "Texture",
+                ps.TextureGuid == Guid.Empty ? (Guid?)null : ps.TextureGuid,
+                "Texture",
+                "Particle texture or sprite sheet",
+                showPreview: true);
+
+            if (newTexture != ps.TextureGuid)
+            {
+                ps.TextureGuid = newTexture ?? Guid.Empty;
+            }
+
+            // Sprite sheet settings
+            if (ps.TextureGuid != Guid.Empty)
+            {
+                ImGui.Spacing();
+
+                int rows = ps.SpriteSheetRows;
+                if (ImGui.DragInt("Sprite Rows", ref rows, 0.1f, 1, 16))
+                {
+                    ps.SpriteSheetRows = Math.Max(1, rows);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Number of rows in the sprite sheet");
+
+                int columns = ps.SpriteSheetColumns;
+                if (ImGui.DragInt("Sprite Columns", ref columns, 0.1f, 1, 16))
+                {
+                    ps.SpriteSheetColumns = Math.Max(1, columns);
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Number of columns in the sprite sheet");
+
+                bool randomSprite = ps.RandomSpriteIndex;
+                if (ImGui.Checkbox("Random Sprite", ref randomSprite))
+                {
+                    ps.RandomSpriteIndex = randomSprite;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Each particle gets a random sprite from the sheet");
+
+                ImGui.Spacing();
+
+                bool flipH = ps.FlipHorizontally;
+                if (ImGui.Checkbox("Flip Horizontally", ref flipH))
+                {
+                    ps.FlipHorizontally = flipH;
+                }
+
+                bool flipV = ps.FlipVertically;
+                if (ImGui.Checkbox("Flip Vertically", ref flipV))
+                {
+                    ps.FlipVertically = flipV;
+                }
+
+                bool randomFlip = ps.RandomFlip;
+                if (ImGui.Checkbox("Random Flip", ref randomFlip))
+                {
+                    ps.RandomFlip = randomFlip;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Each particle randomly flips horizontally and/or vertically");
+            }
+
+            ImGui.Spacing();
+
+            // Material with drag and drop
+            var newMaterial = EditorWidgets.AssetField(
+                "Material",
+                ps.MaterialGuid == Guid.Empty ? (Guid?)null : ps.MaterialGuid,
+                "Material",
+                "Override material for advanced effects",
+                showPreview: false);
+
+            if (newMaterial != ps.MaterialGuid)
+            {
+                ps.MaterialGuid = newMaterial ?? Guid.Empty;
+            }
 
             // Sorting
             int sorting = (int)ps.SortingMode;

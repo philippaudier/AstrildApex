@@ -67,6 +67,15 @@ namespace Engine.Components
         [Engine.Serialization.Serializable("startRotation")] [Editable]
         public MinMaxCurve StartRotation = new(0.0f);
 
+        [Engine.Serialization.Serializable("use3DRotation")] [Editable]
+        public bool Use3DRotation = false;
+
+        [Engine.Serialization.Serializable("startRotation3DMin")] [Editable]
+        public Vector3 StartRotation3DMin = Vector3.Zero;
+
+        [Engine.Serialization.Serializable("startRotation3DMax")] [Editable]
+        public Vector3 StartRotation3DMax = new Vector3(360, 360, 360);
+
         [Engine.Serialization.Serializable("startColor")] [Editable]
         public Color4 StartColor = Color4.White;
 
@@ -89,6 +98,20 @@ namespace Engine.Components
         [Engine.Serialization.Serializable("colorGradient")]
         public ColorGradient ColorOverLifetime = new();
 
+        // ==================== FADE ====================
+
+        [Engine.Serialization.Serializable("fadeInEnabled")] [Editable]
+        public bool FadeInEnabled = false;
+
+        [Engine.Serialization.Serializable("fadeInDuration")] [Editable]
+        public float FadeInDuration = 0.5f; // seconds
+
+        [Engine.Serialization.Serializable("fadeOutEnabled")] [Editable]
+        public bool FadeOutEnabled = false;
+
+        [Engine.Serialization.Serializable("fadeOutDuration")] [Editable]
+        public float FadeOutDuration = 0.5f; // seconds
+
         // ==================== SIZE OVER LIFETIME ====================
 
         [Engine.Serialization.Serializable("sizeOverLifetimeEnabled")] [Editable]
@@ -105,6 +128,9 @@ namespace Engine.Components
         [Engine.Serialization.Serializable("rotationOverLifetimeSpeed")] [Editable]
         public float RotationOverLifetimeSpeed = 45.0f; // degrees per second
 
+        [Engine.Serialization.Serializable("rotationOverLifetime3D")] [Editable]
+        public Vector3 RotationOverLifetime3D = Vector3.Zero; // degrees per second for each axis (X, Y, Z)
+
         // ==================== RENDERER SETTINGS ====================
 
         [Engine.Serialization.Serializable("renderMode")] [Editable]
@@ -115,6 +141,64 @@ namespace Engine.Components
 
         [Engine.Serialization.Serializable("sortingMode")] [Editable]
         public SortingMode SortingMode = SortingMode.None;
+
+        [Engine.Serialization.Serializable("blendMode")] [Editable]
+        public BlendMode BlendMode = BlendMode.AlphaBlend;
+
+        // ==================== TEXTURE & SPRITE SETTINGS ====================
+
+        [Engine.Serialization.Serializable("textureGuid")]
+        public Guid TextureGuid = Guid.Empty;
+
+        [Engine.Serialization.Serializable("spriteSheetRows")] [Editable]
+        public int SpriteSheetRows = 1;
+
+        [Engine.Serialization.Serializable("spriteSheetColumns")] [Editable]
+        public int SpriteSheetColumns = 1;
+
+        [Engine.Serialization.Serializable("randomSpriteIndex")] [Editable]
+        public bool RandomSpriteIndex = false;
+
+        [Engine.Serialization.Serializable("flipHorizontally")] [Editable]
+        public bool FlipHorizontally = false;
+
+        [Engine.Serialization.Serializable("flipVertically")] [Editable]
+        public bool FlipVertically = false;
+
+        [Engine.Serialization.Serializable("randomFlip")] [Editable]
+        public bool RandomFlip = false;
+
+        // ==================== TRAILS ====================
+
+        [Engine.Serialization.Serializable("trailsEnabled")] [Editable]
+        public bool TrailsEnabled = false;
+
+        [Engine.Serialization.Serializable("trailLifetime")] [Editable]
+        public float TrailLifetime = 1.0f; // How long trail points stay alive
+
+        [Engine.Serialization.Serializable("trailMinVertexDistance")] [Editable]
+        public float TrailMinVertexDistance = 0.1f; // Minimum distance to create new trail point
+
+        [Engine.Serialization.Serializable("trailWidthStart")] [Editable]
+        public float TrailWidthStart = 1.0f;
+
+        [Engine.Serialization.Serializable("trailWidthEnd")] [Editable]
+        public float TrailWidthEnd = 0.1f;
+
+        [Engine.Serialization.Serializable("trailTextureGuid")]
+        public Guid TrailTextureGuid = Guid.Empty;
+
+        [Engine.Serialization.Serializable("trailColorStart")] [Editable]
+        public Color4 TrailColorStart = Color4.White;
+
+        [Engine.Serialization.Serializable("trailColorEnd")] [Editable]
+        public Color4 TrailColorEnd = new Color4(1, 1, 1, 0);
+
+        [Engine.Serialization.Serializable("trailGenerateMode")] [Editable]
+        public TrailGenerateMode TrailGenerateMode = TrailGenerateMode.PerSecond;
+
+        [Engine.Serialization.Serializable("trailGenerateRate")] [Editable]
+        public float TrailGenerateRate = 10.0f; // Points per second or per unit distance
 
         // ==================== RUNTIME STATE ====================
 
@@ -137,9 +221,27 @@ namespace Engine.Components
             public float Lifetime;
             public float Age;
             public float Size;
-            public float Rotation;
+            public float Rotation;       // 2D rotation (for billboard)
+            public Vector3 Rotation3D;   // 3D rotation (X, Y, Z in degrees)
             public Color4 Color;
+            public float BaseAlpha;      // Base alpha before fade is applied
             public bool IsAlive;
+            public int SpriteIndex;     // Which sprite from the sheet
+            public bool FlipX;          // Flip horizontally
+            public bool FlipY;          // Flip vertically
+
+            // Trail data
+            public List<TrailPoint>? TrailPoints;
+            public float TimeSinceLastTrailPoint;
+            public Vector3 LastTrailPosition;
+        }
+
+        public struct TrailPoint
+        {
+            public Vector3 Position;
+            public float Age;
+            public float Width;
+            public Color4 Color;
         }
 
         // ==================== LIFECYCLE ====================
@@ -275,6 +377,60 @@ namespace Engine.Components
             p.Size = StartSize.Evaluate(_random);
             p.Rotation = StartRotation.Evaluate(_random);
             p.Color = StartColor;
+            p.BaseAlpha = StartColor.A; // Store base alpha for fade calculations
+
+            // Initialize 3D rotation
+            if (Use3DRotation)
+            {
+                float rx = (float)_random.NextDouble();
+                float ry = (float)_random.NextDouble();
+                float rz = (float)_random.NextDouble();
+
+                p.Rotation3D = new Vector3(
+                    StartRotation3DMin.X + (StartRotation3DMax.X - StartRotation3DMin.X) * rx,
+                    StartRotation3DMin.Y + (StartRotation3DMax.Y - StartRotation3DMin.Y) * ry,
+                    StartRotation3DMin.Z + (StartRotation3DMax.Z - StartRotation3DMin.Z) * rz
+                );
+            }
+            else
+            {
+                p.Rotation3D = Vector3.Zero;
+            }
+
+            // Sprite settings
+            int totalSprites = SpriteSheetRows * SpriteSheetColumns;
+            if (RandomSpriteIndex && totalSprites > 1)
+            {
+                p.SpriteIndex = _random.Next(0, totalSprites);
+            }
+            else
+            {
+                p.SpriteIndex = 0;
+            }
+
+            // Flip settings
+            if (RandomFlip)
+            {
+                p.FlipX = _random.NextDouble() > 0.5;
+                p.FlipY = _random.NextDouble() > 0.5;
+            }
+            else
+            {
+                p.FlipX = FlipHorizontally;
+                p.FlipY = FlipVertically;
+            }
+
+            // Trail initialization
+            if (TrailsEnabled)
+            {
+                p.TrailPoints = new List<TrailPoint>();
+                p.TimeSinceLastTrailPoint = 0.0f;
+                p.LastTrailPosition = Vector3.Zero; // Will be set after position is determined
+            }
+            else
+            {
+                p.TrailPoints = null;
+            }
 
             // Position based on shape
             Vector3 localPos = GetEmissionPosition();
@@ -365,12 +521,131 @@ namespace Engine.Components
                 if (ColorOverLifetimeEnabled)
                 {
                     p.Color = ColorOverLifetime.Evaluate(t);
+                    p.BaseAlpha = p.Color.A; // Update base alpha from gradient
+                }
+
+                // Apply fade in/out
+                if (FadeInEnabled || FadeOutEnabled)
+                {
+                    float fadeAlpha = 1.0f;
+
+                    // Fade in
+                    if (FadeInEnabled && p.Age < FadeInDuration)
+                    {
+                        fadeAlpha = Math.Min(fadeAlpha, p.Age / FadeInDuration);
+                    }
+
+                    // Fade out
+                    if (FadeOutEnabled)
+                    {
+                        float timeUntilDeath = p.Lifetime - p.Age;
+                        if (timeUntilDeath < FadeOutDuration)
+                        {
+                            fadeAlpha = Math.Min(fadeAlpha, timeUntilDeath / FadeOutDuration);
+                        }
+                    }
+
+                    // Apply fade to color alpha using base alpha
+                    p.Color = new Color4(p.Color.R, p.Color.G, p.Color.B, p.BaseAlpha * fadeAlpha);
                 }
 
                 // Update rotation over lifetime
                 if (RotationOverLifetimeEnabled)
                 {
                     p.Rotation += RotationOverLifetimeSpeed * dt;
+                }
+
+                // Update 3D rotation over lifetime
+                if (Use3DRotation && (RotationOverLifetime3D.X != 0 || RotationOverLifetime3D.Y != 0 || RotationOverLifetime3D.Z != 0))
+                {
+                    p.Rotation3D += RotationOverLifetime3D * dt;
+                }
+
+                // Update trails
+                if (TrailsEnabled && p.TrailPoints != null)
+                {
+                    UpdateParticleTrail(ref p, dt);
+                }
+            }
+        }
+
+        private void UpdateParticleTrail(ref Particle p, float dt)
+        {
+            if (p.TrailPoints == null) return;
+
+            // Update existing trail points (age them and remove expired ones)
+            for (int i = p.TrailPoints.Count - 1; i >= 0; i--)
+            {
+                var point = p.TrailPoints[i];
+                point.Age += dt;
+
+                if (point.Age >= TrailLifetime)
+                {
+                    p.TrailPoints.RemoveAt(i);
+                }
+                else
+                {
+                    // Update trail point appearance over lifetime
+                    float t = point.Age / TrailLifetime;
+                    point.Width = TrailWidthStart + (TrailWidthEnd - TrailWidthStart) * t;
+
+                    // Lerp color
+                    point.Color = new Color4(
+                        TrailColorStart.R + (TrailColorEnd.R - TrailColorStart.R) * t,
+                        TrailColorStart.G + (TrailColorEnd.G - TrailColorStart.G) * t,
+                        TrailColorStart.B + (TrailColorEnd.B - TrailColorStart.B) * t,
+                        TrailColorStart.A + (TrailColorEnd.A - TrailColorStart.A) * t
+                    );
+
+                    p.TrailPoints[i] = point;
+                }
+            }
+
+            // Generate new trail points
+            p.TimeSinceLastTrailPoint += dt;
+
+            bool shouldGeneratePoint = false;
+
+            if (TrailGenerateMode == TrailGenerateMode.PerSecond)
+            {
+                float timeBetweenPoints = 1.0f / TrailGenerateRate;
+                if (p.TimeSinceLastTrailPoint >= timeBetweenPoints)
+                {
+                    shouldGeneratePoint = true;
+                    p.TimeSinceLastTrailPoint = 0.0f;
+                }
+            }
+            else // PerUnit distance
+            {
+                float distanceTraveled = Vector3.Distance(p.Position, p.LastTrailPosition);
+                if (distanceTraveled >= TrailMinVertexDistance)
+                {
+                    shouldGeneratePoint = true;
+                }
+            }
+
+            // Add new trail point
+            if (shouldGeneratePoint)
+            {
+                var worldOffset = (Space == SimulationSpace.Local)
+                    ? (Entity?.Transform?.GetWorldPosition() ?? Vector3.Zero)
+                    : Vector3.Zero;
+
+                p.TrailPoints.Insert(0, new TrailPoint
+                {
+                    Position = p.Position + worldOffset,
+                    Age = 0.0f,
+                    Width = TrailWidthStart,
+                    Color = TrailColorStart
+                });
+
+                p.LastTrailPosition = p.Position;
+
+                // Limit number of trail points for performance
+                const int maxTrailPoints = 100;
+                if (p.TrailPoints.Count > maxTrailPoints)
+                {
+                    p.TrailPoints.RemoveRange(maxTrailPoints, p.TrailPoints.Count - maxTrailPoints);
                 }
             }
         }
@@ -459,8 +734,8 @@ namespace Engine.Components
         {
             return new Vector3(
                 ((float)_random.NextDouble() - 0.5f) * size.X,
-                ((float)_random.NextDouble() - 0.5f) * size.Y,
-                ((float)_random.NextDouble() - 0.5f) * size.Z
+                ((float)_random.NextDouble() - 0.5f) * size.Z,
+                ((float)_random.NextDouble() - 0.5f) * size.Y
             );
         }
 
@@ -493,19 +768,24 @@ namespace Engine.Components
             return new ReadOnlySpan<Particle>(_particles);
         }
 
-        /// <summary>Get particle data for rendering (position, size, color, rotation)</summary>
-        public void GetRenderData(out Vector3[] positions, out float[] sizes, out Color4[] colors, out float[] rotations)
+        /// <summary>Get particle data for rendering (position, size, color, rotation, sprite, flip)</summary>
+        public void GetRenderData(out Vector3[] positions, out float[] sizes, out Color4[] colors, out float[] rotations,
+                                  out int[] spriteIndices, out bool[] flipX, out bool[] flipY, out Vector3[] rotations3D)
         {
             int count = _aliveCount;
             positions = new Vector3[count];
             sizes = new float[count];
             colors = new Color4[count];
             rotations = new float[count];
+            spriteIndices = new int[count];
+            flipX = new bool[count];
+            flipY = new bool[count];
+            rotations3D = new Vector3[count];
 
             // For Local space, we need to add the world position offset
             // For World space, particles are already in world coordinates
-            Vector3 worldOffset = (Space == SimulationSpace.Local) 
-                ? (Entity?.Transform?.GetWorldPosition() ?? Vector3.Zero) 
+            Vector3 worldOffset = (Space == SimulationSpace.Local)
+                ? (Entity?.Transform?.GetWorldPosition() ?? Vector3.Zero)
                 : Vector3.Zero;
 
             int index = 0;
@@ -517,6 +797,10 @@ namespace Engine.Components
                     sizes[index] = _particles[i].Size;
                     colors[index] = _particles[i].Color;
                     rotations[index] = _particles[i].Rotation;
+                    spriteIndices[index] = _particles[i].SpriteIndex;
+                    flipX[index] = _particles[i].FlipX;
+                    flipY[index] = _particles[i].FlipY;
+                    rotations3D[index] = _particles[i].Rotation3D;
                     index++;
                 }
             }
@@ -552,6 +836,19 @@ namespace Engine.Components
         OldestInFront,
         YoungestInFront,
         ByDistance
+    }
+
+    public enum BlendMode
+    {
+        AlphaBlend,     // Standard alpha blending
+        Additive,       // Additive blending for glowing effects
+        Multiply        // Multiply blending for darkening/shadows
+    }
+
+    public enum TrailGenerateMode
+    {
+        PerSecond,      // Generate trail points X times per second
+        PerUnit         // Generate trail points every X units of distance traveled
     }
 
     // ==================== HELPER CLASSES ====================
@@ -640,6 +937,11 @@ namespace Engine.Components
                 a.B + (b.B - a.B) * t,
                 a.A + (b.A - a.A) * t
             );
+        }
+
+        private float Lerp(float a, float b, float t)
+        {
+            return a + (b - a) * t;
         }
     }
 

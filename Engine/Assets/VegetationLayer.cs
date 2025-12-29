@@ -119,6 +119,22 @@ namespace Engine.Assets
         [Engine.Serialization.SerializableAttribute("alignmentStrength")]
         public float AlignmentStrength { get; set; } = 100f;
 
+        // === CULLING & OPTIMIZATION ===
+
+        /// <summary>
+        /// Maximum render distance from camera. Instances beyond this distance are culled.
+        /// Set to 0 for infinite distance (not recommended for dense vegetation).
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
+        public float MaxRenderDistance { get; set; } = 500f;
+
+        /// <summary>
+        /// Bounding sphere radius for frustum culling (in local space units).
+        /// Should roughly match the largest dimension of the model.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("cullingSphereRadius")]
+        public float CullingSphereRadius { get; set; } = 5f;
+
         // === WIND & ANIMATION ===
 
         // Wind and LOD-related properties removed: global weather/wind system and

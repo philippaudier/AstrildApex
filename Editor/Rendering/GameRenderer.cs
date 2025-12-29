@@ -176,11 +176,11 @@ namespace Editor.Rendering
                     continue;
                 }
 
-                Console.WriteLine($"[GameRenderer] Layer {layerIndex}: Updating {transforms.Count} instances for model {modelGuid.Value}, submesh {layer.SubmeshIndex}");
+                Console.WriteLine($"[GameRenderer] Layer {layerIndex}: Updating {transforms.Count} instances for model {modelGuid.Value}, submesh {layer.SubmeshIndex}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}");
 
                 // Use the layer's submesh index instead of hardcoded 0
                 int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
-                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms);
+                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
             }
 
             Console.WriteLine("[GameRenderer] Vegetation batches updated successfully");

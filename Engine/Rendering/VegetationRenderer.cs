@@ -37,13 +37,14 @@ namespace Engine.Rendering
                 // Column 0 = (M11, M21, M31, M41) = first column of the matrix
                 // Column 1 = (M12, M22, M32, M42) = second column
                 // Column 2 = (M13, M23, M33, M43) = third column
-                // Column 3 = (M14, M24, M34, M44) = fourth column (translation)
+                // Column 3 should contain the translation when transposing a row-major Matrix4
+                // Transpose mapping (row-major -> column-major): columnN = (M1N, M2N, M3N, M4N)
                 return new VegetationInstance
                 {
-                    Column0 = new Vector4(matrix.M11, matrix.M21, matrix.M31, matrix.M41), // First COLUMN
-                    Column1 = new Vector4(matrix.M12, matrix.M22, matrix.M32, matrix.M42), // Second COLUMN
-                    Column2 = new Vector4(matrix.M13, matrix.M23, matrix.M33, matrix.M43), // Third COLUMN
-                    Column3 = new Vector4(matrix.M14, matrix.M24, matrix.M34, matrix.M44)  // Fourth COLUMN (translation)
+                    Column0 = new Vector4(matrix.M11, matrix.M12, matrix.M13, matrix.M14),
+                    Column1 = new Vector4(matrix.M21, matrix.M22, matrix.M23, matrix.M24),
+                    Column2 = new Vector4(matrix.M31, matrix.M32, matrix.M33, matrix.M34),
+                    Column3 = new Vector4(matrix.M41, matrix.M42, matrix.M43, matrix.M44)
                 };
             }
         }
@@ -57,7 +58,8 @@ namespace Engine.Rendering
         {
             public Guid ModelGuid;
             public int SubmeshIndex;
-            public List<Matrix4> Transforms = new();
+            public List<Matrix4> Transforms = new(); // All instances (unculled)
+            public List<Matrix4> VisibleTransforms = new(); // After culling
 
             // GPU resources
             public int VAO;
@@ -66,12 +68,14 @@ namespace Engine.Rendering
             public int InstanceVBO; // Instance transforms
             public int IndexCount;
             public Guid? MaterialGuid; // Material from the model's submesh
-            public int InstanceCount => Transforms.Count;
+            public int InstanceCount => VisibleTransforms.Count; // Use visible count
 
             // Culling mode from MeshRendererComponent
             public Engine.Components.CullingMode CullingMode = Engine.Components.CullingMode.Back;
 
-            // (Removed) Per-batch render distance
+            // Culling parameters
+            public float MaxRenderDistance = 500f;
+            public float CullingSphereRadius = 5f;
 
             // Track if data needs GPU update
             public bool NeedsGPUUpdate = true;
@@ -92,10 +96,21 @@ namespace Engine.Rendering
         // Default white texture for materials without albedo
         private int _defaultWhiteTexture = 0;
 
+        // Frustum culler for visibility testing
+        private readonly FrustumCuller _frustumCuller = new();
+
         private bool _disposed = false;
 
         // Debug counter for logging
         private static int _renderCallCounter = 0;
+        // Throttle for per-batch cull logs to avoid console spam
+        private static DateTime _lastCullLogTime = DateTime.MinValue;
+        private static readonly TimeSpan CullLogInterval = TimeSpan.FromSeconds(1.0);
+
+        // Culling statistics for debugging
+        public int TotalInstances { get; private set; }
+        public int VisibleInstances { get; private set; }
+        public int CulledInstances => TotalInstances - VisibleInstances;
 
         // === CONSTRUCTOR ===
         
@@ -209,16 +224,25 @@ namespace Engine.Rendering
         // === PUBLIC API ===
 
         /// <summary>
-        /// Update a batch for a specific model+submesh with instance transforms and culling mode.
+        /// Update a batch for a specific model+submesh with instance transforms and culling parameters.
         /// </summary>
-        public void UpdateBatch(Guid modelGuid, int submeshIndex, List<Matrix4>? transforms, Engine.Components.CullingMode cullingMode = Engine.Components.CullingMode.Back)
+        public void UpdateBatch(Guid modelGuid, int submeshIndex, List<Matrix4>? transforms,
+                               Engine.Components.CullingMode cullingMode = Engine.Components.CullingMode.Back,
+                               float maxRenderDistance = 500f, float cullingSphereRadius = 5f)
         {
             // Treat a null transforms list as empty to avoid callers needing to allocate an empty list
             transforms ??= new List<Matrix4>();
 
             string batchKey = $"{modelGuid}_{submeshIndex}";
 
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] UpdateBatch called: model={modelGuid} submesh={submeshIndex} instances={transforms.Count}"); } catch { }
+            try
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    Engine.Utils.DebugLogger.Log($"[VegetationRenderer] UpdateBatch called: model={modelGuid} submesh={submeshIndex} instances={transforms.Count} maxDist={maxRenderDistance} cullRadius={cullingSphereRadius}");
+                else
+                    Console.WriteLine($"[VegetationRenderer] UpdateBatch: instances={transforms.Count} maxDist={maxRenderDistance}m cullRadius={cullingSphereRadius}m");
+            }
+            catch { }
 
             // Get or create batch
             if (!_batches.TryGetValue(batchKey, out var batch))
@@ -227,14 +251,18 @@ namespace Engine.Rendering
                 {
                     ModelGuid = modelGuid,
                     SubmeshIndex = submeshIndex,
-                    CullingMode = cullingMode
+                    CullingMode = cullingMode,
+                    MaxRenderDistance = maxRenderDistance,
+                    CullingSphereRadius = cullingSphereRadius
                 };
                 _batches[batchKey] = batch;
             }
             else
             {
-                // Update culling mode for existing batch
+                // Update culling parameters for existing batch
                 batch.CullingMode = cullingMode;
+                batch.MaxRenderDistance = maxRenderDistance;
+                batch.CullingSphereRadius = cullingSphereRadius;
             }
 
             // Batch is guaranteed to be non-null at this point
@@ -251,7 +279,7 @@ namespace Engine.Rendering
             {
                 batch.Transforms = transforms;
                 batch.LastTransformCount = transforms.Count;
-                batch.NeedsGPUUpdate = true;
+                batch.NeedsGPUUpdate = true; // Will trigger culling + GPU upload in Render()
             }
 
             // Load mesh if needed
@@ -332,6 +360,14 @@ namespace Engine.Rendering
             // We'll select and bind the shader per-batch (to allow per-material shader overrides)
             // The Global UBO (binding = 0) must already be bound by the caller (ViewportRenderer).
 
+            // Extract frustum planes from view-projection matrix for culling
+            Matrix4 viewProjection = view * projection;
+            _frustumCuller.ExtractPlanes(viewProjection);
+
+            // Reset culling statistics
+            TotalInstances = 0;
+            VisibleInstances = 0;
+
             // Render each batch
             int batchesRendered = 0;
             int instancesRendered = 0;
@@ -340,12 +376,19 @@ namespace Engine.Rendering
             {
                 if (batch.Transforms.Count == 0 || batch.VAO == 0) continue;
 
+                TotalInstances += batch.Transforms.Count;
+
+                // Perform frustum and distance culling to populate VisibleTransforms
+                CullBatch(batch, cameraPos);
+
                 // Update GPU buffer only if data changed (lazy update)
                 if (batch.NeedsGPUUpdate)
                 {
                     UpdateInstanceBuffer(batch);
                     batch.NeedsGPUUpdate = false;
                 }
+
+                VisibleInstances += batch.InstanceCount;
 
                 if (batch.InstanceCount == 0) continue;
 
@@ -636,6 +679,13 @@ namespace Engine.Rendering
             GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
             GL.DepthMask(true); // Restore depth writing
 
+            // Log culling statistics every 60 frames (once per second at 60fps)
+            if (_renderCallCounter % 60 == 0 && TotalInstances > 0)
+            {
+                float cullPercent = (CulledInstances / (float)TotalInstances) * 100f;
+                Console.WriteLine($"[VegetationRenderer] Culling Stats: Total={TotalInstances}, Visible={VisibleInstances}, Culled={CulledInstances} ({cullPercent:F1}%)");
+            }
+
             if (batchesRendered > 0)
             {
                     try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Rendered {batchesRendered} batches with {instancesRendered} total instances"); } catch { }
@@ -799,15 +849,87 @@ namespace Engine.Rendering
             }
         }
 
+        /// <summary>
+        /// Perform frustum and distance culling on a batch to populate VisibleTransforms.
+        /// This is called every frame before rendering.
+        /// </summary>
+        private void CullBatch(VegetationBatch batch, Vector3 cameraPos)
+        {
+            batch.VisibleTransforms.Clear();
+
+            float maxDistSqr = batch.MaxRenderDistance * batch.MaxRenderDistance;
+            bool hasDistanceCulling = batch.MaxRenderDistance > 0;
+
+            // Debug counters
+            int distanceCulled = 0;
+            int frustumCulled = 0;
+            bool loggedFirst = false;
+            bool allowInstanceLog = (DateTime.UtcNow - _lastCullLogTime) >= CullLogInterval;
+
+            for (int i = 0; i < batch.Transforms.Count; i++)
+            {
+                var transform = batch.Transforms[i];
+
+                // Extract position from transform matrix
+                // In OpenTK Matrix4 (row-major), translation is in last ROW: M41, M42, M43
+                Vector3 position = new Vector3(transform.M41, transform.M42, transform.M43);
+
+                // Debug log for first instance (throttled globally)
+                if (!loggedFirst && allowInstanceLog)
+                {
+                    float dist = (position - cameraPos).Length;
+                    Console.WriteLine($"[VegetationRenderer] CullBatch: cameraPos={cameraPos}, firstInstancePos={position}, distance={dist:F1}m, maxDist={batch.MaxRenderDistance}m");
+                    loggedFirst = true;
+                    _lastCullLogTime = DateTime.UtcNow;
+                    // prevent other batches in this call from logging (they'll wait for the next interval)
+                    allowInstanceLog = false;
+                }
+
+                // Distance culling
+                if (hasDistanceCulling)
+                {
+                    float distSqr = (position - cameraPos).LengthSquared;
+                    if (distSqr > maxDistSqr)
+                    {
+                        distanceCulled++;
+                        continue; // Too far, skip
+                    }
+                }
+
+                // Frustum culling using bounding sphere
+                if (!_frustumCuller.TestSphere(position, batch.CullingSphereRadius))
+                {
+                    frustumCulled++;
+                    continue; // Outside frustum, skip
+                }
+
+                // Instance is visible
+                batch.VisibleTransforms.Add(transform);
+            }
+
+            // Log culling breakdown
+            if (_renderCallCounter % 60 == 0)
+            {
+                Console.WriteLine($"[VegetationRenderer] Culling breakdown: distanceCulled={distanceCulled}, frustumCulled={frustumCulled}, visible={batch.VisibleTransforms.Count}");
+            }
+
+            // Mark for GPU update if visible set changed
+            if (batch.VisibleTransforms.Count != batch.LastTransformCount)
+            {
+                batch.NeedsGPUUpdate = true;
+                batch.LastTransformCount = batch.VisibleTransforms.Count;
+            }
+        }
+
         private void UpdateInstanceBuffer(VegetationBatch batch)
         {
-            if (batch.InstanceVBO == 0 || batch.Transforms.Count == 0) return;
+            if (batch.InstanceVBO == 0 || batch.VisibleTransforms.Count == 0) return;
 
-            // Clamp instance count to max batch size to prevent excessive memory usage
-            int instanceCount = Math.Min(batch.Transforms.Count, MaxInstancesPerBatch);
-            if (instanceCount < batch.Transforms.Count)
+            // Use visible transforms (after culling) instead of all transforms
+            int instanceCount = Math.Min(batch.VisibleTransforms.Count, MaxInstancesPerBatch);
+            if (instanceCount < batch.VisibleTransforms.Count)
             {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Warning: Batch has {batch.Transforms.Count} instances but only {MaxInstancesPerBatch} will be rendered"); } catch { }
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Warning: Batch has {batch.VisibleTransforms.Count} instances but only {MaxInstancesPerBatch} will be rendered"); } catch { }
             }
 
             // Ensure buffer is large enough (grow by 1.5x to avoid frequent reallocations)
@@ -819,10 +941,10 @@ namespace Engine.Rendering
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Reallocated instance buffer to {newSize} instances"); } catch { }
             }
 
-            // Convert transforms to instance data
+            // Convert visible transforms to instance data
             for (int i = 0; i < instanceCount; i++)
             {
-                _instanceBuffer[i] = VegetationInstance.FromMatrix(batch.Transforms[i]);
+                _instanceBuffer[i] = VegetationInstance.FromMatrix(batch.VisibleTransforms[i]);
             }
 
             // Upload to GPU

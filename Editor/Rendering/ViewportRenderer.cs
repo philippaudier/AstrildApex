@@ -526,11 +526,13 @@ namespace Editor.Rendering
             // Subscribe to terrain vegetation events for VegetationRenderer
             if (_vegetationRenderer != null)
             {
+                Console.WriteLine($"[ViewportRenderer] SetScene: Searching for terrains in {scene.Entities.Count} entities");
                 foreach (var entity in scene.Entities)
                 {
                     var terrain = entity.GetComponent<Engine.Components.Terrain>();
                     if (terrain != null && !_subscribedTerrains.Contains(terrain))
                     {
+                        Console.WriteLine($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', subscribing to VegetationRegenerated");
                         // Subscribe to future regenerations (only once per terrain)
                         terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
                         _subscribedTerrains.Add(terrain);
@@ -540,6 +542,21 @@ namespace Editor.Rendering
                         {
                             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Initializing existing vegetation batches for terrain (layers={terrain.VegetationLayers?.Length ?? 0})"); } catch { }
                             OnTerrainVegetationRegenerated(terrain);
+                        }
+                        else if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                        {
+                            // In Edit Mode the terrain may have layers but no generated instances yet.
+                            // Generate instances now so the editor viewport shows vegetation without entering Play Mode.
+                            try
+                            {
+                                Console.WriteLine($"[ViewportRenderer] Generating vegetation for terrain in editor: {entity.Name}");
+                                terrain.GenerateVegetation(scene);
+                                OnTerrainVegetationRegenerated(terrain);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[ViewportRenderer] Failed to generate vegetation in editor: {ex.Message}");
+                            }
                         }
                     }
                 }
@@ -551,6 +568,8 @@ namespace Editor.Rendering
         /// </summary>
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
+            Console.WriteLine($"[ViewportRenderer] OnTerrainVegetationRegenerated called for terrain: {terrain.Entity?.Name ?? "unnamed"}");
+
             // CRITICAL: Update WeatherManager whenever vegetation is regenerated
             // This ensures wind parameters are synchronized before rendering new vegetation
             try
@@ -574,17 +593,27 @@ namespace Editor.Rendering
 
             if (_vegetationRenderer == null)
             {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] OnTerrainVegetationRegenerated: VegetationRenderer is null!"); } catch { }
+                Console.WriteLine("[ViewportRenderer] ERROR: VegetationRenderer is null!");
                 return;
             }
 
             if (terrain.VegetationLayers == null || terrain.VegetationInstances == null)
             {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log("[ViewportRenderer] OnTerrainVegetationRegenerated: No vegetation layers or instances"); } catch { }
+                Console.WriteLine($"[ViewportRenderer] WARNING: VegetationLayers={terrain.VegetationLayers?.Length ?? 0}, VegetationInstances={(terrain.VegetationInstances==null?0:terrain.VegetationInstances.Count)}");
+                // If instances are null it may mean vegetation was cleared — remove all batches.
+                if (_vegetationRenderer != null)
+                {
+                    try
+                    {
+                        _vegetationRenderer.ClearBatches();
+                        Console.WriteLine("[ViewportRenderer] Cleared vegetation batches (no instances)");
+                    }
+                    catch { }
+                }
                 return;
             }
 
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] OnTerrainVegetationRegenerated: Processing {terrain.VegetationLayers.Length} layers"); } catch { }
+            Console.WriteLine($"[ViewportRenderer] Processing {terrain.VegetationLayers.Length} vegetation layers");
 
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
@@ -611,14 +640,66 @@ namespace Editor.Rendering
 
                 if (!terrain.VegetationInstances.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0)
                 {
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ❌ No instances generated for this layer"); } catch { }
+                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ❌ No instances generated for this layer");
                     continue;
                 }
 
                 // Update vegetation batch with transforms from terrain
-                int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count})"); } catch { }
-                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back);
+                if (layer.SubmeshIndex == -1)
+                {
+                    // Render all submeshes of the model
+                    try
+                    {
+                        var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(modelGuid.Value);
+                        if (meshAsset != null)
+                        {
+                            int submeshCount = meshAsset.SubMeshes.Count;
+                            if (submeshCount == 0) submeshCount = 1;
+                            for (int s = 0; s < submeshCount; s++)
+                            {
+                                // Determine per-submesh culling from material if available
+                                Engine.Components.CullingMode cullMode = Engine.Components.CullingMode.Back;
+                                try
+                                {
+                                    if (meshAsset.MaterialGuids != null && s < meshAsset.MaterialGuids.Count)
+                                    {
+                                        var matGuid = meshAsset.MaterialGuids[s];
+                                        if (matGuid != null && matGuid != Guid.Empty)
+                                        {
+                                            var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
+                                            if (mat != null)
+                                            {
+                                                cullMode = (Engine.Components.CullingMode)mat.CullingMode;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+
+                                Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={s}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                                _vegetationRenderer.UpdateBatch(modelGuid.Value, s, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                            }
+                        }
+                        else
+                        {
+                            // Fallback to submesh 0
+                            Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                            _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ViewportRenderer] Failed to load mesh for multi-submesh update: {ex.Message}");
+                        Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                        _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                    }
+                }
+                else
+                {
+                    int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
+                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                    _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                }
             }
             // Ensure GPU buffers are (re)uploaded after updating batches so changes
             // made in the inspector take effect immediately in the renderer.

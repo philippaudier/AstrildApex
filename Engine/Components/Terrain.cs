@@ -1346,12 +1346,145 @@ namespace Engine.Components
                     }
 
                     var instances = GenerateLayerInstances(layer);
+                    // Post-process instances: apply prefab base scale and mesh minY pivot correction
+                    try
+                    {
+                        // Clone list to allow modifications
+                        if (instances == null) instances = new System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>();
+
+                        // 1) Apply prefab root scale if layer references a prefab
+                        if (layer.PrefabGuid.HasValue)
+                        {
+                            try
+                            {
+                                var prefab = Engine.Assets.AssetDatabase.LoadPrefab(layer.PrefabGuid.Value);
+                                if (prefab?.RootEntity != null)
+                                {
+                                    var ls = prefab.RootEntity.LocalScale;
+                                    if (ls != null && ls.Length == 3 && !(Math.Abs(ls[0] - 1f) < 1e-6 && Math.Abs(ls[1] - 1f) < 1e-6 && Math.Abs(ls[2] - 1f) < 1e-6))
+                                    {
+                                        // Apply prefab base scale to the rotation/scale columns only.
+                                        // Multiplying the full 4x4 matrix by a scale matrix can incorrectly scale the translation.
+                                        float sx = ls[0];
+                                        float sy = ls[1];
+                                        float sz = ls[2];
+                                        for (int i = 0; i < instances.Count; i++)
+                                        {
+                                            var m = instances[i];
+                                            // Scale column 0 (basis X)
+                                            m.M11 *= sx; m.M12 *= sx; m.M13 *= sx;
+                                            // Scale column 1 (basis Y)
+                                            m.M21 *= sy; m.M22 *= sy; m.M23 *= sy;
+                                            // Scale column 2 (basis Z)
+                                            m.M31 *= sz; m.M32 *= sz; m.M33 *= sz;
+                                            // Preserve translation (M41..M43)
+                                            instances[i] = m;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+
+                        // 2) Pivot correction: shift instances so mesh base (minY) sits on terrain
+                        // Determine model GUID: prefer explicit ModelGuid, otherwise try to extract from prefab
+                        Guid? modelGuid = layer.ModelGuid;
+                        if ((!modelGuid.HasValue || modelGuid == Guid.Empty) && layer.PrefabGuid.HasValue)
+                        {
+                            try
+                            {
+                                if (Engine.Assets.AssetDatabase.TryGet(layer.PrefabGuid.Value, out var rec) && System.IO.File.Exists(rec.Path))
+                                {
+                                    var prefab = Engine.Assets.PrefabAsset.Load(rec.Path);
+                                    if (prefab?.RootEntity != null)
+                                    {
+                                        // Look for MeshRendererComponent in root or children JSON
+                                        System.Text.Json.JsonElement? meshRendererJson = null;
+                                        if (prefab.RootEntity.Components != null && prefab.RootEntity.Components.TryGetValue("MeshRendererComponent", out var rm)) meshRendererJson = rm;
+                                        if (!meshRendererJson.HasValue)
+                                        {
+                                            foreach (var child in prefab.RootEntity.Children)
+                                            {
+                                                if (child.Components != null && child.Components.TryGetValue("MeshRendererComponent", out var cm))
+                                                {
+                                                    meshRendererJson = cm;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if (meshRendererJson.HasValue && meshRendererJson.Value.TryGetProperty("customMeshGuid", out var guidElem))
+                                        {
+                                            var guidStr = guidElem.GetString();
+                                            if (!string.IsNullOrEmpty(guidStr) && Guid.TryParse(guidStr, out var parsed)) modelGuid = parsed;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+
+                        // If we have a mesh asset, compute minY for relevant submesh(es) and adjust instance translations
+                        if (modelGuid.HasValue && modelGuid != Guid.Empty)
+                        {
+                            try
+                            {
+                                var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(modelGuid.Value);
+                                if (meshAsset != null)
+                                {
+                                    // Determine which submeshes to consider
+                                    var submeshIndices = new System.Collections.Generic.List<int>();
+                                    if (layer.SubmeshIndex == -1)
+                                    {
+                                        for (int s = 0; s < meshAsset.SubMeshes.Count; s++) submeshIndices.Add(s);
+                                        if (submeshIndices.Count == 0) submeshIndices.Add(0);
+                                    }
+                                    else
+                                    {
+                                        int sidx = Math.Max(0, Math.Min(layer.SubmeshIndex, meshAsset.SubMeshes.Count - 1));
+                                        submeshIndices.Add(sidx);
+                                    }
+
+                                    // Compute global minY across chosen submeshes (mesh-local space)
+                                    float globalMinY = float.MaxValue;
+                                    foreach (var s in submeshIndices)
+                                    {
+                                        var sub = meshAsset.SubMeshes[s];
+                                        for (int vi = 0; vi < sub.Vertices.Length; vi += 8)
+                                        {
+                                            float vy = sub.Vertices[vi + 1];
+                                            if (vy < globalMinY) globalMinY = vy;
+                                        }
+                                    }
+
+                                    if (globalMinY != float.MaxValue && Math.Abs(globalMinY) > 1e-6)
+                                    {
+                                        // Adjust each instance's translation by -minY * instanceScaleY
+                                        for (int i = 0; i < instances.Count; i++)
+                                        {
+                                            var m = instances[i];
+                                            // Extract Y-scale from matrix columns (length of second column)
+                                            float scaleY = new OpenTK.Mathematics.Vector3(m.M21, m.M22, m.M23).Length;
+                                            // Adjust translation Y (M42) so mesh base sits on terrain
+                                            m.M42 -= globalMinY * scaleY;
+                                            instances[i] = m;
+                                        }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+
                     _vegetationInstances[layerIndex] = instances;
 
                     try { Console.WriteLine($"[Terrain] Layer {layerIndex} ('{layer.Name}') generated {instances?.Count ?? 0} instance(s)"); } catch { }
 
-                    // Create entities for each instance
-                    CreateVegetationEntities(scene, layer, instances, layerParent);
+                    // GPU INSTANCING MODE: Don't create individual entities, let VegetationRenderer handle all instances
+                    // The instances are stored in _vegetationInstances and passed to VegetationRenderer via UpdateBatch()
+                    // This provides much better performance (1 draw call instead of N entities)
+                    // CreateVegetationEntities(scene, layer, instances, layerParent);
                 }
                 
                 // Notify listeners that vegetation has been regenerated
@@ -1620,6 +1753,8 @@ namespace Engine.Components
             var instances = new System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>();
             var random = new Random(layer.Seed);
 
+            Console.WriteLine($"[Terrain] GenerateLayerInstances: TerrainWidth={TerrainWidth}, TerrainLength={TerrainLength}, TerrainHeight={TerrainHeight}");
+
             // Calculate number of attempts based on density
             // Density is "instances per 100x100 area"
             float terrainArea = TerrainWidth * TerrainLength;
@@ -1697,14 +1832,25 @@ namespace Engine.Components
                     rotation = alignmentRotation * rotation;
                 }
 
-                // Build transform matrix using OpenTK native functions
-                // This ensures correct layout for both row-major and column-major conventions
+                // Build transform matrix: first rotation + scale, then set translation manually
                 var scaleMatrix = OpenTK.Mathematics.Matrix4.CreateScale(scale);
                 var rotationMatrix = OpenTK.Mathematics.Matrix4.CreateFromQuaternion(rotation);
-                var translationMatrix = OpenTK.Mathematics.Matrix4.CreateTranslation(worldPosition);
 
-                // Combine: Scale * Rotation * Translation (standard TRS order)
-                var matrix = scaleMatrix * rotationMatrix * translationMatrix;
+                // Combine rotation and scale first
+                var matrix = rotationMatrix * scaleMatrix;
+
+                // Set translation in the last ROW (M41, M42, M43) for row-major OpenTK Matrix4
+                // This ensures translation is not affected by rotation/scale
+                matrix.M41 = worldPosition.X;
+                matrix.M42 = worldPosition.Y;
+                matrix.M43 = worldPosition.Z;
+
+                // Debug: log first instance
+                if (instances.Count == 0)
+                {
+                    Console.WriteLine($"[Terrain] First instance: worldPos={worldPosition}, localPos=({localX}, {worldY}, {localZ}), terrainPos={terrainPos}");
+                    Console.WriteLine($"[Terrain] Matrix translation: M41={matrix.M41}, M42={matrix.M42}, M43={matrix.M43}");
+                }
 
                 instances.Add(matrix);
             }

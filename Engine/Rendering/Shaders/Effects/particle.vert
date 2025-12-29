@@ -9,6 +9,10 @@ layout(location = 2) in vec3 aInstancePosition;  // Particle world position
 layout(location = 3) in float aInstanceSize;     // Particle size
 layout(location = 4) in vec4 aInstanceColor;     // Particle color
 layout(location = 5) in float aInstanceRotation; // Particle rotation (degrees)
+layout(location = 6) in int aInstanceSpriteIndex; // Sprite sheet index
+layout(location = 7) in float aInstanceFlipX;    // Flip horizontally (0.0 or 1.0)
+layout(location = 8) in float aInstanceFlipY;    // Flip vertically (0.0 or 1.0)
+layout(location = 9) in vec3 aInstanceRotation3D; // 3D rotation (X, Y, Z in degrees)
 
 // Uniforms
 uniform mat4 uView;
@@ -16,35 +20,108 @@ uniform mat4 uProjection;
 uniform vec3 uCameraPos;
 uniform vec3 uCameraRight;
 uniform vec3 uCameraUp;
+uniform int uSpriteRows;
+uniform int uSpriteColumns;
 
 // Outputs to fragment shader
 out vec2 vTexCoord;
 out vec4 vColor;
 
+// Helper function to create rotation matrix around X axis
+mat3 rotateX(float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat3(
+        1.0, 0.0, 0.0,
+        0.0, c, -s,
+        0.0, s, c
+    );
+}
+
+// Helper function to create rotation matrix around Y axis
+mat3 rotateY(float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat3(
+        c, 0.0, s,
+        0.0, 1.0, 0.0,
+        -s, 0.0, c
+    );
+}
+
+// Helper function to create rotation matrix around Z axis
+mat3 rotateZ(float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat3(
+        c, -s, 0.0,
+        s, c, 0.0,
+        0.0, 0.0, 1.0
+    );
+}
+
 void main()
 {
-    vTexCoord = aTexCoord;
     vColor = aInstanceColor;
 
-    // Billboard rotation
+    // Calculate sprite sheet UV coordinates
+    int totalSprites = uSpriteRows * uSpriteColumns;
+    int spriteIndex = aInstanceSpriteIndex % max(totalSprites, 1);
+
+    // Calculate sprite position in the sheet (row, column)
+    int row = spriteIndex / uSpriteColumns;
+    int col = spriteIndex % uSpriteColumns;
+
+    // Calculate UV offset and scale
+    float uScale = 1.0 / float(uSpriteColumns);
+    float vScale = 1.0 / float(uSpriteRows);
+    float uOffset = float(col) * uScale;
+    float vOffset = float(row) * vScale;
+
+    // Apply flip
+    vec2 flippedUV = aTexCoord;
+    if (aInstanceFlipX > 0.5)
+        flippedUV.x = 1.0 - flippedUV.x;
+    if (aInstanceFlipY > 0.5)
+        flippedUV.y = 1.0 - flippedUV.y;
+
+    // Scale and offset UVs for sprite sheet
+    vTexCoord = vec2(
+        uOffset + flippedUV.x * uScale,
+        vOffset + flippedUV.y * vScale
+    );
+
+    // Billboard rotation (2D)
     float rotRad = radians(aInstanceRotation);
     float cosR = cos(rotRad);
     float sinR = sin(rotRad);
-    
+
     // Rotate the quad corner
     vec2 rotatedPos = vec2(
         aPosition.x * cosR - aPosition.y * sinR,
         aPosition.x * sinR + aPosition.y * cosR
     );
-    
+
     // Scale by particle size
     rotatedPos *= aInstanceSize;
-    
+
     // Billboard towards camera using camera right/up vectors
-    vec3 worldPos = aInstancePosition 
-        + uCameraRight * rotatedPos.x 
-        + uCameraUp * rotatedPos.y;
-    
+    vec3 billboardPos = uCameraRight * rotatedPos.x + uCameraUp * rotatedPos.y;
+
+    // Apply 3D rotation if any rotation is set
+    if (length(aInstanceRotation3D) > 0.01)
+    {
+        vec3 rotRad3D = radians(aInstanceRotation3D);
+        mat3 rotation = rotateZ(rotRad3D.z) * rotateY(rotRad3D.y) * rotateX(rotRad3D.x);
+        billboardPos = rotation * billboardPos;
+    }
+
+    // Final world position
+    vec3 worldPos = aInstancePosition + billboardPos;
+
     // Transform to clip space
     gl_Position = uProjection * uView * vec4(worldPos, 1.0);
 }

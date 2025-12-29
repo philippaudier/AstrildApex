@@ -37,6 +37,12 @@ namespace Engine.Rendering
             public float Size;
             public Color4 Color;
             public float Rotation;
+            public int SpriteIndex;
+            public float FlipX;  // 0.0 or 1.0
+            public float FlipY;  // 0.0 or 1.0
+            public float Padding; // Align to 16 bytes
+            public Vector3 Rotation3D; // 3D rotation (X, Y, Z in degrees)
+            public float Padding2; // Align to 16 bytes
         }
 
         private ParticleInstanceData[] _instanceData = Array.Empty<ParticleInstanceData>();
@@ -95,6 +101,26 @@ namespace Engine.Rendering
             GL.EnableVertexAttribArray(5);
             GL.VertexAttribPointer(5, 1, VertexAttribPointerType.Float, false, stride, 8 * sizeof(float));
             GL.VertexAttribDivisor(5, 1);
+
+            // Layout 6: SpriteIndex (int)
+            GL.EnableVertexAttribArray(6);
+            GL.VertexAttribIPointer(6, 1, VertexAttribIntegerType.Int, stride, 9 * sizeof(float));
+            GL.VertexAttribDivisor(6, 1);
+
+            // Layout 7: FlipX (float)
+            GL.EnableVertexAttribArray(7);
+            GL.VertexAttribPointer(7, 1, VertexAttribPointerType.Float, false, stride, 10 * sizeof(float));
+            GL.VertexAttribDivisor(7, 1);
+
+            // Layout 8: FlipY (float)
+            GL.EnableVertexAttribArray(8);
+            GL.VertexAttribPointer(8, 1, VertexAttribPointerType.Float, false, stride, 11 * sizeof(float));
+            GL.VertexAttribDivisor(8, 1);
+
+            // Layout 9: Rotation3D (vec3)
+            GL.EnableVertexAttribArray(9);
+            GL.VertexAttribPointer(9, 3, VertexAttribPointerType.Float, false, stride, 12 * sizeof(float));
+            GL.VertexAttribDivisor(9, 1);
 
             GL.BindVertexArray(0);
         }
@@ -203,7 +229,50 @@ namespace Engine.Rendering
             if (count == 0) return;
 
             // Get particle data
-            ps.GetRenderData(out var positions, out var sizes, out var colors, out var rotations);
+            ps.GetRenderData(out var positions, out var sizes, out var colors, out var rotations,
+                            out var spriteIndices, out var flipX, out var flipY, out var rotations3D);
+
+            // Setup blend mode
+            SetBlendMode(ps.BlendMode);
+
+            // Bind texture if available
+            int textureHandle = TextureCache.White1x1;
+            bool hasTexture = false;
+            float alphaCutoff = 0.0f;
+            bool useAlphaCutoff = false;
+
+            if (ps.TextureGuid != Guid.Empty)
+            {
+                textureHandle = TextureCache.GetOrLoad(ps.TextureGuid, guid =>
+                {
+                    if (Engine.Assets.AssetDatabase.TryGet(guid, out var record))
+                        return record.Path;
+                    return null;
+                });
+                hasTexture = textureHandle != TextureCache.White1x1;
+
+                // Load texture settings for alpha cutoff
+                if (hasTexture && Engine.Assets.AssetDatabase.TryGet(ps.TextureGuid, out var texRecord))
+                {
+                    var settings = LoadTextureSettings(texRecord.Path);
+                    if (settings != null)
+                    {
+                        alphaCutoff = settings.AlphaCutoff;
+                        useAlphaCutoff = settings.UseAlphaCutoff;
+                    }
+                }
+            }
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, textureHandle);
+
+            // Set texture uniforms
+            _particleShader?.SetInt("uTexture", 0);
+            _particleShader?.SetInt("uHasTexture", hasTexture ? 1 : 0);
+            _particleShader?.SetInt("uSpriteRows", ps.SpriteSheetRows);
+            _particleShader?.SetInt("uSpriteColumns", ps.SpriteSheetColumns);
+            _particleShader?.SetFloat("uAlphaCutoff", alphaCutoff);
+            _particleShader?.SetInt("uUseAlphaCutoff", useAlphaCutoff ? 1 : 0);
 
             // Prepare instance data
             if (_instanceData.Length < count)
@@ -218,14 +287,20 @@ namespace Engine.Rendering
                     Position = positions[i],
                     Size = sizes[i],
                     Color = colors[i],
-                    Rotation = rotations[i]
+                    Rotation = rotations[i],
+                    SpriteIndex = spriteIndices[i],
+                    FlipX = flipX[i] ? 1.0f : 0.0f,
+                    FlipY = flipY[i] ? 1.0f : 0.0f,
+                    Padding = 0.0f,
+                    Rotation3D = rotations3D[i],
+                    Padding2 = 0.0f
                 };
             }
 
             // Upload instance data to GPU
             GL.BindBuffer(BufferTarget.ArrayBuffer, _instanceVbo);
             int dataSize = count * System.Runtime.InteropServices.Marshal.SizeOf<ParticleInstanceData>();
-            
+
             unsafe
             {
                 fixed (ParticleInstanceData* ptr = _instanceData)
@@ -236,6 +311,49 @@ namespace Engine.Rendering
 
             // Draw instanced
             GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, 6, count);
+        }
+
+        private void SetBlendMode(BlendMode mode)
+        {
+            switch (mode)
+            {
+                case BlendMode.AlphaBlend:
+                    GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                    break;
+                case BlendMode.Additive:
+                    GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
+                    break;
+                case BlendMode.Multiply:
+                    GL.BlendFunc(BlendingFactor.DstColor, BlendingFactor.Zero);
+                    break;
+            }
+        }
+
+        private Engine.Assets.TextureImportSettings? LoadTextureSettings(string texturePath)
+        {
+            try
+            {
+                var metaPath = texturePath + ".meta";
+                if (!System.IO.File.Exists(metaPath))
+                    return null;
+
+                var json = System.IO.File.ReadAllText(metaPath);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+                var settings = new Engine.Assets.TextureImportSettings();
+
+                if (doc.RootElement.TryGetProperty("alphaCutoff", out var jAlpha))
+                    settings.AlphaCutoff = (float)jAlpha.GetDouble();
+
+                if (doc.RootElement.TryGetProperty("useAlphaCutoff", out var jUseAlpha))
+                    settings.UseAlphaCutoff = jUseAlpha.GetBoolean();
+
+                return settings;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public void Dispose()

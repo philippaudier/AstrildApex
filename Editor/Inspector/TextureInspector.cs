@@ -4,11 +4,13 @@ using ImGuiNET;
 using Engine.Assets;
 using Engine.Rendering;
 using OpenTK.Graphics.OpenGL4;
+using Editor.UI;
 
 namespace Editor.Inspector
 {
     public static class TextureInspector
     {
+        private static TextureImportSettings? _currentSettings;
         public static void Draw(Guid guid)
         {
             if (!AssetDatabase.TryGet(guid, out var rec))
@@ -80,88 +82,252 @@ namespace Editor.Inspector
             if (ImGui.Button("Copy GUID"))
                 ImGui.SetClipboardText(guid.ToString());
 
-            // Normal map importer toggles
+            // Texture Import Settings
             ImGui.Separator();
-            bool isNormal = false;
-            bool flipGreen = false;
+            ImGui.Text("Texture Import Settings");
+            ImGui.Separator();
 
-            void ReadMeta()
+            // Load settings
+            if (_currentSettings == null)
             {
-                isNormal = false; flipGreen = false;
-                try
+                _currentSettings = LoadSettings(rec.Path);
+            }
+
+            bool settingsChanged = false;
+
+            // Texture Type
+            int textureType = (int)_currentSettings.TextureType;
+            string[] typeNames = { "Default", "Sprite (2D)", "Normal Map", "HDR", "Lightmap", "Cursor" };
+            if (ImGui.Combo("Texture Type", ref textureType, typeNames, typeNames.Length))
+            {
+                _currentSettings.TextureType = (TextureImportType)textureType;
+                settingsChanged = true;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Choose the texture type for optimal import settings");
+
+            ImGui.Spacing();
+
+            // Sprite-specific settings
+            if (_currentSettings.TextureType == TextureImportType.Sprite)
+            {
+                if (ThemedImGui.CollapsingHeader("Sprite Settings", ImGuiTreeNodeFlags.DefaultOpen))
                 {
-                    var metaPath = rec.Path + ".meta";
-                    if (File.Exists(metaPath))
+                    ImGui.Indent();
+
+                    bool useAlphaCutoff = _currentSettings.UseAlphaCutoff;
+                    if (ImGui.Checkbox("Use Alpha Cutoff", ref useAlphaCutoff))
+                    {
+                        _currentSettings.UseAlphaCutoff = useAlphaCutoff;
+                        settingsChanged = true;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Discard pixels below alpha threshold (removes transparent background)");
+
+                    if (_currentSettings.UseAlphaCutoff)
+                    {
+                        float alphaCutoff = _currentSettings.AlphaCutoff;
+                        if (ImGui.SliderFloat("Alpha Cutoff", ref alphaCutoff, 0.0f, 1.0f))
+                        {
+                            _currentSettings.AlphaCutoff = alphaCutoff;
+                            settingsChanged = true;
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Pixels with alpha below this value will be discarded");
+                    }
+
+                    ImGui.Unindent();
+                }
+                ImGui.Spacing();
+            }
+
+            // Normal map settings
+            if (_currentSettings.TextureType == TextureImportType.NormalMap)
+            {
+                if (ThemedImGui.CollapsingHeader("Normal Map Settings", ImGuiTreeNodeFlags.DefaultOpen))
+                {
+                    ImGui.Indent();
+
+                    bool flipGreen = _currentSettings.FlipGreen;
+                    if (ImGui.Checkbox("Flip Green Channel (DX <-> GL)", ref flipGreen))
+                    {
+                        _currentSettings.FlipGreen = flipGreen;
+                        settingsChanged = true;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Convert between DirectX and OpenGL normal map formats");
+
+                    ImGui.Unindent();
+                }
+                ImGui.Spacing();
+            }
+
+            // Wrap Mode
+            int wrapMode = (int)_currentSettings.WrapMode;
+            string[] wrapNames = { "Repeat", "Clamp", "Mirror", "Mirror Once" };
+            if (ImGui.Combo("Wrap Mode", ref wrapMode, wrapNames, wrapNames.Length))
+            {
+                _currentSettings.WrapMode = (TextureImportWrapMode)wrapMode;
+                settingsChanged = true;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("How texture coordinates outside [0,1] are handled");
+
+            // Filter Mode
+            int filterMode = (int)_currentSettings.FilterMode;
+            string[] filterNames = { "Point (Pixelated)", "Bilinear (Smooth)", "Trilinear (Best)" };
+            if (ImGui.Combo("Filter Mode", ref filterMode, filterNames, filterNames.Length))
+            {
+                _currentSettings.FilterMode = (TextureImportFilterMode)filterMode;
+                settingsChanged = true;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Texture filtering quality");
+
+            // Mipmaps
+            bool generateMipmaps = _currentSettings.GenerateMipmaps;
+            if (ImGui.Checkbox("Generate Mipmaps", ref generateMipmaps))
+            {
+                _currentSettings.GenerateMipmaps = generateMipmaps;
+                settingsChanged = true;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Improves quality at different distances (recommended)");
+
+            // Max Texture Size
+            int maxSize = _currentSettings.MaxTextureSize;
+            string[] sizeNames = { "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192" };
+            int[] sizeValues = { 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
+            int currentSizeIndex = Array.IndexOf(sizeValues, maxSize);
+            if (currentSizeIndex == -1) currentSizeIndex = 6; // Default to 2048
+
+            if (ImGui.Combo("Max Size", ref currentSizeIndex, sizeNames, sizeNames.Length))
+            {
+                _currentSettings.MaxTextureSize = sizeValues[currentSizeIndex];
+                settingsChanged = true;
+            }
+
+            // Apply button
+            if (settingsChanged || ImGui.Button("Apply"))
+            {
+                SaveSettings(rec.Path, _currentSettings);
+                Engine.Rendering.TextureCache.Invalidate(guid);
+                try { Engine.Assets.AssetDatabase.Refresh(); } catch { }
+            }
+
+            if (settingsChanged)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new System.Numerics.Vector4(1, 0.7f, 0.3f, 1), "Modified");
+            }
+        }
+
+        private static TextureImportSettings LoadSettings(string texturePath)
+        {
+            var settings = new TextureImportSettings();
+            try
+            {
+                var metaPath = texturePath + ".meta";
+                if (File.Exists(metaPath))
+                {
+                    var json = File.ReadAllText(metaPath);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+                    if (doc.RootElement.TryGetProperty("textureType", out var jType))
+                        settings.TextureType = (TextureImportType)jType.GetInt32();
+
+                    if (doc.RootElement.TryGetProperty("wrapMode", out var jWrap))
+                        settings.WrapMode = (TextureImportWrapMode)jWrap.GetInt32();
+
+                    if (doc.RootElement.TryGetProperty("filterMode", out var jFilter))
+                        settings.FilterMode = (TextureImportFilterMode)jFilter.GetInt32();
+
+                    if (doc.RootElement.TryGetProperty("generateMipmaps", out var jMip))
+                        settings.GenerateMipmaps = jMip.GetBoolean();
+
+                    if (doc.RootElement.TryGetProperty("alphaCutoff", out var jAlpha))
+                        settings.AlphaCutoff = (float)jAlpha.GetDouble();
+
+                    if (doc.RootElement.TryGetProperty("useAlphaCutoff", out var jUseAlpha))
+                        settings.UseAlphaCutoff = jUseAlpha.GetBoolean();
+
+                    if (doc.RootElement.TryGetProperty("isNormalMap", out var jNormal))
+                        settings.IsNormalMap = jNormal.GetBoolean();
+
+                    if (doc.RootElement.TryGetProperty("flipGreen", out var jFlip))
+                        settings.FlipGreen = jFlip.GetBoolean();
+
+                    if (doc.RootElement.TryGetProperty("maxTextureSize", out var jMaxSize))
+                        settings.MaxTextureSize = jMaxSize.GetInt32();
+
+                    // Auto-detect normal map from TextureType
+                    if (settings.TextureType == TextureImportType.NormalMap)
+                        settings.IsNormalMap = true;
+                }
+            }
+            catch { }
+            return settings;
+        }
+
+        private static void SaveSettings(string texturePath, TextureImportSettings settings)
+        {
+            try
+            {
+                var metaPath = texturePath + ".meta";
+                var dict = new System.Collections.Generic.Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+                // Preserve existing meta properties
+                if (File.Exists(metaPath))
+                {
+                    try
                     {
                         var json = File.ReadAllText(metaPath);
                         using var doc = System.Text.Json.JsonDocument.Parse(json);
-                        if (doc.RootElement.TryGetProperty("isNormalMap", out var jn)) isNormal = jn.GetBoolean();
-                        if (doc.RootElement.TryGetProperty("flipGreen", out var jg)) flipGreen = jg.GetBoolean();
-                    }
-                }
-                catch { }
-            }
-
-            void WriteMeta()
-            {
-                try
-                {
-                    var metaPath = rec.Path + ".meta";
-                    var dest = new System.Collections.Generic.Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                    if (File.Exists(metaPath))
-                    {
-                        try
+                        foreach (var prop in doc.RootElement.EnumerateObject())
                         {
-                            var json = File.ReadAllText(metaPath);
-                            using var doc = System.Text.Json.JsonDocument.Parse(json);
-                            foreach (var prop in doc.RootElement.EnumerateObject())
+                            var name = prop.Name;
+                            var el = prop.Value;
+                            switch (el.ValueKind)
                             {
-                                var name = prop.Name;
-                                var el = prop.Value;
-                                switch (el.ValueKind)
-                                {
-                                    case System.Text.Json.JsonValueKind.True:
-                                    case System.Text.Json.JsonValueKind.False:
-                                        dest[name] = el.GetBoolean(); break;
-                                    case System.Text.Json.JsonValueKind.Number:
-                                        if (el.TryGetInt64(out var iv)) dest[name] = iv; else if (el.TryGetDouble(out var dv)) dest[name] = dv; else dest[name] = el.GetRawText();
-                                        break;
-                                    case System.Text.Json.JsonValueKind.String:
-                                        dest[name] = el.GetString(); break;
-                                    default:
-                                        dest[name] = el.GetRawText(); break;
-                                }
+                                case System.Text.Json.JsonValueKind.True:
+                                case System.Text.Json.JsonValueKind.False:
+                                    dict[name] = el.GetBoolean();
+                                    break;
+                                case System.Text.Json.JsonValueKind.Number:
+                                    if (el.TryGetInt64(out var iv))
+                                        dict[name] = iv;
+                                    else if (el.TryGetDouble(out var dv))
+                                        dict[name] = dv;
+                                    else
+                                        dict[name] = el.GetRawText();
+                                    break;
+                                case System.Text.Json.JsonValueKind.String:
+                                    dict[name] = el.GetString();
+                                    break;
+                                default:
+                                    dict[name] = el.GetRawText();
+                                    break;
                             }
                         }
-                        catch { }
                     }
-
-                    dest["isNormalMap"] = isNormal;
-                    dest["flipGreen"] = flipGreen;
-                    File.WriteAllText(metaPath, System.Text.Json.JsonSerializer.Serialize(dest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-
-                    // Invalidate and refresh so the asset is re-indexed and reloaded
-                    Engine.Rendering.TextureCache.Invalidate(guid);
-                    try { Engine.Assets.AssetDatabase.Refresh(); } catch { }
-
-                    // Re-read meta to ensure UI matches persisted values (and update texture path resolution if GUID changed)
-                    ReadMeta();
+                    catch { }
                 }
-                catch { }
-            }
 
-            // Read once at start
-            ReadMeta();
+                // Update with new settings
+                dict["textureType"] = (int)settings.TextureType;
+                dict["wrapMode"] = (int)settings.WrapMode;
+                dict["filterMode"] = (int)settings.FilterMode;
+                dict["generateMipmaps"] = settings.GenerateMipmaps;
+                dict["alphaCutoff"] = settings.AlphaCutoff;
+                dict["useAlphaCutoff"] = settings.UseAlphaCutoff;
+                dict["isNormalMap"] = settings.TextureType == TextureImportType.NormalMap || settings.IsNormalMap;
+                dict["flipGreen"] = settings.FlipGreen;
+                dict["maxTextureSize"] = settings.MaxTextureSize;
 
-            if (ImGui.Checkbox("Is Normal Map", ref isNormal))
-            {
-                WriteMeta();
+                File.WriteAllText(metaPath, System.Text.Json.JsonSerializer.Serialize(dict,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
             }
-
-            if (ImGui.Checkbox("Flip Green (DX<->GL)", ref flipGreen))
-            {
-                WriteMeta();
-            }
+            catch { }
         }
 
         static void RevealFile(string path)

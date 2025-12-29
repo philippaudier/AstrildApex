@@ -47,6 +47,9 @@ uniform float u_SnowSlopeMax;      // Max slope for snow placement (degrees)
 
 // LOD uniforms removed: vegetation shader no longer performs distance-based LOD/culling
 
+// Per-instance model matrix (4 vec4 attributes at locations 3..6)
+layout(location=3) in mat4 aInstanceModel;
+
 // Outputs
 out vec3 vWorldPos;
 out vec3 vNormal;
@@ -76,8 +79,9 @@ float calculateSnowPlacement(vec3 normal, float slopeMinDeg, float slopeMaxDeg)
 
 void main()
 {
-    // Get entity world position (translation from model matrix)
-    vec3 entityWorldPos = vec3(u_Model[3][0], u_Model[3][1], u_Model[3][2]);
+    // Get instance/world position from per-instance model matrix
+    // Use instance model when available (vegetation uses instancing).
+    vec3 entityWorldPos = vec3(aInstanceModel[3][0], aInstanceModel[3][1], aInstanceModel[3][2]);
     vInstancePos = entityWorldPos;
 
     // === WIND FACTOR CALCULATION ===
@@ -195,10 +199,14 @@ void main()
         weatherOffset.y -= u_SnowCoverage * vWindFactor * 0.2;
     }
 
-    // Transform vertex position with model matrix and weather effects
+    // Transform vertex position with per-instance model matrix and weather effects
     vec4 localPos = vec4(aPos + weatherOffset, 1.0);
-    vec4 worldPos = u_Model * localPos;
-    vec3 worldNormal = normalize(u_NormalMat * aNormal);
+    vec4 worldPos = aInstanceModel * localPos;
+
+    // Transform normal by model (treat as direction - w=0). Using aInstanceModel
+    // is sufficient here (models typically use uniform scale); for non-uniform
+    // scale this is an approximation but acceptable for vegetation.
+    vec3 worldNormal = normalize((aInstanceModel * vec4(aNormal, 0.0)).xyz);
 
     // === SNOW DISPLACEMENT ===
     // Calculate snow displacement (AFTER wind/weather effects)

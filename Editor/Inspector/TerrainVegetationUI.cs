@@ -341,6 +341,36 @@ namespace Editor.Inspector
             ImGui.Spacing();
             ImGui.Separator();
 
+            // === CULLING & OPTIMIZATION ===
+            ImGui.Text("Culling & Optimization");
+
+            float maxRenderDistance = layer.MaxRenderDistance;
+            if (ImGui.SliderFloat("Max Render Distance (m)", ref maxRenderDistance, 0f, 2000f, "%.0f"))
+            {
+                layer.MaxRenderDistance = Math.Max(0f, maxRenderDistance);
+                // Force regeneration to update renderer with new culling params
+                RegenerateVegetation(terrain);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Maximum distance from camera to render instances\n0 = infinite (not recommended for dense vegetation)");
+            }
+
+            float cullingSphereRadius = layer.CullingSphereRadius;
+            if (ImGui.SliderFloat("Culling Radius (m)", ref cullingSphereRadius, 0.1f, 50f, "%.1f"))
+            {
+                layer.CullingSphereRadius = Math.Max(0.1f, cullingSphereRadius);
+                // Force regeneration to update renderer with new culling params
+                RegenerateVegetation(terrain);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Bounding sphere radius for frustum culling\nShould match the size of your model");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+
             // Advanced settings removed: vegetation layers no longer expose per-layer draw-distance/LOD/wind here.
 
             ImGui.PopID();
