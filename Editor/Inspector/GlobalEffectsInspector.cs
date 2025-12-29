@@ -228,6 +228,15 @@ namespace Editor.Inspector
                 toneMap.MaxExposure = ImGuiHelper.SliderFloat($"Max Exposure##{index}", toneMap.MaxExposure, 1.0f, 8.0f);
                 toneMap.AdaptationSpeed = ImGuiHelper.SliderFloat($"Adaptation Speed##{index}", toneMap.AdaptationSpeed, 0.1f, 10.0f);
                 toneMap.TargetBrightness = ImGuiHelper.SliderFloat($"Target Brightness##{index}", toneMap.TargetBrightness, 0.01f, 1.0f);
+
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Text("Exposure Compensation (EV)");
+                toneMap.ExposureCompensation = ImGuiHelper.SliderFloat($"Compensation##{index}", toneMap.ExposureCompensation, -3.0f, 3.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Manual bias for auto-exposure\n-1 EV = half as bright (darker)\n+1 EV = twice as bright (brighter)\n\nUse this to override auto-exposure without disabling it");
+                }
             }
         }
 

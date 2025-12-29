@@ -151,6 +151,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\tonemap.frag</Link>
     </None>
+    <None Update="Rendering\Shaders\PostProcess\luminance.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\luminance.frag</Link>
+    </None>
     <None Update="Rendering\Shaders\PostProcess\chromatic_aberration.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\chromatic_aberration.frag</Link>

@@ -51,6 +51,9 @@ namespace Engine.Rendering
         [Engine.Serialization.SerializableAttribute("targetbrightness")]
         public float TargetBrightness { get; set; } = 0.5f; // Luminance cible (0.5 = gris moyen)
 
+        [Engine.Serialization.SerializableAttribute("exposurecompensation")]
+        public float ExposureCompensation { get; set; } = 0.0f; // Bias manuel en EV (-2 = plus sombre, +2 = plus lumineux)
+
         public ToneMappingEffect()
         {
             Priority = 10; // Après bloom, avant chromatic aberration
@@ -222,9 +225,15 @@ namespace Engine.Rendering
                     string lumSource = System.IO.File.ReadAllText(lumPath);
                     _luminanceShader = ShaderProgram.FromSource(vertexSource, lumSource);
                 }
+                else
+                {
+                    Console.WriteLine($"[ToneMapping] WARNING: Luminance shader not found at: {lumPath}");
+                    Console.WriteLine("[ToneMapping] Auto-exposure will use instant adaptation (no temporal smoothing)");
+                }
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"[ToneMapping] ERROR: Failed to initialize shaders: {ex.Message}");
                 _shader = null;
                 _luminanceShader = null;
             }
@@ -346,8 +355,12 @@ namespace Engine.Rendering
                         _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
                     }
 
-                    // Compose final exposure (base exposure * intensity * adaptive factor)
-                    float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure;
+                    // Apply exposure compensation (EV scale: 2^compensation)
+                    // +1 EV = 2x brighter, -1 EV = 0.5x darker
+                    float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
+
+                    // Compose final exposure (base exposure * intensity * adaptive factor * compensation)
+                    float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
 
                     // Store computed exposure into the shader uniform below by overriding u_Exposure
                     _shader.SetFloat("u_Exposure", finalExposureComputed);
@@ -355,7 +368,8 @@ namespace Engine.Rendering
                 }
                 catch
                 {
-                    // If readback fails, fall back to default behavior (no auto-exposure)
+                    // If readback fails, fall back to shader auto-exposure (instant adaptation)
+                    // This is expected on some GPU/driver combinations
                     GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
                     GL.Viewport(0, 0, context.Width, context.Height);
                 }
@@ -396,7 +410,9 @@ namespace Engine.Rendering
 
             // Auto-exposure parameters (shader uses them only if u_AutoExposure is set)
             // If CPU computed exposure, disable shader auto-exposure to keep temporal smoothing.
-            _shader.SetInt("u_AutoExposure", (toneMap.AutoExposure && !cpuComputedExposure) ? 1 : 0);
+            bool shaderAutoExposure = toneMap.AutoExposure && !cpuComputedExposure;
+            _shader.SetInt("u_AutoExposure", shaderAutoExposure ? 1 : 0);
+
             _shader.SetFloat("u_MinExposure", toneMap.MinExposure);
             _shader.SetFloat("u_MaxExposure", toneMap.MaxExposure);
             _shader.SetFloat("u_TargetBrightness", toneMap.TargetBrightness);
