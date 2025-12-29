@@ -693,12 +693,44 @@ namespace Engine.Components
             }
 
             // Apply snap for physics ground only if we didn't snap to terrain
-            if (closestSnapDistance < float.MaxValue && closestSnapDistance > 0.001f && foundPhysicsGround)
+            if (foundPhysicsGround && closestSnapDistance < float.MaxValue && closestSnapDistance > 0.001f)
             {
-                float snapAmount = closestSnapDistance - SkinWidth;
-                if (snapAmount > 0)
+                // Re-run spherecast to obtain the actual hit point so we can compute the exact desired Entity.Y
+                if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.9f, -Vector3.UnitY, out RaycastHit physicsHit, snapDistance, CollisionMask))
                 {
-                    Entity.Transform.Position -= Vector3.UnitY * snapAmount;
+                    if (physicsHit.Distance > SkinWidth)
+                    {
+                        // Compute desired Entity.Y such that the absolute bottom of the capsule sits on the hit surface
+                        float halfCylinderHeight = (Height - 2f * Radius) * 0.5f;
+
+                        // Special-case handling for primitive colliders: use their top Y instead of the sampled hit point.
+                        // This avoids offsets when colliders are centered primitives (box, sphere).
+                        float topY;
+                        var hitCollider = physicsHit.Collider;
+                        if (hitCollider is BoxCollider box)
+                        {
+                            topY = box.WorldCenter.Y + box.WorldSize.Y * 0.5f;
+                        }
+                        else if (hitCollider is SphereCollider sphere)
+                        {
+                            topY = sphere.WorldCenter.Y + sphere.WorldRadius;
+                        }
+                        else
+                        {
+                            topY = physicsHit.Point.Y;
+                        }
+
+                        float desiredEntityY = topY - Center.Y + halfCylinderHeight + Radius;
+
+                        // Smooth snap like terrain branch
+                        float snapSpeed = 20.0f;
+                        float maxDelta = snapSpeed * Engine.Core.Time.FixedDeltaTime;
+                        float delta = desiredEntityY - currentPos.Y;
+                        delta = MathF.Max(-maxDelta, MathF.Min(maxDelta, delta));
+                        float newY = currentPos.Y + delta;
+
+                        Entity.Transform.Position = new Vector3(currentPos.X, newY, currentPos.Z);
+                    }
                 }
             }
         }

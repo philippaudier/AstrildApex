@@ -227,13 +227,11 @@ namespace Engine.Rendering
                 }
                 else
                 {
-                    Console.WriteLine($"[ToneMapping] WARNING: Luminance shader not found at: {lumPath}");
-                    Console.WriteLine("[ToneMapping] Auto-exposure will use instant adaptation (no temporal smoothing)");
+                    // Luminance shader missing: fall back to instant adaptation (no logging)
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine($"[ToneMapping] ERROR: Failed to initialize shaders: {ex.Message}");
                 _shader = null;
                 _luminanceShader = null;
             }
@@ -288,11 +286,15 @@ namespace Engine.Rendering
                 return;
             }
 
+            // (debug logs removed)
+
             // Use engine delta time for accurate frame timing (DateTime.Now is too imprecise)
             float deltaTime = Engine.Core.Time.DeltaTime;
 
             // If auto-exposure is enabled, generate luminance texture
             bool cpuComputedExposure = false;
+            // When CPU computes exposure we store it here and set the uniform after binding the shader
+            float exposureToSet = float.NaN;
 
             // Reset initialization flag when auto-exposure is disabled
             if (!toneMap.AutoExposure)
@@ -362,8 +364,10 @@ namespace Engine.Rendering
                     // Compose final exposure (base exposure * intensity * adaptive factor * compensation)
                     float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
 
-                    // Store computed exposure into the shader uniform below by overriding u_Exposure
-                    _shader.SetFloat("u_Exposure", finalExposureComputed);
+                    // (debug logs removed)
+
+                    // Store computed exposure into a local variable; we'll set the uniform after binding the shader
+                    exposureToSet = finalExposureComputed;
                     cpuComputedExposure = true;
                 }
                 catch
@@ -398,6 +402,12 @@ namespace Engine.Rendering
             // Tone mapping parameters
             _shader.SetInt("u_ToneMappingMode", (int)toneMap.Mode);
 
+            // If CPU computed exposure, set the exposure uniform now (shader is bound)
+            if (cpuComputedExposure)
+            {
+                _shader.SetFloat("u_Exposure", exposureToSet);
+            }
+
             // If CPU computed exposure, we already wrote u_Exposure above and we must NOT enable
             // the shader-side auto-exposure (otherwise it will override instantly).
             if (!toneMap.AutoExposure && !cpuComputedExposure)
@@ -413,11 +423,15 @@ namespace Engine.Rendering
             bool shaderAutoExposure = toneMap.AutoExposure && !cpuComputedExposure;
             _shader.SetInt("u_AutoExposure", shaderAutoExposure ? 1 : 0);
 
+            // (debug logs removed)
+
             _shader.SetFloat("u_MinExposure", toneMap.MinExposure);
             _shader.SetFloat("u_MaxExposure", toneMap.MaxExposure);
             _shader.SetFloat("u_TargetBrightness", toneMap.TargetBrightness);
             _shader.SetFloat("u_AdaptationSpeed", toneMap.AdaptationSpeed);
             _shader.SetFloat("u_DeltaTime", deltaTime);
+
+            // (debug logs removed)
 
             // Render fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
@@ -2366,12 +2380,10 @@ namespace Engine.Rendering
                     string vertexSource = System.IO.File.ReadAllText(vertPath);
                     string fragmentSource = System.IO.File.ReadAllText(fragPath);
                     _sharpeningShader = ShaderProgram.FromSource(vertexSource, fragmentSource);
-                    Console.WriteLine("[ImageSharpeningRenderer] Initialized successfully");
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine($"[ImageSharpeningRenderer] Failed to initialize: {ex.Message}");
                 _sharpeningShader = null;
             }
         }

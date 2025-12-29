@@ -65,6 +65,7 @@ void main()
 {
     vec3 color = texture(u_SourceTexture, vTexCoord).rgb;
 
+    // Use the exposure value from the uniform (CPU-computed or manual)
     float finalExposure = u_Exposure;
 
     // Auto-exposure: calculate average scene luminance and adjust exposure

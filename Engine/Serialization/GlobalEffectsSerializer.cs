@@ -41,6 +41,13 @@ namespace Engine.Serialization
                         effectData["exposure"] = toneMap.Exposure;
                         effectData["whitepoint"] = toneMap.WhitePoint;
                         effectData["gamma"] = toneMap.Gamma;
+                        // Auto-exposure parameters
+                        effectData["autoexposure"] = toneMap.AutoExposure;
+                        effectData["minexposure"] = toneMap.MinExposure;
+                        effectData["maxexposure"] = toneMap.MaxExposure;
+                        effectData["adaptationspeed"] = toneMap.AdaptationSpeed;
+                        effectData["targetbrightness"] = toneMap.TargetBrightness;
+                        effectData["exposurecompensation"] = toneMap.ExposureCompensation;
                         break;
                         
                     case BloomEffect bloom:
@@ -179,6 +186,19 @@ namespace Engine.Serialization
                                 toneMap.WhitePoint = whitePointElement.GetSingle();
                             if (effectObj.TryGetValue("gamma", out var gammaElement))
                                 toneMap.Gamma = gammaElement.GetSingle();
+                                // Auto-exposure
+                                if (effectObj.TryGetValue("autoexposure", out var aeElement))
+                                    toneMap.AutoExposure = aeElement.GetBoolean();
+                                if (effectObj.TryGetValue("minexposure", out var minEl))
+                                    toneMap.MinExposure = minEl.GetSingle();
+                                if (effectObj.TryGetValue("maxexposure", out var maxEl))
+                                    toneMap.MaxExposure = maxEl.GetSingle();
+                                if (effectObj.TryGetValue("adaptationspeed", out var adaptEl))
+                                    toneMap.AdaptationSpeed = adaptEl.GetSingle();
+                                if (effectObj.TryGetValue("targetbrightness", out var targetEl))
+                                    toneMap.TargetBrightness = targetEl.GetSingle();
+                                if (effectObj.TryGetValue("exposurecompensation", out var compEl))
+                                    toneMap.ExposureCompensation = compEl.GetSingle();
                             break;
                             
                         case BloomEffect bloom:
