@@ -200,8 +200,7 @@ namespace Engine.Rendering
         private int _lastHeight = 0;
         // Temporal smoothing state for adaptive exposure
         private float _lastExposure = 1.0f;
-        // TODO: consider storing previous frame exposure per-scene if multiple viewports are used
-        private DateTime _lastFrameTime = DateTime.Now;
+        private bool _exposureInitialized = false; // Track if we've initialized from scene
 
         public void Initialize()
         {
@@ -280,13 +279,18 @@ namespace Engine.Rendering
                 return;
             }
 
-            // Calculate delta time for adaptation
-            var now = DateTime.Now;
-            float deltaTime = (float)(now - _lastFrameTime).TotalSeconds;
-            _lastFrameTime = now;
+            // Use engine delta time for accurate frame timing (DateTime.Now is too imprecise)
+            float deltaTime = Engine.Core.Time.DeltaTime;
 
             // If auto-exposure is enabled, generate luminance texture
             bool cpuComputedExposure = false;
+
+            // Reset initialization flag when auto-exposure is disabled
+            if (!toneMap.AutoExposure)
+            {
+                _exposureInitialized = false;
+            }
+
             if (toneMap.AutoExposure && _luminanceShader != null)
             {
                 EnsureLuminanceTexture(context.Width, context.Height);
@@ -327,11 +331,20 @@ namespace Engine.Rendering
                     float targetExposure = toneMap.TargetBrightness / avgLum;
                     targetExposure = MathF.Max(toneMap.MinExposure, MathF.Min(toneMap.MaxExposure, targetExposure));
 
-                    // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
-                    // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
-                    float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
-                    float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
-                    _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
+                    // First frame: initialize immediately to avoid jarring transition from default 1.0
+                    if (!_exposureInitialized)
+                    {
+                        _lastExposure = targetExposure;
+                        _exposureInitialized = true;
+                    }
+                    else
+                    {
+                        // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
+                        // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
+                        float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
+                        float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
+                        _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
+                    }
 
                     // Compose final exposure (base exposure * intensity * adaptive factor)
                     float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure;
