@@ -105,8 +105,11 @@ namespace Editor.Inspector
             var flags = ImGuiTreeNodeFlags.DefaultOpen | ImGuiTreeNodeFlags.Framed;
             bool nodeOpen = ThemedImGui.TreeNodeEx($"{effect.EffectName}##{index}", flags);
 
-            // Bouton pour supprimer l'effet
-            ImGui.SameLine(ImGui.GetWindowWidth() - 30);
+            // Bouton pour supprimer l'effet - placer aligné à droite du contenu
+            // Calculer la position X dans la zone de contenu et placer le bouton
+            float cursorX = ImGui.GetCursorPosX();
+            var avail = ImGui.GetContentRegionAvail();
+            ImGui.SetCursorPosX(cursorX + avail.X - 30f);
             if (ImGui.Button($"X##{index}", new Vector2(20, 0)))
             {
                 if (effect is BloomEffect)
@@ -213,6 +216,19 @@ namespace Editor.Inspector
 
             // Gamma
             toneMap.Gamma = ImGuiHelper.SliderFloat($"Gamma##{index}", toneMap.Gamma, 1.0f, 3.0f);
+
+            // Auto-Exposure toggle and parameters
+            var auto = toneMap.AutoExposure;
+            if (ImGui.Checkbox($"Auto-Exposure##{index}", ref auto))
+                toneMap.AutoExposure = auto;
+
+            if (toneMap.AutoExposure)
+            {
+                toneMap.MinExposure = ImGuiHelper.SliderFloat($"Min Exposure##{index}", toneMap.MinExposure, 0.01f, 1.0f);
+                toneMap.MaxExposure = ImGuiHelper.SliderFloat($"Max Exposure##{index}", toneMap.MaxExposure, 1.0f, 8.0f);
+                toneMap.AdaptationSpeed = ImGuiHelper.SliderFloat($"Adaptation Speed##{index}", toneMap.AdaptationSpeed, 0.1f, 10.0f);
+                toneMap.TargetBrightness = ImGuiHelper.SliderFloat($"Target Brightness##{index}", toneMap.TargetBrightness, 0.01f, 1.0f);
+            }
         }
 
         private static void DrawBloomInspector(BloomEffect bloom, int index)

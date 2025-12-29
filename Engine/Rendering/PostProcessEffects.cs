@@ -198,7 +198,9 @@ namespace Engine.Rendering
         private int _luminanceFBO = 0;
         private int _lastWidth = 0;
         private int _lastHeight = 0;
-        // TODO: Add temporal smoothing with _lastExposure for smoother adaptation
+        // Temporal smoothing state for adaptive exposure
+        private float _lastExposure = 1.0f;
+        // TODO: consider storing previous frame exposure per-scene if multiple viewports are used
         private DateTime _lastFrameTime = DateTime.Now;
 
         public void Initialize()
@@ -284,6 +286,7 @@ namespace Engine.Rendering
             _lastFrameTime = now;
 
             // If auto-exposure is enabled, generate luminance texture
+            bool cpuComputedExposure = false;
             if (toneMap.AutoExposure && _luminanceShader != null)
             {
                 EnsureLuminanceTexture(context.Width, context.Height);
@@ -302,6 +305,47 @@ namespace Engine.Rendering
                 // Generate mipmaps for average luminance calculation
                 GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
                 GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+
+                // Read smallest mip (1x1) to compute average log-luminance on CPU
+                try
+                {
+                    int maxDim = Math.Max(context.Width, context.Height);
+                    int maxLevel = Math.Max(0, (int)Math.Floor(Math.Log(Math.Max(1, maxDim), 2)));
+
+                    // Bind luminance texture and read the Red channel of the 1x1 mip
+                    GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
+                    float[] pixel = new float[1];
+                    GL.GetTexImage(TextureTarget.Texture2D, maxLevel, PixelFormat.Red, PixelType.Float, pixel);
+
+                    float avgLogLum = pixel.Length > 0 ? pixel[0] : 0.0f;
+                    float avgLum = MathF.Exp(avgLogLum);
+
+                    // Avoid degenerate values
+                    if (avgLum <= 0) avgLum = 0.0001f;
+
+                    // Compute target exposure and clamp
+                    float targetExposure = toneMap.TargetBrightness / avgLum;
+                    targetExposure = MathF.Max(toneMap.MinExposure, MathF.Min(toneMap.MaxExposure, targetExposure));
+
+                    // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
+                    // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
+                    float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
+                    float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
+                    _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
+
+                    // Compose final exposure (base exposure * intensity * adaptive factor)
+                    float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure;
+
+                    // Store computed exposure into the shader uniform below by overriding u_Exposure
+                    _shader.SetFloat("u_Exposure", finalExposureComputed);
+                    cpuComputedExposure = true;
+                }
+                catch
+                {
+                    // If readback fails, fall back to default behavior (no auto-exposure)
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
+                    GL.Viewport(0, 0, context.Width, context.Height);
+                }
 
                 // Restore original framebuffer
                 GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
@@ -326,12 +370,20 @@ namespace Engine.Rendering
 
             // Tone mapping parameters
             _shader.SetInt("u_ToneMappingMode", (int)toneMap.Mode);
-            _shader.SetFloat("u_Exposure", toneMap.Exposure * toneMap.Intensity);
+
+            // If CPU computed exposure, we already wrote u_Exposure above and we must NOT enable
+            // the shader-side auto-exposure (otherwise it will override instantly).
+            if (!toneMap.AutoExposure && !cpuComputedExposure)
+            {
+                _shader.SetFloat("u_Exposure", toneMap.Exposure * toneMap.Intensity);
+            }
+
             _shader.SetFloat("u_WhitePoint", toneMap.WhitePoint);
             _shader.SetFloat("u_Gamma", toneMap.Gamma);
 
-            // Auto-exposure parameters
-            _shader.SetInt("u_AutoExposure", toneMap.AutoExposure ? 1 : 0);
+            // Auto-exposure parameters (shader uses them only if u_AutoExposure is set)
+            // If CPU computed exposure, disable shader auto-exposure to keep temporal smoothing.
+            _shader.SetInt("u_AutoExposure", (toneMap.AutoExposure && !cpuComputedExposure) ? 1 : 0);
             _shader.SetFloat("u_MinExposure", toneMap.MinExposure);
             _shader.SetFloat("u_MaxExposure", toneMap.MaxExposure);
             _shader.SetFloat("u_TargetBrightness", toneMap.TargetBrightness);
