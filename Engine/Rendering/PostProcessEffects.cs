@@ -205,6 +205,13 @@ namespace Engine.Rendering
         private float _lastExposure = 1.0f;
         private bool _exposureInitialized = false; // Track if we've initialized from scene
 
+        // Quick-fix: reduce luminance resolution and sample less frequently to improve CPU/GPU usage
+        private int _luminanceMaxSize = 256; // clamp luminance texture to at most 256x256 (tunable)
+        private int _frameCounter = 0;
+        private int _sampleInterval = 2; // compute luminance every N frames (2 = every other frame)
+        // Rate-limited console logs for quick perf checks (only when not in verbose logger)
+        private DateTime _lastLumLogTime = DateTime.MinValue;
+
         public void Initialize()
         {
             try
@@ -291,6 +298,10 @@ namespace Engine.Rendering
             // Use engine delta time for accurate frame timing (DateTime.Now is too imprecise)
             float deltaTime = Engine.Core.Time.DeltaTime;
 
+            // Quick sampling throttling: only compute luminance every N frames to reduce cost
+            _frameCounter++;
+            bool computeThisFrame = (_frameCounter % _sampleInterval) == 0;
+
             // If auto-exposure is enabled, generate luminance texture
             bool cpuComputedExposure = false;
             // When CPU computes exposure we store it here and set the uniform after binding the shader
@@ -304,83 +315,116 @@ namespace Engine.Rendering
 
             if (toneMap.AutoExposure && _luminanceShader != null)
             {
-                EnsureLuminanceTexture(context.Width, context.Height);
+                int lumW = Math.Min(context.Width, _luminanceMaxSize);
+                int lumH = Math.Min(context.Height, _luminanceMaxSize);
 
-                // Render luminance to texture
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
-                GL.Viewport(0, 0, context.Width, context.Height);
-                GL.Clear(ClearBufferMask.ColorBufferBit);
-
-                _luminanceShader.Use();
-                GL.ActiveTexture(TextureUnit.Texture0);
-                GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
-                _luminanceShader.SetInt("u_SourceTexture", 0);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
-
-                // Generate mipmaps for average luminance calculation
-                GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
-                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
-
-                // Read smallest mip (1x1) to compute average log-luminance on CPU
-                try
+                if (computeThisFrame)
                 {
-                    int maxDim = Math.Max(context.Width, context.Height);
-                    int maxLevel = Math.Max(0, (int)Math.Floor(Math.Log(Math.Max(1, maxDim), 2)));
+                    EnsureLuminanceTexture(lumW, lumH);
 
-                    // Bind luminance texture and read the Red channel of the 1x1 mip
+                    var swLum = System.Diagnostics.Stopwatch.StartNew();
+
+                    // Render luminance to texture
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
+                    GL.Viewport(0, 0, lumW, lumH);
+                    GL.Clear(ClearBufferMask.ColorBufferBit);
+
+                    _luminanceShader.Use();
+                    GL.ActiveTexture(TextureUnit.Texture0);
+                    GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
+                    _luminanceShader.SetInt("u_SourceTexture", 0);
+                    GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+
+                    // Generate mipmaps for average luminance calculation
                     GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
-                    float[] pixel = new float[1];
-                    GL.GetTexImage(TextureTarget.Texture2D, maxLevel, PixelFormat.Red, PixelType.Float, pixel);
+                    GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
 
-                    float avgLogLum = pixel.Length > 0 ? pixel[0] : 0.0f;
-                    float avgLum = MathF.Exp(avgLogLum);
-
-                    // Avoid degenerate values
-                    if (avgLum <= 0) avgLum = 0.0001f;
-
-                    // Compute target exposure and clamp
-                    float targetExposure = toneMap.TargetBrightness / avgLum;
-                    targetExposure = MathF.Max(toneMap.MinExposure, MathF.Min(toneMap.MaxExposure, targetExposure));
-
-                    // First frame: initialize immediately to avoid jarring transition from default 1.0
-                    if (!_exposureInitialized)
+                    // Read smallest mip (1x1) to compute average log-luminance on CPU
+                    try
                     {
-                        _lastExposure = targetExposure;
-                        _exposureInitialized = true;
+                        int maxDim = Math.Max(lumW, lumH);
+                        int maxLevel = Math.Max(0, (int)Math.Floor(Math.Log(Math.Max(1, maxDim), 2)));
+
+                        // Bind luminance texture and read the Red channel of the 1x1 mip
+                        GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
+                        float[] pixel = new float[1];
+                        GL.GetTexImage(TextureTarget.Texture2D, maxLevel, PixelFormat.Red, PixelType.Float, pixel);
+
+                        float avgLogLum = pixel.Length > 0 ? pixel[0] : 0.0f;
+                        float avgLum = MathF.Exp(avgLogLum);
+
+                        // Avoid degenerate values
+                        if (avgLum <= 0) avgLum = 0.0001f;
+
+                        // Compute target exposure and clamp
+                        float targetExposure = toneMap.TargetBrightness / avgLum;
+                        targetExposure = MathF.Max(toneMap.MinExposure, MathF.Min(toneMap.MaxExposure, targetExposure));
+
+                        // First frame: initialize immediately to avoid jarring transition from default 1.0
+                        if (!_exposureInitialized)
+                        {
+                            _lastExposure = targetExposure;
+                            _exposureInitialized = true;
+                        }
+                        else
+                        {
+                            // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
+                            // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
+                            float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
+                            float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
+                            _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
+                        }
+
+                        // Apply exposure compensation (EV scale: 2^compensation)
+                        // +1 EV = 2x brighter, -1 EV = 0.5x darker
+                        float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
+
+                        // Compose final exposure (base exposure * intensity * adaptive factor * compensation)
+                        float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
+
+                        // Store computed exposure into a local variable; we'll set the uniform after binding the shader
+                        exposureToSet = finalExposureComputed;
+                        cpuComputedExposure = true;
+
+                        swLum.Stop();
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ToneMapping] Luminance computed (size={lumW}x{lumH}) in {swLum.Elapsed.TotalMilliseconds:F2} ms (avgExp={_lastExposure:F3})"); } catch { }
+                        // Ensure we emit at least occasional console feedback for quick local testing
+                        try
+                        {
+                            if ((DateTime.UtcNow - _lastLumLogTime).TotalSeconds > 1.0)
+                            {
+                                Console.WriteLine($"[ToneMapping] Luminance computed: {lumW}x{lumH} -> {swLum.Elapsed.TotalMilliseconds:F2} ms, exposure={_lastExposure:F3}");
+                                _lastLumLogTime = DateTime.UtcNow;
+                            }
+                        }
+                        catch { }
                     }
-                    else
+                    catch
                     {
-                        // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
-                        // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
-                        float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
-                        float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
-                        _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
+                        // If readback fails, fall back to shader auto-exposure (instant adaptation)
+                        // This is expected on some GPU/driver combinations
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
+                        GL.Viewport(0, 0, context.Width, context.Height);
                     }
 
-                    // Apply exposure compensation (EV scale: 2^compensation)
-                    // +1 EV = 2x brighter, -1 EV = 0.5x darker
-                    float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
-
-                    // Compose final exposure (base exposure * intensity * adaptive factor * compensation)
-                    float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
-
-                    // (debug logs removed)
-
-                    // Store computed exposure into a local variable; we'll set the uniform after binding the shader
-                    exposureToSet = finalExposureComputed;
-                    cpuComputedExposure = true;
-                }
-                catch
-                {
-                    // If readback fails, fall back to shader auto-exposure (instant adaptation)
-                    // This is expected on some GPU/driver combinations
+                    // Restore original framebuffer
                     GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
                     GL.Viewport(0, 0, context.Width, context.Height);
                 }
-
-                // Restore original framebuffer
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
-                GL.Viewport(0, 0, context.Width, context.Height);
+                else
+                {
+                    // Not computing this frame: reuse last computed exposure if available to avoid shader readback
+                    if (_exposureInitialized)
+                    {
+                        float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
+                        exposureToSet = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
+                        cpuComputedExposure = true;
+                    }
+                    else
+                    {
+                        // No previous exposure yet: leave cpuComputedExposure=false so shader auto-exposure can run as fallback
+                    }
+                }
             }
 
             // Render tone mapping

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -34,6 +35,20 @@ namespace Editor.Rendering
         // Simple static instance counter for diagnostics (helps detect leaks)
         private static int _instanceCount = 0;
         public static int InstanceCount => _instanceCount;
+
+        // Simple log deduplication to avoid spamming identical verbose messages
+        private static readonly ConcurrentDictionary<string, DateTime> _lastLogTimes = new();
+
+        private static bool ShouldLogOnce(string key, TimeSpan interval)
+        {
+            var now = DateTime.UtcNow;
+            if (_lastLogTimes.TryGetValue(key, out var last))
+            {
+                if ((now - last) < interval) return false;
+            }
+            _lastLogTimes[key] = now;
+            return true;
+        }
 
         // FIX C8: Dispose guard to prevent double-disposal
         private bool _isDisposed = false;
@@ -3215,7 +3230,10 @@ void main(){
                                 if (terrain.VegetationCleared)
                                 {
                                     // Vegetation was cleared and saved - don't auto-regenerate
-                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Skipping auto-generation for '{entity.Name}' - vegetation was cleared"); } catch { }
+                                    try {
+                                        if (Engine.Utils.DebugLogger.EnableVerbose && ShouldLogOnce($"SkippingVeg:{entity.Name}", TimeSpan.FromSeconds(2)))
+                                            Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Skipping auto-generation for '{entity.Name}' - vegetation was cleared");
+                                    } catch { }
                                     continue;
                                 }
 
