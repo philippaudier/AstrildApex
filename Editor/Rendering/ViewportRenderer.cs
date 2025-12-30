@@ -697,8 +697,33 @@ namespace Editor.Rendering
                 else
                 {
                     int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
-                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
-                    _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+
+                    // Try to determine per-submesh culling from the model's material, fallback to Back
+                    Engine.Components.CullingMode submeshCull = Engine.Components.CullingMode.Back;
+                    try
+                    {
+                        var meshAssetSingle = Engine.Assets.AssetDatabase.LoadMeshAsset(modelGuid.Value);
+                        if (meshAssetSingle != null && meshAssetSingle.SubMeshes != null && submeshIndex < meshAssetSingle.SubMeshes.Count)
+                        {
+                            var sub = meshAssetSingle.SubMeshes[submeshIndex];
+                            if (meshAssetSingle.MaterialGuids != null && sub.MaterialIndex >= 0 && sub.MaterialIndex < meshAssetSingle.MaterialGuids.Count)
+                            {
+                                var matGuid = meshAssetSingle.MaterialGuids[sub.MaterialIndex];
+                                if (matGuid != null && matGuid != Guid.Empty)
+                                {
+                                    var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
+                                    if (mat != null)
+                                    {
+                                        submeshCull = (Engine.Components.CullingMode)mat.CullingMode;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+
+                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}, cull={submeshCull})");
+                    _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, submeshCull, layer.MaxRenderDistance, layer.CullingSphereRadius);
                 }
             }
             // Ensure GPU buffers are (re)uploaded after updating batches so changes
@@ -3187,6 +3212,31 @@ void main(){
                     // Render instanced vegetation with wind animation
                     if (_vegetationRenderer != null)
                     {
+                        // CRITICAL: Check if VegetationRenderer has batches. If not, try to initialize them.
+                        // This handles the case where the scene was loaded but vegetation batches weren't initialized.
+                        if (_vegetationRenderer.BatchCount == 0 && _scene != null)
+                        {
+                            foreach (var entity in _scene.Entities)
+                            {
+                                if (!entity.Active) continue;
+                                var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                                if (terrain != null && terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                                {
+                                    // Found terrain with vegetation layers but no batches - generate and initialize
+                                    Console.WriteLine($"[ViewportRenderer] Auto-generating vegetation for terrain '{entity.Name}' (layers={terrain.VegetationLayers.Length})");
+                                    try
+                                    {
+                                        terrain.GenerateVegetation(_scene);
+                                        OnTerrainVegetationRegenerated(terrain);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"[ViewportRenderer] Failed to auto-generate vegetation: {ex.Message}");
+                                    }
+                                }
+                            }
+                        }
+
                         // DEBUG: Log vegetation rendering (using static counter)
                         // _vegRenderCounter++;
                         // if (_vegRenderCounter % 120 == 0)
@@ -5016,7 +5066,8 @@ void main(){
                     // Check if material is missing
                     bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
                     Engine.Rendering.MaterialRuntime? materialRuntime;
-                    
+                    Engine.Assets.MaterialAsset? materialAsset = null;
+
                     if (!hasMaterial)
                     {
                         // Use magenta error material for missing materials
@@ -5028,9 +5079,9 @@ void main(){
                         var materialGuid = meshRenderer.MaterialGuid!.Value;
                         try
                         {
-                            var asset = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid);
+                            materialAsset = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid);
                             Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                            materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);  // Uses global cache
+                            materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(materialAsset, resolver);  // Uses global cache
                         }
                         catch
                         {
@@ -5088,13 +5139,13 @@ void main(){
                         IndexCount = idxCount,
                         Model = model,
                         NormalMat3 = normalMat3,
-                        MaterialGuid = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty 
-                            ? meshRenderer.MaterialGuid.Value 
+                        MaterialGuid = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty
+                            ? meshRenderer.MaterialGuid.Value
                             : Guid.Empty,
                         MeshType = meshRenderer.Mesh,
                         MaterialRuntime = materialRuntime!, // Always initialized above
                         ObjectId = entity.Id,
-                        CullingMode = meshRenderer.Culling
+                        CullingMode = materialAsset != null ? (Engine.Components.CullingMode)materialAsset.CullingMode : Engine.Components.CullingMode.Back
                     });
 
                     continue;
@@ -5316,8 +5367,18 @@ void main(){
                     GL.Uniform4(_locAlbColor, 1f, 1f, 1f, 1f);
                     GL.Uniform1(_locUseTex, 0);
 
-                    // Apply culling mode
-                    ApplyCullingMode(meshRenderer);
+                    // Apply culling mode from material
+                    Engine.Components.CullingMode cullingMode = Engine.Components.CullingMode.Back;
+                    if (meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty)
+                    {
+                        try
+                        {
+                            var mat = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid.Value);
+                            if (mat != null) cullingMode = (Engine.Components.CullingMode)mat.CullingMode;
+                        }
+                        catch { }
+                    }
+                    ApplyCullingModeFromEnum(cullingMode);
 
                     // Check if using custom mesh first
                     if (meshRenderer.IsUsingCustomMesh())
@@ -6003,11 +6064,12 @@ void main(){
                     if (!hasMaterial) continue; // Skip non-transparent items
 
                     Engine.Rendering.MaterialRuntime? materialRuntime;
+                    Engine.Assets.MaterialAsset? materialAsset = null;
                     try
                     {
-                        var asset = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid!.Value);
+                        materialAsset = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid!.Value);
                         Func<Guid, string?> resolver = guid => Engine.Assets.AssetDatabase.TryGet(guid, out var rec) ? rec.Path : null;
-                        materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(asset, resolver);
+                        materialRuntime = Engine.Rendering.MaterialRuntime.FromAsset(materialAsset, resolver);
                     }
                     catch
                     {
@@ -6054,7 +6116,7 @@ void main(){
                         MaterialGuid = meshRenderer.MaterialGuid!.Value,
                         MaterialRuntime = materialRuntime,
                         ObjectId = entity.Id,
-                        CullingMode = meshRenderer.Culling
+                        CullingMode = materialAsset != null ? (Engine.Components.CullingMode)materialAsset.CullingMode : Engine.Components.CullingMode.Back
                     });
                 }
             }
@@ -8472,8 +8534,52 @@ void main(){
                 }
                 catch { }
 
-                // Note: VegetationRenderer uses MaterialRuntime global cache (already updated above)
-                // No need to update a local cache as it doesn't have one
+                // CRITICAL: VegetationRenderer caches CullingMode in batches, so we need to update them
+                // when a material's CullingMode changes
+                try
+                {
+                    if (_scene != null)
+                    {
+                        foreach (var entity in _scene.Entities)
+                        {
+                            if (!entity.Active) continue;
+                            var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                            if (terrain != null && terrain.VegetationLayers != null)
+                            {
+                                // Check if this terrain uses the modified material
+                                bool usesMaterial = false;
+                                foreach (var layer in terrain.VegetationLayers)
+                                {
+                                    var modelGuid = GetModelGuidFromLayer(layer);
+                                    if (modelGuid.HasValue)
+                                    {
+                                        var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(modelGuid.Value);
+                                        if (meshAsset?.MaterialGuids != null)
+                                        {
+                                            foreach (var matGuid in meshAsset.MaterialGuids)
+                                            {
+                                                if (matGuid == materialGuid)
+                                                {
+                                                    usesMaterial = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (usesMaterial) break;
+                                }
+
+                                // If terrain uses this material, update its vegetation batches
+                                if (usesMaterial)
+                                {
+                                    Console.WriteLine($"[ViewportRenderer] Material {materialGuid} changed, updating vegetation batches for terrain '{entity.Name}'");
+                                    OnTerrainVegetationRegenerated(terrain);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
 
                 // Force material rebind on next frame to apply changes
                 _forceMaterialRebind = true;
@@ -8490,27 +8596,6 @@ void main(){
             // Just force rebind on next draw to apply changes
             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Material saved: {materialGuid}, forcing rebind"); } catch { }
             _forceMaterialRebind = true;
-        }
-
-        /// <summary>
-        /// Apply culling mode for a mesh renderer before drawing.
-        /// </summary>
-        private void ApplyCullingMode(Engine.Components.MeshRendererComponent meshRenderer)
-        {
-            switch (meshRenderer.Culling)
-            {
-                case Engine.Components.CullingMode.Back:
-                    GL.Enable(EnableCap.CullFace);
-                    GL.CullFace(TriangleFace.Back);
-                    break;
-                case Engine.Components.CullingMode.Front:
-                    GL.Enable(EnableCap.CullFace);
-                    GL.CullFace(TriangleFace.Front);
-                    break;
-                case Engine.Components.CullingMode.None:
-                    GL.Disable(EnableCap.CullFace);
-                    break;
-            }
         }
 
         /// <summary>

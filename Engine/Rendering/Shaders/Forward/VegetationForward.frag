@@ -61,6 +61,10 @@ uniform float u_Emission;
 uniform int u_AlphaClippingEnabled;
 uniform float u_AlphaClipThreshold;
 
+// Distance fade (dithering)
+uniform float u_MaxRenderDistance;
+uniform float u_DitherFadeRange;
+
 // Weather parameters
 uniform float u_RainIntensity;
 uniform float u_SnowAccumulation;  // Accumulated snow (can exceed 1.0)
@@ -84,6 +88,47 @@ uniform vec2 u_SnowTextureTiling;
 uniform float u_SnowNormalStrength; // Normal map strength for snow
 
 // LOD & Distance Culling removed: vegetation is always rendered by shader.
+
+// === DISTANCE FADE UTILITY ===
+// Bayer 4x4 dithering pattern for smooth distance fade
+float bayerDither4x4(vec2 screenPos) {
+    const float pattern[16] = float[](
+        0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
+        12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
+        3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
+        15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
+    );
+    ivec2 pos = ivec2(mod(screenPos, 4.0));
+    return pattern[pos.y * 4 + pos.x];
+}
+
+// Apply distance-based dithered fade
+void applyDistanceFade(float distanceToCamera, vec2 screenPos) {
+    // Early out if no max distance set
+    if (u_MaxRenderDistance <= 0.0) return;
+
+    // Calculate fade start distance
+    float fadeStart = max(0.0, u_MaxRenderDistance - u_DitherFadeRange);
+
+    // If beyond max distance, always discard
+    if (distanceToCamera > u_MaxRenderDistance) {
+        discard;
+    }
+
+    // If within fade range, apply dithering
+    if (distanceToCamera > fadeStart) {
+        float fadeDistance = distanceToCamera - fadeStart;
+        float fadeFactor = fadeDistance / u_DitherFadeRange; // 0.0 at fadeStart, 1.0 at maxDistance
+
+        // Get dither threshold from Bayer matrix
+        float ditherThreshold = bayerDither4x4(screenPos);
+
+        // Discard pixel if fade factor exceeds dither threshold
+        if (fadeFactor > ditherThreshold) {
+            discard;
+        }
+    }
+}
 
 // === SNOW UTILITY FUNCTIONS ===
 // Calculate snow placement factor based on surface normal and slope constraints
@@ -280,6 +325,9 @@ vec3 SampleTriplanarNormalMap(sampler2D tex, vec3 worldPos, vec3 worldNormal, fl
 }
 
 void main() {
+    // Distance-based dithered fade - MUST be first to avoid wasting GPU on far pixels
+    applyDistanceFade(vDistanceToCamera, gl_FragCoord.xy);
+
     // Alpha clipping - early discard for performance (EXACTLY like ForwardBase)
     if (u_AlphaClippingEnabled == 1) {
         vec4 albedoSample;
@@ -294,7 +342,7 @@ void main() {
             discard;
         }
     }
-    
+
     // Handle triplanar mapping if enabled (EXACTLY like ForwardBase)
     vec3 baseNormal = normalize(vNormal);
     vec4 sampledAlbedoAlpha;

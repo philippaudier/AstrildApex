@@ -56,6 +56,7 @@ out vec3 vNormal;
 out vec2 vUV;
 out float vWindFactor;  // How much this vertex is affected by wind (based on height)
 out vec3 vInstancePos;  // Instance position for rain/snow effects
+out float vDistanceToCamera;  // Distance from camera for dithered fade
 
 // Pseudo-random noise function for per-instance variation
 float hash(vec2 p) {
@@ -231,7 +232,8 @@ void main()
     // UV with tiling and offset
     vUV = aUV * u_TextureTiling + u_TextureOffset;
 
-    // (Removed) distance to camera calculation - shader no longer uses per-vertex distance for culling
+    // Calculate distance to camera for dithered fade
+    vDistanceToCamera = length(worldPos.xyz - uCameraPos);
 
     // Final vertex position using Common.glsl's uViewProj
     gl_Position = uViewProj * worldPos;

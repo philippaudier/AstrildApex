@@ -1105,7 +1105,7 @@ namespace Editor.Panels
                 newMr.MaterialGuid = mr.MaterialGuid;
                 newMr.CustomMeshGuid = mr.CustomMeshGuid;
                 newMr.SubmeshIndex = mr.SubmeshIndex;
-                newMr.Culling = mr.Culling;
+                // Note: Culling is now in Material, not MeshRenderer
             }
             
             // Copy Light if present

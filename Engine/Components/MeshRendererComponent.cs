@@ -38,12 +38,6 @@ namespace Engine.Components
         [Engine.Serialization.Serializable("materialGuid")]
         public Guid? MaterialGuid { get; set; } = null;
 
-        /// <summary>
-        /// Face culling mode - determines which faces are culled during rendering
-        /// </summary>
-        [Engine.Serialization.Serializable("cullingMode")]
-        public CullingMode Culling { get; set; } = CullingMode.Back;
-        
         public override void OnAttached()
         {
             base.OnAttached();

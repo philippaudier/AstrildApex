@@ -1734,9 +1734,6 @@ namespace Engine.Components
                     meshRenderer.SubmeshIndex = submeshIndex;
                     meshRenderer.MaterialGuid = materialGuid;
 
-                    // Apply culling from material
-                    meshRenderer.Culling = GetCullingModeFromMaterial(materialGuid);
-
                     totalEntitiesCreated++;
                 }
 
@@ -1771,6 +1768,11 @@ namespace Engine.Components
             var terrainRot = Entity?.Transform?.Rotation ?? OpenTK.Mathematics.Quaternion.Identity;
 
             // Poisson disk sampling with rejection
+            // If MinDistance is set, use a spatial hash grid to efficiently reject close placements
+            float baseMinDistance = Math.Max(0f, layer.MinDistance);
+            float baseCellSize = baseMinDistance > 0f ? baseMinDistance : 1.0f;
+            var spatial = new System.Collections.Generic.Dictionary<(int, int), System.Collections.Generic.List<OpenTK.Mathematics.Vector3>>();
+
             for (int i = 0; i < numAttempts; i++)
             {
                 // Random position on terrain (in local space)
@@ -1845,6 +1847,52 @@ namespace Engine.Components
                 matrix.M42 = worldPosition.Y;
                 matrix.M43 = worldPosition.Z;
 
+                // Enforce minimum distance between instances if requested
+                bool tooClose = false;
+                if (baseMinDistance > 0f)
+                {
+                    // Effective minimum distance scales with instance scale to avoid overlaps for large prefabs
+                    float effectiveMinDist = baseMinDistance * scale;
+                    float effMinDistSq = effectiveMinDist * effectiveMinDist;
+
+                    int gx = (int)Math.Floor(worldPosition.X / baseCellSize);
+                    int gz = (int)Math.Floor(worldPosition.Z / baseCellSize);
+
+                    // Check neighbor cells
+                    for (int nx = gx - 1; nx <= gx + 1 && !tooClose; nx++)
+                    {
+                        for (int nz = gz - 1; nz <= gz + 1; nz++)
+                        {
+                            var key = (nx, nz);
+                            if (spatial.TryGetValue(key, out var list))
+                            {
+                                foreach (var p in list)
+                                {
+                                    float dx = p.X - worldPosition.X;
+                                    float dz = p.Z - worldPosition.Z;
+                                    if (dx * dx + dz * dz <= effMinDistSq)
+                                    {
+                                        tooClose = true;
+                                        break;
+                                    }
+                                }
+                                if (tooClose) break;
+                            }
+                        }
+                    }
+
+                    if (!tooClose)
+                    {
+                        var key = (gx, gz);
+                        if (!spatial.TryGetValue(key, out var l))
+                        {
+                            l = new System.Collections.Generic.List<OpenTK.Mathematics.Vector3>();
+                            spatial[key] = l;
+                        }
+                        l.Add(worldPosition);
+                    }
+                }
+
                 // Debug: log first instance
                 if (instances.Count == 0)
                 {
@@ -1852,7 +1900,10 @@ namespace Engine.Components
                     Console.WriteLine($"[Terrain] Matrix translation: M41={matrix.M41}, M42={matrix.M42}, M43={matrix.M43}");
                 }
 
-                instances.Add(matrix);
+                if (!tooClose)
+                {
+                    instances.Add(matrix);
+                }
             }
 
             try { Console.WriteLine($"[Terrain] GenerateLayerInstances: layer={layer?.Name ?? "(unnamed)"} produced {instances.Count} instance(s) (targetAttempts={numAttempts})"); } catch { }

@@ -429,6 +429,31 @@ namespace Editor.Inspector
                 }
             }
 
+            // Culling Mode (which faces to cull during rendering)
+            {
+                int cullMode = mat.CullingMode;
+                var cullModes = new[] { "Back", "Front", "None (Both)" };
+                if (ImGui.Combo("Culling Mode", ref cullMode, cullModes, cullModes.Length))
+                {
+                    BeginEdit("Culling Mode");
+                    mat.CullingMode = Math.Clamp(cullMode, 0, 2);
+                    SaveAndApplyImmediate(guid, mat, "Culling Mode");
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    string tooltip = cullMode switch
+                    {
+                        0 => "Back: Cull back faces (default for solid objects)\nBest performance, most common.",
+                        1 => "Front: Cull front faces (for inside-out geometry)\nSpecial use case only.",
+                        2 => "None: Render both sides (for thin objects like leaves)\nDouble-sided rendering, performance cost.",
+                        _ => "Which faces to cull during rendering"
+                    };
+                    ImGui.SetTooltip(tooltip);
+                }
+            }
+
+            ImGui.Spacing();
+
             // PBR sliders
             {
                 float m = mat.Metallic;

@@ -547,7 +547,7 @@ namespace Engine.Rendering
                         // DEBUG: Log EVERY time we check for snow material (not just every 120 frames)
                         if (_renderCallCounter % 120 == 0 && wm != null)
                         {
-                            System.Console.WriteLine($"[VegetationRenderer] Checking snow material: HasValue={wm.SnowMapMaterial.HasValue}, GUID={wm.SnowMapMaterial?.ToString() ?? "null"}");
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Checking snow material: HasValue={wm.SnowMapMaterial.HasValue}, GUID={wm.SnowMapMaterial?.ToString() ?? "null"}"); } catch { }
                         }
 
                         if (wm != null && wm.SnowMapMaterial.HasValue)
@@ -654,6 +654,12 @@ namespace Engine.Rendering
                         break;
                 }
 
+                // Set distance fade dithering parameters
+                shToUse.SetFloat("u_MaxRenderDistance", batch.MaxRenderDistance);
+                // Fade range is 20% of max distance (configurable later if needed)
+                float ditherFadeRange = batch.MaxRenderDistance > 0 ? batch.MaxRenderDistance * 0.2f : 0f;
+                shToUse.SetFloat("u_DitherFadeRange", ditherFadeRange);
+
                 // Draw instanced
                 GL.BindVertexArray(batch.VAO);
                 GL.DrawElementsInstanced(
@@ -679,11 +685,11 @@ namespace Engine.Rendering
             GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
             GL.DepthMask(true); // Restore depth writing
 
-            // Log culling statistics every 60 frames (once per second at 60fps)
+            // Log culling statistics every 60 frames (verbose-only)
             if (_renderCallCounter % 60 == 0 && TotalInstances > 0)
             {
                 float cullPercent = (CulledInstances / (float)TotalInstances) * 100f;
-                Console.WriteLine($"[VegetationRenderer] Culling Stats: Total={TotalInstances}, Visible={VisibleInstances}, Culled={CulledInstances} ({cullPercent:F1}%)");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Culling Stats: Total={TotalInstances}, Visible={VisibleInstances}, Culled={CulledInstances} ({cullPercent:F1}%)"); } catch { }
             }
 
             if (batchesRendered > 0)
@@ -874,11 +880,11 @@ namespace Engine.Rendering
                 // In OpenTK Matrix4 (row-major), translation is in last ROW: M41, M42, M43
                 Vector3 position = new Vector3(transform.M41, transform.M42, transform.M43);
 
-                // Debug log for first instance (throttled globally)
+                // Debug log for first instance (throttled globally) - verbose only
                 if (!loggedFirst && allowInstanceLog)
                 {
                     float dist = (position - cameraPos).Length;
-                    Console.WriteLine($"[VegetationRenderer] CullBatch: cameraPos={cameraPos}, firstInstancePos={position}, distance={dist:F1}m, maxDist={batch.MaxRenderDistance}m");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] CullBatch: cameraPos={cameraPos}, firstInstancePos={position}, distance={dist:F1}m, maxDist={batch.MaxRenderDistance}m"); } catch { }
                     loggedFirst = true;
                     _lastCullLogTime = DateTime.UtcNow;
                     // prevent other batches in this call from logging (they'll wait for the next interval)
@@ -907,10 +913,10 @@ namespace Engine.Rendering
                 batch.VisibleTransforms.Add(transform);
             }
 
-            // Log culling breakdown
+            // Log culling breakdown (verbose-only)
             if (_renderCallCounter % 60 == 0)
             {
-                Console.WriteLine($"[VegetationRenderer] Culling breakdown: distanceCulled={distanceCulled}, frustumCulled={frustumCulled}, visible={batch.VisibleTransforms.Count}");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Culling breakdown: distanceCulled={distanceCulled}, frustumCulled={frustumCulled}, visible={batch.VisibleTransforms.Count}"); } catch { }
             }
 
             // Mark for GPU update if visible set changed

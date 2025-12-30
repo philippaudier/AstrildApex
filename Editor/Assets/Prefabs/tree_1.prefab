@@ -1,0 +1,92 @@
+{
+  "Guid": "5e77af80-90cd-4247-a5ef-88aec429aa07",
+  "Name": "tree_1",
+  "RootEntity": {
+    "guid": "c937cd82-a598-4c65-91e7-67e3578209b3",
+    "name": "tree_1",
+    "enabled": true,
+    "localPosition": [
+      1045.1796,
+      527.5666,
+      -272.94406
+    ],
+    "localRotation": [
+      0,
+      0,
+      0
+    ],
+    "localScale": [
+      0.1,
+      0.1,
+      0.1
+    ],
+    "components": {},
+    "children": [
+      {
+        "guid": "05b75fe0-447e-4313-8ac1-1d1f7175f3f5",
+        "name": "Leaves/001_Leavs_0",
+        "enabled": true,
+        "localPosition": [
+          0,
+          0,
+          0
+        ],
+        "localRotation": [
+          0,
+          0,
+          0
+        ],
+        "localScale": [
+          1,
+          1,
+          1
+        ],
+        "components": {
+          "MeshRendererComponent": {
+            "mesh": "Cube",
+            "customMeshGuid": "ca561b24-2679-4112-ab4c-d96f2dca0aea",
+            "submeshIndex": 0,
+            "materialGuid": "2349fd96-227d-4478-a0d9-552a6f87a362",
+            "cullingMode": "None",
+            "enabled": true
+          }
+        },
+        "children": []
+      },
+      {
+        "guid": "05582f46-400d-4819-aa85-6225bc601cf3",
+        "name": "Trank.001_Trank_0",
+        "enabled": true,
+        "localPosition": [
+          0,
+          0,
+          0
+        ],
+        "localRotation": [
+          0,
+          0,
+          0
+        ],
+        "localScale": [
+          1,
+          1,
+          1
+        ],
+        "components": {
+          "MeshRendererComponent": {
+            "mesh": "Cube",
+            "customMeshGuid": "ca561b24-2679-4112-ab4c-d96f2dca0aea",
+            "submeshIndex": 1,
+            "materialGuid": "e4e31e4a-dc87-4c52-ac7b-28b8869e4b8c",
+            "cullingMode": "Back",
+            "enabled": true
+          }
+        },
+        "children": []
+      }
+    ]
+  },
+  "CreatedAt": "2025-12-29T23:29:00.8023353Z",
+  "ModifiedAt": "2025-12-29T23:29:00.8023356Z",
+  "PreviewIconGuid": null
+}

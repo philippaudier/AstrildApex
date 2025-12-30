@@ -180,7 +180,32 @@ namespace Editor.Rendering
 
                 // Use the layer's submesh index instead of hardcoded 0
                 int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
-                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+
+                // Load culling mode from material (same logic as ViewportRenderer)
+                Engine.Components.CullingMode cullMode = Engine.Components.CullingMode.Back;
+                try
+                {
+                    var meshAsset = Engine.Assets.AssetDatabase.LoadMeshAsset(modelGuid.Value);
+                    if (meshAsset != null && meshAsset.SubMeshes != null && submeshIndex < meshAsset.SubMeshes.Count)
+                    {
+                        var sub = meshAsset.SubMeshes[submeshIndex];
+                        if (meshAsset.MaterialGuids != null && sub.MaterialIndex >= 0 && sub.MaterialIndex < meshAsset.MaterialGuids.Count)
+                        {
+                            var matGuid = meshAsset.MaterialGuids[sub.MaterialIndex];
+                            if (matGuid != null && matGuid != Guid.Empty)
+                            {
+                                var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
+                                if (mat != null)
+                                {
+                                    cullMode = (Engine.Components.CullingMode)mat.CullingMode;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius);
             }
 
             Console.WriteLine("[GameRenderer] Vegetation batches updated successfully");
@@ -913,8 +938,13 @@ void main()
                     GL.Uniform3(GL.GetUniformLocation(_basicShader, "uColor"), 1f, 1f, 1f);
                 }
 
-                // Apply culling mode before rendering
-                ApplyCullingMode(meshRenderer);
+                // Apply culling mode from material
+                CullingMode cullingMode = CullingMode.Back;
+                if (materialAsset != null)
+                {
+                    cullingMode = (CullingMode)materialAsset.CullingMode;
+                }
+                ApplyCullingMode(cullingMode);
 
                 // Rendu - use DrawElements if we have indices (custom mesh), otherwise DrawArrays
                 GL.BindVertexArray(meshData.VAO);
@@ -1170,8 +1200,13 @@ void main()
                     GL.Uniform3(GL.GetUniformLocation(_basicShader, "uColor"), 1f, 1f, 1f);
                 }
 
-                // Apply culling
-                ApplyCullingMode(meshRenderer);
+                // Apply culling mode from material
+                CullingMode cullingMode2 = CullingMode.Back;
+                if (materialAsset != null)
+                {
+                    cullingMode2 = (CullingMode)materialAsset.CullingMode;
+                }
+                ApplyCullingMode(cullingMode2);
 
                 // Render
                 GL.BindVertexArray(meshData.VAO);
@@ -1251,11 +1286,11 @@ void main()
         }
 
         /// <summary>
-        /// Apply the culling mode from a MeshRenderer before rendering
+        /// Apply the culling mode before rendering
         /// </summary>
-        private void ApplyCullingMode(MeshRendererComponent meshRenderer)
+        private void ApplyCullingMode(CullingMode cullingMode)
         {
-            switch (meshRenderer.Culling)
+            switch (cullingMode)
             {
                 case CullingMode.Back:
                     GL.Enable(EnableCap.CullFace);

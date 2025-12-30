@@ -86,6 +86,14 @@ namespace Engine.Assets
         [Engine.Serialization.SerializableAttribute("maxSlope")]
         public float MaxSlope { get; set; } = 30f;
 
+        /// <summary>
+        /// Minimum allowed distance between instances (world units). When > 0, new
+        /// placements closer than this distance to an existing instance are rejected.
+        /// Use this to prevent trees from spawning on top of each other.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("minDistance")]
+        public float MinDistance { get; set; } = 2.0f;
+
         // === SCALE & VARIATION ===
         
         /// <summary>
@@ -180,6 +188,7 @@ namespace Engine.Assets
                 RandomRotation = RandomRotation,
                 AlignToNormal = AlignToNormal,
                 AlignmentStrength = AlignmentStrength,
+                MinDistance = MinDistance,
                 // LOD/Distance/Wind fields removed
             };
         }

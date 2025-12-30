@@ -189,65 +189,7 @@ namespace Editor.Inspector
                 InspectorWidgets.EndSection();
             }
 
-            // === RENDERING SECTION ===
-            if (InspectorWidgets.Section("Rendering", defaultOpen: true,
-                tooltip: "Rendering configuration"))
-            {
-                ImGui.Text("Culling Mode:");
-                ImGui.SameLine();
-                EditorWidgets.HelpIcon("Which faces to cull during rendering");
-
-                var cullingMode = meshRenderer.Culling;
-                string[] cullingLabels = { "Back", "Front", "None (Both)" };
-                string[] cullingTooltips = {
-                    "Cull back faces (default for most objects)",
-                    "Cull front faces (for inside-out geometry)",
-                    "No culling - render both sides (for thin objects like leaves)"
-                };
-
-                int cullingIndex = (int)cullingMode;
-                
-                if (ImGui.BeginCombo("##CullingMode", cullingLabels[cullingIndex]))
-                {
-                    for (int i = 0; i < cullingLabels.Length; i++)
-                    {
-                        bool isSelected = (cullingIndex == i);
-                        if (ImGui.Selectable(cullingLabels[i], isSelected))
-                        {
-                            meshRenderer.Culling = (CullingMode)i;
-                        }
-                        
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip(cullingTooltips[i]);
-                        }
-                        
-                        if (isSelected)
-                            ImGui.SetItemDefaultFocus();
-                    }
-                    ImGui.EndCombo();
-                }
-
-                ImGui.Spacing();
-                
-                // Visual indicator
-                ImGui.Indent();
-                switch (meshRenderer.Culling)
-                {
-                    case CullingMode.Back:
-                        ImGui.TextColored(UI.Success, "✓ Standard rendering (recommended)");
-                        break;
-                    case CullingMode.Front:
-                        ImGui.TextColored(UI.Warning, "⚠ Special use case (inside-out)");
-                        break;
-                    case CullingMode.None:
-                        ImGui.TextColored(UI.Info, "ℹ Double-sided (performance cost)");
-                        break;
-                }
-                ImGui.Unindent();
-
-                InspectorWidgets.EndSection();
-            }
+            // Note: Culling Mode is now configured in the Material, not the MeshRenderer
 
             // === LIGHTING SECTION ===
             if (InspectorWidgets.Section("Lighting", defaultOpen: false,
