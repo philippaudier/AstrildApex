@@ -176,6 +176,7 @@ namespace Engine.Assets
                 Name = Name,
                 Enabled = Enabled,
                 ModelGuid = ModelGuid,
+                PrefabGuid = PrefabGuid,
                 SubmeshIndex = SubmeshIndex,
                 Density = Density,
                 Seed = Seed,
@@ -183,13 +184,14 @@ namespace Engine.Assets
                 MaxHeight = MaxHeight,
                 MinSlope = MinSlope,
                 MaxSlope = MaxSlope,
+                MinDistance = MinDistance,
                 MinScale = MinScale,
                 MaxScale = MaxScale,
                 RandomRotation = RandomRotation,
                 AlignToNormal = AlignToNormal,
                 AlignmentStrength = AlignmentStrength,
-                MinDistance = MinDistance,
-                // LOD/Distance/Wind fields removed
+                MaxRenderDistance = MaxRenderDistance,
+                CullingSphereRadius = CullingSphereRadius
             };
         }
     }

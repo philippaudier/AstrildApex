@@ -135,8 +135,6 @@ namespace Editor.Rendering
 
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
-            Console.WriteLine("[GameRenderer] OnTerrainVegetationRegenerated called");
-
             if (_vegetationRenderer == null)
             {
                 Console.WriteLine("[GameRenderer] ERROR: VegetationRenderer is null!");
@@ -145,11 +143,8 @@ namespace Editor.Rendering
 
             if (terrain.VegetationLayers == null || terrain.VegetationInstances == null)
             {
-                Console.WriteLine("[GameRenderer] No vegetation layers or instances");
                 return;
             }
-
-            Console.WriteLine($"[GameRenderer] Processing {terrain.VegetationLayers.Length} vegetation layers");
 
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
@@ -157,7 +152,6 @@ namespace Editor.Rendering
                 var layer = terrain.VegetationLayers[layerIndex];
                 if (layer == null)
                 {
-                    Console.WriteLine($"[GameRenderer] Layer {layerIndex}: Layer is NULL!");
                     continue;
                 }
 
@@ -166,17 +160,13 @@ namespace Editor.Rendering
 
                 if (modelGuid == null || modelGuid == System.Guid.Empty)
                 {
-                    Console.WriteLine($"[GameRenderer] Layer {layerIndex}: ❌ SKIPPED - No model found! Assign a Prefab or Model in the Inspector.");
                     continue;
                 }
 
                 if (!terrain.VegetationInstances.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0)
                 {
-                    Console.WriteLine($"[GameRenderer] Layer {layerIndex}: No instances");
                     continue;
                 }
-
-                Console.WriteLine($"[GameRenderer] Layer {layerIndex}: Updating {transforms.Count} instances for model {modelGuid.Value}, submesh {layer.SubmeshIndex}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}");
 
                 // Use the layer's submesh index instead of hardcoded 0
                 int submeshIndex = layer.SubmeshIndex >= 0 ? layer.SubmeshIndex : 0;
@@ -207,8 +197,6 @@ namespace Editor.Rendering
 
                 _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius);
             }
-
-            Console.WriteLine("[GameRenderer] Vegetation batches updated successfully");
         }
 
         /// <summary>
@@ -298,22 +286,20 @@ namespace Editor.Rendering
             try
             {
                 _vegetationRenderer = new Engine.Rendering.VegetationRenderer();
-                Console.WriteLine("[GameRenderer] ✓ VegetationRenderer initialized successfully");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[GameRenderer] ✗ Failed to initialize VegetationRenderer: {ex.Message}");
+                Console.WriteLine($"[GameRenderer] Failed to initialize VegetationRenderer: {ex.Message}");
             }
 
             // Initialize particle renderer
             try
             {
                 _particleRenderer = new Engine.Rendering.ParticleRenderer();
-                Console.WriteLine("[GameRenderer] ✓ ParticleRenderer initialized successfully");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[GameRenderer] ✗ Failed to initialize ParticleRenderer: {ex.Message}");
+                Console.WriteLine($"[GameRenderer] Failed to initialize ParticleRenderer: {ex.Message}");
             }
 
             // DISABLED: Initialize UIRenderer and a simple demo canvas

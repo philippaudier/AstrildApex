@@ -88,6 +88,27 @@ namespace Editor.Inspector
                     if (scene != null)
                     {
                         terrain.ClearVegetation(scene);
+
+                        // CRITICAL: Manually update ViewportRenderer to clear batches immediately
+                        var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
+                        if (renderer != null)
+                        {
+                            try
+                            {
+                                var method = renderer.GetType().GetMethod("OnTerrainVegetationRegenerated",
+                                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                if (method != null)
+                                {
+                                    Console.WriteLine("[TerrainVegetationUI] Manually clearing vegetation batches in ViewportRenderer");
+                                    method.Invoke(renderer, new object[] { terrain });
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                LogManager.LogError($"Failed to update ViewportRenderer: {ex.Message}", "TerrainVegetationUI");
+                            }
+                        }
+
                         LogManager.LogInfo("Vegetation cleared", "TerrainVegetationUI");
                     }
                     else
@@ -303,6 +324,18 @@ namespace Editor.Inspector
             layer.MinSlope = Math.Min(minSlope, maxSlope);
             layer.MaxSlope = Math.Max(minSlope, maxSlope);
 
+            // Minimum distance between instances
+            ImGui.Text("Min Distance Between Instances (m)");
+            float minDistance = layer.MinDistance;
+            if (ImGui.SliderFloat("Min Distance", ref minDistance, 0f, 20f, "%.1f"))
+            {
+                layer.MinDistance = Math.Max(0f, minDistance);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Minimum distance between instances\n0 = no spacing constraint (allow overlap)\n>0 = reject instances too close to existing ones");
+            }
+
             ImGui.Spacing();
             ImGui.Separator();
 
@@ -455,7 +488,41 @@ namespace Editor.Inspector
                     LogManager.LogError("Cannot regenerate vegetation - no active scene", "TerrainVegetationUI");
                     return;
                 }
+
+                // Inspector changes modify terrain layers directly in memory, so no need to save first
+                // Generate vegetation with current in-memory values
+                Console.WriteLine($"[TerrainVegetationUI] Regenerating vegetation for terrain: {terrain.Entity?.Name ?? "(unnamed)"}");
                 terrain.GenerateVegetation(scene);
+
+                // CRITICAL: Manually update ViewportRenderer batches since event subscribers may be lost
+                // This ensures vegetation appears immediately in edit mode
+                var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
+                if (renderer != null)
+                {
+                    try
+                    {
+                        // Call the internal method that updates vegetation batches
+                        var method = renderer.GetType().GetMethod("OnTerrainVegetationRegenerated",
+                            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                        if (method != null)
+                        {
+                            Console.WriteLine("[TerrainVegetationUI] Manually calling ViewportRenderer.OnTerrainVegetationRegenerated");
+                            method.Invoke(renderer, new object[] { terrain });
+                        }
+                        else
+                        {
+                            LogManager.LogWarning("Could not find OnTerrainVegetationRegenerated method on ViewportRenderer", "TerrainVegetationUI");
+                        }
+                    }
+                    catch (Exception invokeEx)
+                    {
+                        LogManager.LogError($"Failed to update ViewportRenderer: {invokeEx.Message}", "TerrainVegetationUI");
+                    }
+                }
+
+                // Mark scene as modified so user knows to save
+                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+
                 LogManager.LogInfo("Vegetation regenerated successfully", "TerrainVegetationUI");
             }
             catch (Exception ex)

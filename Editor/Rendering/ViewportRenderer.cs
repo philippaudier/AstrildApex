@@ -543,10 +543,11 @@ namespace Editor.Rendering
                             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Initializing existing vegetation batches for terrain (layers={terrain.VegetationLayers?.Length ?? 0})"); } catch { }
                             OnTerrainVegetationRegenerated(terrain);
                         }
-                        else if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                        else if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0 && !terrain.VegetationCleared)
                         {
                             // In Edit Mode the terrain may have layers but no generated instances yet.
                             // Generate instances now so the editor viewport shows vegetation without entering Play Mode.
+                            // Skip if vegetation was intentionally cleared (VegetationCleared flag).
                             try
                             {
                                 Console.WriteLine($"[ViewportRenderer] Generating vegetation for terrain in editor: {entity.Name}");
@@ -568,8 +569,6 @@ namespace Editor.Rendering
         /// </summary>
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
-            Console.WriteLine($"[ViewportRenderer] OnTerrainVegetationRegenerated called for terrain: {terrain.Entity?.Name ?? "unnamed"}");
-
             // CRITICAL: Update WeatherManager whenever vegetation is regenerated
             // This ensures wind parameters are synchronized before rendering new vegetation
             try
@@ -591,29 +590,23 @@ namespace Editor.Rendering
             }
             catch { }
 
-            if (_vegetationRenderer == null)
-            {
-                Console.WriteLine("[ViewportRenderer] ERROR: VegetationRenderer is null!");
-                return;
-            }
+            if (_vegetationRenderer == null) return;
 
-            if (terrain.VegetationLayers == null || terrain.VegetationInstances == null)
+            bool hasInstances = terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0;
+
+            if (terrain.VegetationLayers == null || !hasInstances)
             {
-                Console.WriteLine($"[ViewportRenderer] WARNING: VegetationLayers={terrain.VegetationLayers?.Length ?? 0}, VegetationInstances={(terrain.VegetationInstances==null?0:terrain.VegetationInstances.Count)}");
-                // If instances are null it may mean vegetation was cleared — remove all batches.
+                // If instances are null or empty, clear all batches
                 if (_vegetationRenderer != null)
                 {
                     try
                     {
                         _vegetationRenderer.ClearBatches();
-                        Console.WriteLine("[ViewportRenderer] Cleared vegetation batches (no instances)");
                     }
                     catch { }
                 }
                 return;
             }
-
-            Console.WriteLine($"[ViewportRenderer] Processing {terrain.VegetationLayers.Length} vegetation layers");
 
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
@@ -632,17 +625,10 @@ namespace Editor.Rendering
                 // Try to get model GUID from either direct assignment or prefab
                 Guid? modelGuid = GetModelGuidFromLayer(layer);
 
-                if (modelGuid == null || modelGuid == System.Guid.Empty)
-                {
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ❌ SKIPPED - No model found! Assign a Prefab or Model in the Inspector."); } catch { }
-                    continue;
-                }
+                if (modelGuid == null || modelGuid == System.Guid.Empty) continue;
 
-                if (!terrain.VegetationInstances.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0)
-                {
-                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ❌ No instances generated for this layer");
-                    continue;
-                }
+                // VegetationInstances is guaranteed non-null here (checked earlier)
+                if (!terrain.VegetationInstances!.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0) continue;
 
                 // Update vegetation batch with transforms from terrain
                 if (layer.SubmeshIndex == -1)
@@ -3220,10 +3206,29 @@ void main(){
                             {
                                 if (!entity.Active) continue;
                                 var terrain = entity.GetComponent<Engine.Components.Terrain>();
-                                if (terrain != null && terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                                if (terrain == null) continue;
+
+                                bool hasLayers = terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0;
+                                if (!hasLayers) continue;
+
+                                // Check if vegetation was intentionally cleared (serialized flag)
+                                if (terrain.VegetationCleared)
                                 {
-                                    // Found terrain with vegetation layers but no batches - generate and initialize
-                                    Console.WriteLine($"[ViewportRenderer] Auto-generating vegetation for terrain '{entity.Name}' (layers={terrain.VegetationLayers.Length})");
+                                    // Vegetation was cleared and saved - don't auto-regenerate
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Skipping auto-generation for '{entity.Name}' - vegetation was cleared"); } catch { }
+                                    continue;
+                                }
+
+                                // Distinguish between "never generated" (null) and "intentionally cleared" (empty)
+                                // - VegetationInstances == null: Never generated or scene just loaded → Generate
+                                // - VegetationInstances != null && Count == 0: Intentionally cleared (runtime) → Skip
+                                // - VegetationInstances != null && Count > 0: Already generated → Initialize batches
+
+                                if (terrain.VegetationInstances == null)
+                                {
+                                    // First load: generate vegetation
+                                    // VegetationLayers is guaranteed non-null here (checked at line 3231)
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Auto-generating vegetation for terrain '{entity.Name}' (layers={terrain.VegetationLayers!.Length})"); } catch { }
                                     try
                                     {
                                         terrain.GenerateVegetation(_scene);
@@ -3234,6 +3239,20 @@ void main(){
                                         Console.WriteLine($"[ViewportRenderer] Failed to auto-generate vegetation: {ex.Message}");
                                     }
                                 }
+                                else if (terrain.VegetationInstances.Count > 0)
+                                {
+                                    // Already generated: just initialize batches
+                                    Console.WriteLine($"[ViewportRenderer] Auto-initializing vegetation batches for terrain '{entity.Name}' (instances={terrain.VegetationInstances.Count})");
+                                    try
+                                    {
+                                        OnTerrainVegetationRegenerated(terrain);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Console.WriteLine($"[ViewportRenderer] Failed to auto-initialize vegetation: {ex.Message}");
+                                    }
+                                }
+                                // else: Count == 0 means intentionally cleared, don't regenerate
                             }
                         }
 

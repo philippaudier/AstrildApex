@@ -118,7 +118,6 @@ namespace Engine.Rendering
         {
             LoadShader();
             CreateDefaultWhiteTexture();
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Created VegetationRenderer (BatchCount={BatchCount})"); } catch { }
         }
 
         /// <summary>
@@ -152,8 +151,6 @@ namespace Engine.Rendering
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
 
             GL.BindTexture(TextureTarget.Texture2D, 0);
-
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Created default white texture (handle={_defaultWhiteTexture})"); } catch { }
         }
 
         private void LoadShader()
@@ -162,8 +159,6 @@ namespace Engine.Rendering
             {
                 string vertPath = "Engine/Rendering/Shaders/Forward/VegetationForward.vert";
                 string fragPath = "Engine/Rendering/Shaders/Forward/VegetationForward.frag";
-
-                Console.WriteLine($"[VegetationRenderer] Loading VegetationForward shader from {vertPath} and {fragPath}");
 
                 // Check if files exist
                 if (!System.IO.File.Exists(vertPath))
@@ -187,8 +182,6 @@ namespace Engine.Rendering
                     return;
                 }
 
-                Console.WriteLine($"[VegetationRenderer] VegetationForward shader loaded (handle={_vegetationShader.Handle})");
-
                 // Verify shader program is valid
                 GL.GetProgram(_vegetationShader.Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
                 if (linkStatus == 0)
@@ -197,10 +190,6 @@ namespace Engine.Rendering
                     Console.WriteLine($"[VegetationRenderer] *** VegetationForward LINK ERROR ***:\n{infoLog}");
                     _vegetationShader = null;
                     return;
-                }
-                else
-                {
-                    Console.WriteLine("[VegetationRenderer] VegetationForward shader linked successfully");
                 }
 
                 // Bind Global UBO (binding point 0) if shader defines it so lighting/uniforms work
@@ -211,8 +200,6 @@ namespace Engine.Rendering
                     if (globalBlockIndex != -1) OpenTK.Graphics.OpenGL4.GL.UniformBlockBinding(_vegetationShader.Handle, globalBlockIndex, 0);
                 }
                 catch { }
-
-                Console.WriteLine($"[VegetationRenderer] VegetationForward shader ready for use");
             }
             catch (Exception ex)
             {
@@ -234,15 +221,6 @@ namespace Engine.Rendering
             transforms ??= new List<Matrix4>();
 
             string batchKey = $"{modelGuid}_{submeshIndex}";
-
-            try
-            {
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                    Engine.Utils.DebugLogger.Log($"[VegetationRenderer] UpdateBatch called: model={modelGuid} submesh={submeshIndex} instances={transforms.Count} maxDist={maxRenderDistance} cullRadius={cullingSphereRadius}");
-                else
-                    Console.WriteLine($"[VegetationRenderer] UpdateBatch: instances={transforms.Count} maxDist={maxRenderDistance}m cullRadius={cullingSphereRadius}m");
-            }
-            catch { }
 
             // Get or create batch
             if (!_batches.TryGetValue(batchKey, out var batch))
@@ -325,11 +303,7 @@ namespace Engine.Rendering
                 var wm = Engine.Systems.WeatherManager.GetCurrentWeather();
                 if (wm == null) throw new InvalidOperationException("WeatherManager returned null weather state");
 
-                // DEBUG: Print every 120 frames to see WeatherManager state
-                if (_renderCallCounter++ % 120 == 0)
-                {
-                    // System.Console.WriteLine($"[VegetationRenderer] WeatherManager: SnowAccumulation={wm.SnowAccumulation:F3}, SnowMapMaterial={wm.SnowMapMaterial?.ToString() ?? "null"}");
-                }
+                _renderCallCounter++;
 
                 // Override caller-supplied weather params to ensure consistent, thread-safe values
                 windStrength = wm.WindStrength;
@@ -418,17 +392,9 @@ namespace Engine.Rendering
                 // Bind the selected shader for this draw
                 GL.UseProgram(shToUse.Handle);
 
-                // DIAGNOSTIC: verify wind-related uniform locations exist for this shader.
+                // Verify wind-related uniform locations exist for this shader.
                 try
                 {
-                    if (Engine.Utils.DebugLogger.EnableVerbose)
-                    {
-                        int locWind = GL.GetUniformLocation(shToUse.Handle, "u_WindStrength");
-                        int locWindDir = GL.GetUniformLocation(shToUse.Handle, "u_WindDirection");
-                        int locTime = GL.GetUniformLocation(shToUse.Handle, "u_Time");
-                        Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Shader handle={shToUse.Handle} name={shToUse.GetType().Name} locs: u_WindStrength={locWind}, u_WindDirection={locWindDir}, u_Time={locTime}");
-                    }
-
                     // If the selected material shader does not expose vegetation wind uniforms,
                     // prefer using our built-in vegetation shader so wind animation works without
                     // requiring a manual regenerate. Also attempt reload if our built-in shader
@@ -439,14 +405,12 @@ namespace Engine.Rendering
                         // If built-in vegetation shader exists, switch to it
                         if (_vegetationShader != null && shToUse != _vegetationShader)
                         {
-                            Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Material shader (handle={shToUse.Handle}) lacks wind uniforms — switching to built-in vegetation shader (handle={_vegetationShader.Handle})");
                             shToUse = _vegetationShader;
                             GL.UseProgram(shToUse.Handle);
                         }
                         else if (ReferenceEquals(shToUse, _vegetationShader))
                         {
                             // If our built-in shader is the one missing uniforms, try reloading it
-                            Engine.Utils.DebugLogger.Log("[VegetationRenderer] Vegetation shader missing wind uniforms - reloading shader...");
                             LoadShader();
                             if (_vegetationShader != null)
                             {
@@ -477,15 +441,7 @@ namespace Engine.Rendering
                     {
                         Func<Guid, string?> resolver = g => AssetDatabase.TryGet(g, out var r) ? r.Path : null;
                         mr = Engine.Rendering.MaterialRuntime.FromAsset(matAsset, resolver);
-                        if (Engine.Utils.DebugLogger.EnableVerbose)
-                        {
-                            try { Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Binding material {batch.MaterialGuid} -> shader={shToUse.Handle} mr.AlbedoTex={mr.AlbedoTex} Transparency={mr.TransparencyMode} AlbedoColor=({mr.AlbedoColor[0]:F2},{mr.AlbedoColor[1]:F2},{mr.AlbedoColor[2]:F2},{mr.AlbedoColor[3]:F2})"); } catch { }
-                        }
                         mr.Bind(shToUse, time);
-                        if (Engine.Utils.DebugLogger.EnableVerbose)
-                        {
-                            try { var err = GL.GetError(); Engine.Utils.DebugLogger.Log($"[VegetationRenderer] After Bind GL.GetError={err}"); } catch { }
-                        }
                     }
                     catch (Exception ex)
                     {
@@ -544,12 +500,6 @@ namespace Engine.Rendering
                     {
                         var wm = Engine.Systems.WeatherManager.GetCurrentWeather();
 
-                        // DEBUG: Log EVERY time we check for snow material (not just every 120 frames)
-                        if (_renderCallCounter % 120 == 0 && wm != null)
-                        {
-                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Checking snow material: HasValue={wm.SnowMapMaterial.HasValue}, GUID={wm.SnowMapMaterial?.ToString() ?? "null"}"); } catch { }
-                        }
-
                         if (wm != null && wm.SnowMapMaterial.HasValue)
                         {
                             var snowMat = AssetDatabase.LoadMaterial(wm.SnowMapMaterial.Value);
@@ -586,25 +536,14 @@ namespace Engine.Rendering
                                 shToUse.SetVec2("u_SnowTextureTiling", new Vector2(
                                     snowRuntime.TextureTiling[0],
                                     snowRuntime.TextureTiling[1]));
-
-                                // DEBUG: Log snow material properties every 120 frames
-                                if (_renderCallCounter % 120 == 0)
-                                {
-                                    // System.Console.WriteLine($"[VegetationRenderer] Snow material: {snowMat.Name}, NormalStrength={snowRuntime.NormalStrength:F2}, Tiling=({snowRuntime.TextureTiling[0]:F2}, {snowRuntime.TextureTiling[1]:F2})");
-                                }
                             }
                             else
                             {
-                                //System.Console.WriteLine($"[VegetationRenderer] Snow material GUID found but LoadMaterial returned null: {wm.SnowMapMaterial.Value}");
                                 BindDefaultSnowTextures(shToUse);
                             }
                         }
                         else
                         {
-                            if (wm == null)
-                                System.Console.WriteLine("[VegetationRenderer] WeatherManager returned null");
-                            else
-                                System.Console.WriteLine("[VegetationRenderer] No SnowMapMaterial assigned");
                             BindDefaultSnowTextures(shToUse);
                         }
                     }
@@ -670,11 +609,6 @@ namespace Engine.Rendering
                     batch.InstanceCount
                 );
 
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                {
-                    try { var err2 = GL.GetError(); Engine.Utils.DebugLogger.Log($"[VegetationRenderer] After Draw GL.GetError={err2}"); } catch { }
-                }
-
                 batchesRendered++;
                 instancesRendered += batch.InstanceCount;
             }
@@ -684,18 +618,6 @@ namespace Engine.Rendering
             GL.UseProgram(0);
             GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
             GL.DepthMask(true); // Restore depth writing
-
-            // Log culling statistics every 60 frames (verbose-only)
-            if (_renderCallCounter % 60 == 0 && TotalInstances > 0)
-            {
-                float cullPercent = (CulledInstances / (float)TotalInstances) * 100f;
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Culling Stats: Total={TotalInstances}, Visible={VisibleInstances}, Culled={CulledInstances} ({cullPercent:F1}%)"); } catch { }
-            }
-
-            if (batchesRendered > 0)
-            {
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Rendered {batchesRendered} batches with {instancesRendered} total instances"); } catch { }
-            }
         }
 
         /// <summary>
@@ -721,8 +643,6 @@ namespace Engine.Rendering
 
         private void LoadMeshForBatch(VegetationBatch batch)
         {
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Loading mesh for model {batch.ModelGuid}, submesh {batch.SubmeshIndex}"); } catch { }
-
             // Load model from asset database
             var meshAsset = AssetDatabase.LoadMeshAsset(batch.ModelGuid);
             if (meshAsset == null)
@@ -730,8 +650,6 @@ namespace Engine.Rendering
                 Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Model asset not found: {batch.ModelGuid}");
                 return;
             }
-
-            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Found mesh asset: {meshAsset.Name} with {meshAsset.SubMeshes.Count} submeshes"); } catch { }
 
             try
             {
@@ -769,7 +687,6 @@ namespace Engine.Rendering
                                 if (AssetDatabase.TryGet(batch.MaterialGuid.Value, out var rec) && !string.IsNullOrEmpty(rec.Path) && System.IO.File.Exists(rec.Path))
                                 {
                                     matPre = Engine.Assets.MaterialAsset.Load(rec.Path);
-                                    if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Loaded material from disk fallback: {rec.Path}");
                                 }
                             }
                             catch { }
@@ -781,10 +698,6 @@ namespace Engine.Rendering
                             try { var mrt = Engine.Rendering.MaterialRuntime.FromAsset(matPre, resolver); } catch { }
                             // MaterialRuntime.FromAsset already updates the global cache, no need for explicit UpdateCacheEntry
                             try { Engine.Rendering.TextureCache.FlushPendingUploads(64); } catch { }
-                        }
-                        else
-                        {
-                            if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Warning: material {batch.MaterialGuid.Value} could not be loaded during mesh load");
                         }
                     }
                     catch (Exception ex)
@@ -846,8 +759,6 @@ namespace Engine.Rendering
                 }
 
                 GL.BindVertexArray(0);
-
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Loaded mesh {meshAsset.Name}: {batch.IndexCount} indices"); } catch { }
             }
             catch (Exception ex)
             {
@@ -866,12 +777,6 @@ namespace Engine.Rendering
             float maxDistSqr = batch.MaxRenderDistance * batch.MaxRenderDistance;
             bool hasDistanceCulling = batch.MaxRenderDistance > 0;
 
-            // Debug counters
-            int distanceCulled = 0;
-            int frustumCulled = 0;
-            bool loggedFirst = false;
-            bool allowInstanceLog = (DateTime.UtcNow - _lastCullLogTime) >= CullLogInterval;
-
             for (int i = 0; i < batch.Transforms.Count; i++)
             {
                 var transform = batch.Transforms[i];
@@ -880,24 +785,12 @@ namespace Engine.Rendering
                 // In OpenTK Matrix4 (row-major), translation is in last ROW: M41, M42, M43
                 Vector3 position = new Vector3(transform.M41, transform.M42, transform.M43);
 
-                // Debug log for first instance (throttled globally) - verbose only
-                if (!loggedFirst && allowInstanceLog)
-                {
-                    float dist = (position - cameraPos).Length;
-                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] CullBatch: cameraPos={cameraPos}, firstInstancePos={position}, distance={dist:F1}m, maxDist={batch.MaxRenderDistance}m"); } catch { }
-                    loggedFirst = true;
-                    _lastCullLogTime = DateTime.UtcNow;
-                    // prevent other batches in this call from logging (they'll wait for the next interval)
-                    allowInstanceLog = false;
-                }
-
                 // Distance culling
                 if (hasDistanceCulling)
                 {
                     float distSqr = (position - cameraPos).LengthSquared;
                     if (distSqr > maxDistSqr)
                     {
-                        distanceCulled++;
                         continue; // Too far, skip
                     }
                 }
@@ -905,18 +798,11 @@ namespace Engine.Rendering
                 // Frustum culling using bounding sphere
                 if (!_frustumCuller.TestSphere(position, batch.CullingSphereRadius))
                 {
-                    frustumCulled++;
                     continue; // Outside frustum, skip
                 }
 
                 // Instance is visible
                 batch.VisibleTransforms.Add(transform);
-            }
-
-            // Log culling breakdown (verbose-only)
-            if (_renderCallCounter % 60 == 0)
-            {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Culling breakdown: distanceCulled={distanceCulled}, frustumCulled={frustumCulled}, visible={batch.VisibleTransforms.Count}"); } catch { }
             }
 
             // Mark for GPU update if visible set changed
@@ -933,10 +819,6 @@ namespace Engine.Rendering
 
             // Use visible transforms (after culling) instead of all transforms
             int instanceCount = Math.Min(batch.VisibleTransforms.Count, MaxInstancesPerBatch);
-            if (instanceCount < batch.VisibleTransforms.Count)
-            {
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Warning: Batch has {batch.VisibleTransforms.Count} instances but only {MaxInstancesPerBatch} will be rendered"); } catch { }
-            }
 
             // Ensure buffer is large enough (grow by 1.5x to avoid frequent reallocations)
             if (_instanceBuffer.Length < instanceCount)
@@ -944,7 +826,6 @@ namespace Engine.Rendering
                 int newSize = Math.Max(instanceCount, (int)(_instanceBuffer.Length * 1.5f));
                 newSize = Math.Min(newSize, MaxInstancesPerBatch); // Cap at max
                 _instanceBuffer = new VegetationInstance[newSize];
-                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Reallocated instance buffer to {newSize} instances"); } catch { }
             }
 
             // Convert visible transforms to instance data

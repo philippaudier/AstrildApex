@@ -145,6 +145,13 @@ namespace Engine.Components
         private System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? _vegetationInstances = null;
         public System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? VegetationInstances => _vegetationInstances;
 
+        /// <summary>
+        /// Flag to track if vegetation was intentionally cleared (vs never generated).
+        /// This is serialized so we don't auto-regenerate cleared vegetation on scene load.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("vegetationCleared")]
+        public bool VegetationCleared { get; set; } = false;
+
         // Event fired when vegetation is regenerated
         public event Action? VegetationRegenerated;
 
@@ -1294,7 +1301,6 @@ namespace Engine.Components
 
             try
             {
-                try { Console.WriteLine($"[Terrain] GenerateVegetation START: Terrain={Entity?.Name ?? "(unnamed)"}, layers={VegetationLayers.Length}"); } catch { }
                 // Initialize vegetation instances dictionary (kept for compatibility)
                 _vegetationInstances = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
 
@@ -1479,17 +1485,17 @@ namespace Engine.Components
 
                     _vegetationInstances[layerIndex] = instances;
 
-                    try { Console.WriteLine($"[Terrain] Layer {layerIndex} ('{layer.Name}') generated {instances?.Count ?? 0} instance(s)"); } catch { }
-
                     // GPU INSTANCING MODE: Don't create individual entities, let VegetationRenderer handle all instances
                     // The instances are stored in _vegetationInstances and passed to VegetationRenderer via UpdateBatch()
                     // This provides much better performance (1 draw call instead of N entities)
                     // CreateVegetationEntities(scene, layer, instances, layerParent);
                 }
                 
+                // Clear the "intentionally cleared" flag since we just generated vegetation
+                VegetationCleared = false;
+
                 // Notify listeners that vegetation has been regenerated
                 try { VegetationRegenerated?.Invoke(); } catch { }
-                try { Console.WriteLine($"[Terrain] VegetationRegenerated invoked for Terrain={Entity?.Name ?? "(unnamed)"}"); } catch { }
             }
             catch (Exception ex)
             {
@@ -1992,8 +1998,13 @@ namespace Engine.Components
             if (scene == null || Entity == null) return;
 
             // Clear the vegetation instances data
-            _vegetationInstances?.Clear();
-            _vegetationInstances = null;
+            // IMPORTANT: Create empty dict instead of null to distinguish "cleared" from "never generated"
+            // null = never generated (will auto-generate)
+            // empty = intentionally cleared (will NOT auto-generate)
+            _vegetationInstances = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
+
+            // Mark as intentionally cleared so we don't auto-regenerate on scene load
+            VegetationCleared = true;
 
             // Remove old vegetation entities using the same safe method as regeneration
             RemoveOldVegetationEntities(scene);
