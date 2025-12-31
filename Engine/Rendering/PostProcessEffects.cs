@@ -393,7 +393,7 @@ namespace Engine.Rendering
                         {
                             if ((DateTime.UtcNow - _lastLumLogTime).TotalSeconds > 1.0)
                             {
-                                Console.WriteLine($"[ToneMapping] Luminance computed: {lumW}x{lumH} -> {swLum.Elapsed.TotalMilliseconds:F2} ms, exposure={_lastExposure:F3}");
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ToneMapping] Luminance computed: {lumW}x{lumH} -> {swLum.Elapsed.TotalMilliseconds:F2} ms, exposure={_lastExposure:F3}"); } catch { }
                                 _lastLumLogTime = DateTime.UtcNow;
                             }
                         }

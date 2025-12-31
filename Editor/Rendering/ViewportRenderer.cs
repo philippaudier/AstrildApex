@@ -502,6 +502,7 @@ namespace Editor.Rendering
         private Scene _scene = new Scene();
         public Scene Scene => _scene;
         private HashSet<Engine.Components.Terrain> _subscribedTerrains = new HashSet<Engine.Components.Terrain>();
+        private HashSet<Engine.Components.Terrain> _autoInitAttempted = new HashSet<Engine.Components.Terrain>();
 
         // Ajoute cette méthode publique dans ViewportRenderer :
         public void SetScene(Scene scene)
@@ -512,6 +513,7 @@ namespace Editor.Rendering
             // This prevents old terrains from the previous scene (e.g., playScene) from staying subscribed
             // which caused terrains to disappear when exiting Play Mode
             _subscribedTerrains.Clear();
+            _autoInitAttempted.Clear();
 
             // CRITICAL: Initialize WeatherManager from scene's WeatherComponent
             // This ensures weather parameters are available from the moment the scene loads
@@ -541,13 +543,13 @@ namespace Editor.Rendering
             // Subscribe to terrain vegetation events for VegetationRenderer
             if (_vegetationRenderer != null)
             {
-                Console.WriteLine($"[ViewportRenderer] SetScene: Searching for terrains in {scene.Entities.Count} entities");
+                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Searching for terrains in {scene.Entities.Count} entities"); } catch { }
                 foreach (var entity in scene.Entities)
                 {
                     var terrain = entity.GetComponent<Engine.Components.Terrain>();
                     if (terrain != null && !_subscribedTerrains.Contains(terrain))
                     {
-                        Console.WriteLine($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', subscribing to VegetationRegenerated");
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', subscribing to VegetationRegenerated"); } catch { }
                         // Subscribe to future regenerations (only once per terrain)
                         terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
                         _subscribedTerrains.Add(terrain);
@@ -565,13 +567,13 @@ namespace Editor.Rendering
                             // Skip if vegetation was intentionally cleared (VegetationCleared flag).
                             try
                             {
-                                Console.WriteLine($"[ViewportRenderer] Generating vegetation for terrain in editor: {entity.Name}");
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Generating vegetation for terrain in editor: {entity.Name}"); } catch { }
                                 terrain.GenerateVegetation(scene);
                                 OnTerrainVegetationRegenerated(terrain);
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"[ViewportRenderer] Failed to generate vegetation in editor: {ex.Message}");
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to generate vegetation in editor: {ex.Message}"); } catch { }
                             }
                         }
                     }
@@ -584,6 +586,10 @@ namespace Editor.Rendering
         /// </summary>
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
+            // Clear auto-init flag when vegetation is manually regenerated
+            // This allows re-initialization if batches were cleared
+            _autoInitAttempted.Remove(terrain);
+
             // CRITICAL: Update WeatherManager whenever vegetation is regenerated
             // This ensures wind parameters are synchronized before rendering new vegetation
             try
@@ -691,21 +697,21 @@ namespace Editor.Rendering
                                 }
                                 catch { }
 
-                                Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={s}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={s}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
                                 _vegetationRenderer.UpdateBatch(modelGuid.Value, s, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius);
                             }
                         }
                         else
                         {
                             // Fallback to submesh 0
-                            Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
                             _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[ViewportRenderer] Failed to load mesh for multi-submesh update: {ex.Message}");
-                        Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})");
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to load mesh for multi-submesh update: {ex.Message}"); } catch { }
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
                         _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
                     }
                 }
@@ -737,7 +743,7 @@ namespace Editor.Rendering
                     }
                     catch { }
 
-                    Console.WriteLine($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}, cull={submeshCull})");
+                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}, cull={submeshCull})"); } catch { }
                     _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, submeshCull, layer.MaxRenderDistance, layer.CullingSphereRadius);
                 }
             }
@@ -3238,6 +3244,9 @@ void main(){
                                 var terrain = entity.GetComponent<Engine.Components.Terrain>();
                                 if (terrain == null) continue;
 
+                                // Skip if we already attempted auto-init for this terrain (prevents infinite loop)
+                                if (_autoInitAttempted.Contains(terrain)) continue;
+
                                 bool hasLayers = terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0;
                                 if (!hasLayers) continue;
 
@@ -3249,6 +3258,7 @@ void main(){
                                         if (Engine.Utils.DebugLogger.EnableVerbose && ShouldLogOnce($"SkippingVeg:{entity.Name}", TimeSpan.FromSeconds(2)))
                                             Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Skipping auto-generation for '{entity.Name}' - vegetation was cleared");
                                     } catch { }
+                                    _autoInitAttempted.Add(terrain); // Mark as attempted
                                     continue;
                                 }
 
@@ -3265,27 +3275,50 @@ void main(){
                                     try
                                     {
                                         terrain.GenerateVegetation(_scene);
+
+                                        // Subscribe to vegetation regeneration events if not already subscribed
+                                        if (!_subscribedTerrains.Contains(terrain))
+                                        {
+                                            terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
+                                            _subscribedTerrains.Add(terrain);
+                                        }
+
                                         OnTerrainVegetationRegenerated(terrain);
+                                        _autoInitAttempted.Add(terrain); // Mark as attempted
                                     }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ViewportRenderer] Failed to auto-generate vegetation: {ex.Message}");
+                                        _autoInitAttempted.Add(terrain); // Mark as attempted even on failure
                                     }
                                 }
                                 else if (terrain.VegetationInstances.Count > 0)
                                 {
                                     // Already generated: just initialize batches
-                                    Console.WriteLine($"[ViewportRenderer] Auto-initializing vegetation batches for terrain '{entity.Name}' (instances={terrain.VegetationInstances.Count})");
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Auto-initializing vegetation batches for terrain '{entity.Name}' (instances={terrain.VegetationInstances.Count})"); } catch { }
                                     try
                                     {
+                                        // Subscribe to vegetation regeneration events if not already subscribed
+                                        if (!_subscribedTerrains.Contains(terrain))
+                                        {
+                                            terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
+                                            _subscribedTerrains.Add(terrain);
+                                        }
+
                                         OnTerrainVegetationRegenerated(terrain);
+                                        _autoInitAttempted.Add(terrain); // Mark as attempted
                                     }
                                     catch (Exception ex)
                                     {
                                         Console.WriteLine($"[ViewportRenderer] Failed to auto-initialize vegetation: {ex.Message}");
+                                        _autoInitAttempted.Add(terrain); // Mark as attempted even on failure
                                     }
                                 }
-                                // else: Count == 0 means intentionally cleared, don't regenerate
+                                else
+                                {
+                                    // Count == 0 means intentionally cleared, don't regenerate
+                                    _autoInitAttempted.Add(terrain); // Mark as attempted
+                                }
                             }
                         }
 

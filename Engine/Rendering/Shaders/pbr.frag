@@ -105,6 +105,7 @@ layout(std140) uniform Global {
 uniform sampler2D u_AlbedoTex;
 uniform sampler2D u_NormalTex;
 uniform sampler2D u_HeightTex;
+uniform sampler2D u_OcclusionTex;
 // Debug switches (0 = off). Can be set from C# with SetInt("u_DebugShowAlbedo", 1) or
 // SetInt("u_DebugShowNormals", 1) to visualize the respective data.
 uniform int u_DebugShowAlbedo;
@@ -115,6 +116,7 @@ uniform float u_NormalStrength;
 uniform float u_Metallic;
 uniform float u_Smoothness;
 uniform float u_HeightScale;
+uniform float u_OcclusionStrength;
 uniform uint  u_ObjectId;
 
 // Triplanar mapping settings
@@ -184,6 +186,7 @@ vec2 ParallaxOcclusionMapping(vec2 texCoords, vec3 viewDir, float heightScale)
 struct TriplanarSample {
     vec3 albedo;
     vec3 normal;
+    float occlusion;
 };
 
 TriplanarSample SampleTriplanar(vec3 worldPos, vec3 worldNormal, float scale, float blendSharpness)
@@ -238,9 +241,20 @@ TriplanarSample SampleTriplanar(vec3 worldPos, vec3 worldNormal, float scale, fl
                          worldNormalY * blendWeights.y +
                          worldNormalZ * blendWeights.z;
 
+    // Sample occlusion from all three projections
+    float occlusionX = texture(u_OcclusionTex, uvX).r;
+    float occlusionY = texture(u_OcclusionTex, uvY).r;
+    float occlusionZ = texture(u_OcclusionTex, uvZ).r;
+
+    // Blend occlusion
+    float occlusion = occlusionX * blendWeights.x +
+                      occlusionY * blendWeights.y +
+                      occlusionZ * blendWeights.z;
+
     TriplanarSample result;
     result.albedo = albedo;
     result.normal = blendedNormal;
+    result.occlusion = occlusion;
     return result;
 }
 
@@ -293,6 +307,7 @@ void main(){
     vec3 baseCol;
     vec3 normalMap;
     vec3 baseNormal = normalize(vNormal);
+    float occlusionValue = 1.0; // Default to no occlusion
 
     if (u_UseTriplanar == 1)
     {
@@ -302,6 +317,9 @@ void main(){
 
         // Apply normal strength to triplanar normals
         normalMap = triSample.normal * u_NormalStrength;
+
+        // Use triplanar-sampled occlusion
+        occlusionValue = triSample.occlusion;
     }
     else
     {
@@ -317,6 +335,9 @@ void main(){
         normalMap = texture(u_NormalTex, adjustedUV).rgb * 2.0 - 1.0;
         normalMap.y = -normalMap.y;
         normalMap.xy *= u_NormalStrength;
+
+        // Sample occlusion texture
+        occlusionValue = texture(u_OcclusionTex, adjustedUV).r;
     }
 
     // Calculate final normal
@@ -443,7 +464,10 @@ void main(){
         ssaoFactor = mix(1.0, ssaoValue, u_SSAOStrength);
     }
 
-    // Ambient is affected by SSAO, NOT by shadows
+    // Apply texture-based ambient occlusion (from material)
+    ssaoFactor *= mix(1.0, occlusionValue, u_OcclusionStrength);
+
+    // Ambient is affected by SSAO and texture AO, NOT by shadows
     vec3 ambient = vec3(0.0);
     // If IBL is available, use it for both diffuse and specular ambient contribution
     // calculateIBL returns diffuse+specular contribution already factoring F0 and metallic response
