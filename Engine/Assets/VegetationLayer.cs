@@ -46,17 +46,45 @@ namespace Engine.Assets
         // === DENSITY & DISTRIBUTION ===
         
         /// <summary>
-        /// Number of instances per 100x100 terrain area (density).
-        /// Higher values = more instances spawned.
+        /// Vegetation density - number of placement ATTEMPTS per 100m² area.
+        /// Note: Actual instance count may be lower due to placement constraints (height, slope, distance).
+        /// Recommended values: 0.1-2.0 for large trees, 5-20 for grass/small plants.
+        /// Example: Density=1.0 means ~1 instance per 100m², so a 100x100m tile = ~100 instances.
         /// </summary>
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 10f;
+        public float Density { get; set; } = 0.5f;
 
         /// <summary>
         /// Random seed for consistent placement across regenerations.
         /// </summary>
         [Engine.Serialization.SerializableAttribute("seed")]
         public int Seed { get; set; } = 12345;
+
+        // === INFINITE STREAMING MODE SETTINGS ===
+
+        /// <summary>
+        /// [STREAMING MODE] Probability that this vegetation layer spawns on a given tile (0-1).
+        /// 0 = never spawns, 1 = always spawns. Use this to create sparse/patchy vegetation.
+        /// Example: 0.3 = only 30% of tiles will have this vegetation type.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("tileSpawnChance")]
+        public float TileSpawnChance { get; set; } = 1.0f;
+
+        /// <summary>
+        /// [STREAMING MODE] Random variation in density between tiles (0-1).
+        /// 0 = all tiles have same density, 1 = density can vary from 0% to 200% of base density.
+        /// Creates natural variation: some tiles dense, others sparse.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("densityVariation")]
+        public float DensityVariation { get; set; } = 0.3f;
+
+        /// <summary>
+        /// [STREAMING MODE] Random variation in scale/size between tiles (0-1).
+        /// 0 = all tiles have same size distribution, 1 = tiles can have very different average sizes.
+        /// Example: 0.5 means one tile might have small trees, another large trees.
+        /// </summary>
+        [Engine.Serialization.SerializableAttribute("sizeVariation")]
+        public float SizeVariation { get; set; } = 0.2f;
 
         // === PLACEMENT RULES ===
         

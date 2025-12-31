@@ -607,7 +607,21 @@ namespace Editor.Rendering
 
             if (_vegetationRenderer == null) return;
 
-            bool hasInstances = terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0;
+            // === GET VEGETATION INSTANCES (MODE-SPECIFIC) ===
+            System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? vegetationInstances = null;
+
+            if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+            {
+                // INFINITE STREAMING: Get instances from all renderable tiles
+                vegetationInstances = _terrainRenderer?.GetStreamingVegetationInstances();
+            }
+            else
+            {
+                // SINGLE TERRAIN: Use terrain's VegetationInstances
+                vegetationInstances = terrain.VegetationInstances;
+            }
+
+            bool hasInstances = vegetationInstances != null && vegetationInstances.Count > 0;
 
             if (terrain.VegetationLayers == null || !hasInstances)
             {
@@ -643,7 +657,7 @@ namespace Editor.Rendering
                 if (modelGuid == null || modelGuid == System.Guid.Empty) continue;
 
                 // VegetationInstances is guaranteed non-null here (checked earlier)
-                if (!terrain.VegetationInstances!.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0) continue;
+                if (!vegetationInstances!.TryGetValue(layerIndex, out var transforms) || transforms == null || transforms.Count == 0) continue;
 
                 // Update vegetation batch with transforms from terrain
                 if (layer.SubmeshIndex == -1)
@@ -1149,6 +1163,7 @@ namespace Editor.Rendering
 
     // Vegetation Renderer (for instanced vegetation with wind animation)
     private Engine.Rendering.VegetationRenderer? _vegetationRenderer = null;
+    private float _lastVegetationUpdateTime = 0f; // Throttle vegetation batch updates
 
         // Public accessor for UI
         public int GBufferDebugMode
@@ -3280,6 +3295,31 @@ void main(){
                         // {
                         //     System.Console.WriteLine($"[ViewportRenderer] Rendering vegetation, batches={_vegetationRenderer.BatchCount}");
                         // }
+
+                        // Update vegetation batches for infinite streaming terrain (throttled)
+                        // Only update every 0.5 seconds to avoid performance hit
+                        if (_scene != null && (Engine.Core.Time.TimeValue - _lastVegetationUpdateTime) > 0.5f)
+                        {
+                            _lastVegetationUpdateTime = Engine.Core.Time.TimeValue;
+
+                            foreach (var entity in _scene.Entities)
+                            {
+                                if (!entity.Active) continue;
+                                var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                                if (terrain != null && terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                                {
+                                    if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                                    {
+                                        // Update batches because tiles load/unload dynamically
+                                        try
+                                        {
+                                            OnTerrainVegetationRegenerated(terrain);
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
+                        }
 
                         _vegetationRenderer.Render(
                             _viewGL, _projGL, currentTime,

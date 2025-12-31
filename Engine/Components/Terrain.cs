@@ -8,6 +8,23 @@ using OpenTK.Graphics.OpenGL4;
 namespace Engine.Components
 {
     /// <summary>
+    /// Terrain rendering mode: single mesh or infinite streaming.
+    /// </summary>
+    public enum TerrainMode
+    {
+        /// <summary>
+        /// Single terrain mesh (classic mode) - uses TerrainWidth/Length to define bounds.
+        /// </summary>
+        SingleTerrain = 0,
+
+        /// <summary>
+        /// Infinite streaming terrain - procedurally generates tiles around camera.
+        /// TerrainWidth/Length/Height become templates for tile generation.
+        /// </summary>
+        InfiniteStreaming = 1
+    }
+
+    /// <summary>
     /// Unity-style terrain component with heightmap-based mesh generation.
     /// Clean implementation without tessellation, layers, or splatmaps.
     /// </summary>
@@ -122,6 +139,21 @@ namespace Engine.Components
         // Vegetation properties
         [Engine.Serialization.SerializableAttribute("vegetationLayers")]
         public Engine.Assets.VegetationLayer[]? VegetationLayers { get; set; } = null;
+
+        // === TERRAIN STREAMING SETTINGS ===
+        // Infinite terrain streaming support (opt-in)
+
+        [Engine.Serialization.SerializableAttribute("terrainMode")]
+        public TerrainMode Mode { get; set; } = TerrainMode.SingleTerrain;
+
+        [Engine.Serialization.SerializableAttribute("streamingTileSize")]
+        public float StreamingTileSize { get; set; } = 100f;  // World size of each terrain tile (meters)
+
+        [Engine.Serialization.SerializableAttribute("streamingRadius")]
+        public int StreamingRadius { get; set; } = 2;  // Radius in tiles around camera (2 = 5x5 grid)
+
+        [Engine.Serialization.SerializableAttribute("streamingMaxLOD")]
+        public int StreamingMaxLOD { get; set; } = 3;  // Maximum LOD level (0 = highest detail)
 
         // === WEATHER SYSTEM MOVED TO WeatherComponent ===
         // Weather parameters are now controlled by the global WeatherComponent
@@ -2183,6 +2215,14 @@ namespace Engine.Components
         /// <returns>Terrain height in world space</returns>
         public float GetHeightAtPosition(float worldX, float worldZ)
         {
+            // === INFINITE STREAMING MODE ===
+            if (Mode == TerrainMode.InfiniteStreaming)
+            {
+                // Use infinite terrain height sampling (no bounds checking needed)
+                return Engine.Rendering.Terrain.Tile.TileCpuGenerator.SampleHeightInfinite(this, worldX, worldZ);
+            }
+
+            // === SINGLE TERRAIN MODE ===
             if (_heightData == null)
             {
                 Console.WriteLine("[Terrain] Cannot get height: heightmap not loaded");
@@ -2346,13 +2386,22 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Check if a world position is within terrain bounds
+        /// Check if a world position is within terrain bounds.
+        /// In Infinite Streaming mode, always returns true (no bounds).
         /// </summary>
         /// <param name="worldX">World X coordinate</param>
         /// <param name="worldZ">World Z coordinate</param>
         /// <returns>True if position is on terrain</returns>
         public bool IsPositionOnTerrain(float worldX, float worldZ)
         {
+            // === INFINITE STREAMING MODE ===
+            if (Mode == TerrainMode.InfiniteStreaming)
+            {
+                // Infinite terrain has no bounds - always return true
+                return true;
+            }
+
+            // === SINGLE TERRAIN MODE ===
             if (_heightData == null)
                 return false;
 

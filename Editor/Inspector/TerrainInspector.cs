@@ -46,6 +46,99 @@ namespace Editor.Inspector
 
             ImGui.Separator();
 
+            // === TERRAIN MODE ===
+            ImGui.Text("Terrain Mode");
+
+            int modeIndex = (int)terrain.Mode;
+            string[] modeLabels = { "Single Terrain", "Infinite Streaming" };
+            int previousMode = modeIndex;
+
+            if (ImGui.Combo("Mode", ref modeIndex, modeLabels, modeLabels.Length))
+            {
+                // Mode changed - clear previous mode's data
+                if (previousMode == 0) // Was Single Terrain
+                {
+                    terrain.ClearTerrain();
+                    LogManager.LogInfo("Cleared single terrain mesh", "TerrainInspector");
+                }
+                else // Was Infinite Streaming
+                {
+                    // Clear tile cache (tiles will regenerate automatically)
+                    try
+                    {
+                        string cacheDir = System.IO.Path.Combine("Cache", "Terrain", "tiles");
+                        if (System.IO.Directory.Exists(cacheDir))
+                        {
+                            var files = System.IO.Directory.GetFiles(cacheDir, "*.cache", System.IO.SearchOption.AllDirectories);
+                            foreach (var file in files)
+                            {
+                                try { System.IO.File.Delete(file); } catch { }
+                            }
+                            LogManager.LogInfo($"Cleared {files.Length} tile cache files", "TerrainInspector");
+                        }
+                    }
+                    catch { }
+                }
+
+                terrain.Mode = (Engine.Components.TerrainMode)modeIndex;
+
+                if (modeIndex == 1)
+                {
+                    LogManager.LogInfo($"Switched to infinite streaming mode", "TerrainInspector");
+                }
+                else
+                {
+                    LogManager.LogInfo($"Switched to single terrain mode", "TerrainInspector");
+                }
+            }
+
+            // Mode-specific help text
+            if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f));
+                ImGui.TextWrapped("Infinite streaming: Terrain tiles are generated/loaded around camera automatically. Width/Length/Height are templates for tile generation.");
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                ImGui.TextDisabled("Single terrain: Classic mode with fixed bounds.");
+            }
+
+            ImGui.Separator();
+
+            // === STREAMING SETTINGS (only for InfiniteStreaming mode) ===
+            if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+            {
+                ImGui.Text("Streaming Settings");
+
+                float tileSize = terrain.StreamingTileSize;
+                if (ImGui.DragFloat("Tile Size (m)", ref tileSize, 1f, 50f, 500f))
+                {
+                    terrain.StreamingTileSize = tileSize;
+                }
+                ImGui.TextDisabled("World size of each terrain tile");
+
+                int radius = terrain.StreamingRadius;
+                if (ImGui.DragInt("Streaming Radius", ref radius, 0.1f, 1, 10))
+                {
+                    terrain.StreamingRadius = radius;
+                }
+                int gridSize = (radius * 2 + 1);
+                ImGui.TextDisabled($"Loads {gridSize}x{gridSize} = {gridSize * gridSize} tiles around camera");
+
+                int maxLOD = terrain.StreamingMaxLOD;
+                if (ImGui.DragInt("Max LOD Levels", ref maxLOD, 0.1f, 1, 5))
+                {
+                    terrain.StreamingMaxLOD = maxLOD;
+                }
+                ImGui.TextDisabled($"LOD 0 (highest) to LOD {maxLOD} (lowest)");
+
+                // TODO: Display streaming stats if available
+                // (Requires access to ViewportRenderer instance - could be added via inspector parameter)
+
+                ImGui.Separator();
+            }
+
             // === MESH RESOLUTION ===
             ImGui.Text("Mesh Resolution");
             ImGui.TextDisabled("Higher = smoother but slower");
@@ -157,29 +250,83 @@ namespace Editor.Inspector
 
             ImGui.Separator();
 
-            // === GENERATE BUTTON ===
+            // === GENERATE/CLEAR BUTTONS (MODE-SPECIFIC) ===
             ImGui.Spacing();
             ImGui.Spacing();
 
             bool canGenerate = terrain.UseProceduralGeneration || terrain.HeightmapTextureGuid.HasValue;
 
-            if (!canGenerate)
+            if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
+                // INFINITE STREAMING MODE - different controls
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f));
+                ImGui.TextWrapped("Infinite streaming terrain generates tiles automatically around the camera.");
+                ImGui.PopStyleColor();
+
+                ImGui.Spacing();
+
+                // Button to clear and regenerate all tiles
+                ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.8f, 0.4f, 0.2f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.9f, 0.5f, 0.3f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new System.Numerics.Vector4(0.7f, 0.3f, 0.1f, 1f));
+
+                if (ImGui.Button("Clear & Regenerate All Tiles", new System.Numerics.Vector2(-1, 40)))
+                {
+                    try
+                    {
+                        // Delete tile cache
+                        string cacheDir = System.IO.Path.Combine("Cache", "Terrain", "tiles");
+                        if (System.IO.Directory.Exists(cacheDir))
+                        {
+                            var files = System.IO.Directory.GetFiles(cacheDir, "*.cache", System.IO.SearchOption.AllDirectories);
+                            int deleted = 0;
+                            foreach (var file in files)
+                            {
+                                try { System.IO.File.Delete(file); deleted++; } catch { }
+                            }
+                            LogManager.LogInfo($"Deleted {deleted} tile cache files", "TerrainInspector");
+                        }
+
+                        // Force tile manager reset by toggling seed
+                        int oldSeed = terrain.ProceduralSeed;
+                        terrain.ProceduralSeed = oldSeed + 1;
+                        terrain.ProceduralSeed = oldSeed;
+
+                        LogManager.LogInfo("Tiles reset - will regenerate immediately", "TerrainInspector");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Failed to clear tiles: {ex.Message}", "TerrainInspector");
+                    }
+                }
+
+                ImGui.PopStyleColor(3);
+
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Delete all cached tiles and force immediate regeneration with current parameters.");
+                }
             }
             else
             {
-                ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.6f, 0.2f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.7f, 0.3f, 1f));
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, new System.Numerics.Vector4(0.1f, 0.5f, 0.1f, 1f));
-            }
-
-            if (ImGui.Button("Generate Terrain", new System.Numerics.Vector2(-1, 40)))
-            {
-                if (canGenerate)
+                // SINGLE TERRAIN MODE - traditional controls
+                if (!canGenerate)
                 {
+                    ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new System.Numerics.Vector4(0.3f, 0.3f, 0.3f, 1f));
+                }
+                else
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button, new System.Numerics.Vector4(0.2f, 0.6f, 0.2f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.3f, 0.7f, 0.3f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, new System.Numerics.Vector4(0.1f, 0.5f, 0.1f, 1f));
+                }
+
+                if (ImGui.Button("Generate Terrain", new System.Numerics.Vector2(-1, 40)))
+                {
+                    if (canGenerate)
+                    {
                         try
                         {
                             LogManager.LogInfo("Generating terrain...", "TerrainInspector");
@@ -191,53 +338,54 @@ namespace Editor.Inspector
                             LogManager.LogWarning($"Failed to generate terrain: {ex.Message}", "TerrainInspector");
                             LogManager.LogVerbose(ex.StackTrace ?? "", "TerrainInspector");
                         }
-                }
-            }
-
-            ImGui.PopStyleColor(3);
-
-            if (!canGenerate)
-            {
-                ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Enable procedural generation or assign a heightmap texture first!");
-            }
-
-            ImGui.Spacing();
-
-            // === CLEAR BUTTON ===
-            if (ImGui.Button("Clear Terrain", new System.Numerics.Vector2(-1, 0)))
-            {
-                terrain.ClearTerrain();
-                LogManager.LogInfo("Terrain cleared", "TerrainInspector");
-            }
-
-            // === CLEAR CACHE BUTTON ===
-            if (ImGui.Button("Clear Cache & Regenerate", new System.Numerics.Vector2(-1, 0)))
-            {
-                try
-                {
-                    // Delete all cache files
-                    string cacheDir = System.IO.Path.Combine("Cache", "Terrain");
-                    if (System.IO.Directory.Exists(cacheDir))
-                    {
-                        var files = System.IO.Directory.GetFiles(cacheDir, "*.cache");
-                        foreach (var file in files)
-                        {
-                            try { System.IO.File.Delete(file); } catch { }
-                        }
-                        LogManager.LogInfo($"Deleted {files.Length} cache files", "TerrainInspector");
                     }
+                }
 
-                    // Clear and regenerate
+                ImGui.PopStyleColor(3);
+
+                if (!canGenerate)
+                {
+                    ImGui.TextColored(new System.Numerics.Vector4(1f, 0.4f, 0.4f, 1f), "Enable procedural generation or assign a heightmap texture first!");
+                }
+
+                ImGui.Spacing();
+
+                // === CLEAR BUTTON ===
+                if (ImGui.Button("Clear Terrain", new System.Numerics.Vector2(-1, 0)))
+                {
                     terrain.ClearTerrain();
-                    if (canGenerate)
-                    {
-                        terrain.GenerateTerrain();
-                        LogManager.LogInfo("Terrain regenerated with fresh cache!", "TerrainInspector");
-                    }
+                    LogManager.LogInfo("Terrain cleared", "TerrainInspector");
                 }
-                catch (Exception ex)
+
+                // === CLEAR CACHE BUTTON ===
+                if (ImGui.Button("Clear Cache & Regenerate", new System.Numerics.Vector2(-1, 0)))
                 {
-                    LogManager.LogWarning($"Failed to clear cache: {ex.Message}", "TerrainInspector");
+                    try
+                    {
+                        // Delete all cache files
+                        string cacheDir = System.IO.Path.Combine("Cache", "Terrain");
+                        if (System.IO.Directory.Exists(cacheDir))
+                        {
+                            var files = System.IO.Directory.GetFiles(cacheDir, "*.cache", System.IO.SearchOption.AllDirectories);
+                            foreach (var file in files)
+                            {
+                                try { System.IO.File.Delete(file); } catch { }
+                            }
+                            LogManager.LogInfo($"Deleted {files.Length} cache files", "TerrainInspector");
+                        }
+
+                        // Clear and regenerate
+                        terrain.ClearTerrain();
+                        if (canGenerate)
+                        {
+                            terrain.GenerateTerrain();
+                            LogManager.LogInfo("Terrain regenerated with fresh cache!", "TerrainInspector");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Failed to clear cache: {ex.Message}", "TerrainInspector");
+                    }
                 }
             }
 
@@ -439,7 +587,16 @@ namespace Editor.Inspector
                     terrain.NoiseScale = noiseScale;
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Zoom level of the noise (lower = zoomed in)");
+                {
+                    if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                    {
+                        ImGui.SetTooltip($"Zoom level of the noise (lower = zoomed in)\n\nFor streaming tiles of {terrain.StreamingTileSize}m, use Scale 50-200 for good results.\nYour current scale ({noiseScale:F1}) might be {(noiseScale < 20 ? "too small (spiky)" : "good")}.");
+                    }
+                    else
+                    {
+                        ImGui.SetTooltip("Zoom level of the noise (lower = zoomed in)");
+                    }
+                }
 
                 int octaves = terrain.Octaves;
                 if (ImGui.SliderInt("Octaves", ref octaves, 1, 8))

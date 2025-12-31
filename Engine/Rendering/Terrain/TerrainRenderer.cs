@@ -15,10 +15,16 @@ namespace Engine.Rendering.Terrain
         private Engine.Rendering.ShaderProgram? _shader;
         private bool _disposed = false;
         private bool _loggedFirstFrame = false;
-        
+
         // Material cache to avoid reloading from disk every frame
         private readonly System.Collections.Generic.Dictionary<Guid, MaterialAsset> _materialCache = new();
         private bool _subscribedToMaterialChanges = false;
+
+        // Tile streaming manager (for infinite terrain mode)
+        private Tile.TerrainTileManager? _tileManager = null;
+        private int _lastStreamingSeed = 0;
+        private float _lastNoiseScale = 0;
+        private int _lastOctaves = 0;
 
         public TerrainRenderer()
         {
@@ -799,8 +805,101 @@ namespace Engine.Rendering.Terrain
                 Engine.Utils.DebugLogger.Log($"[TerrainRenderer] GL error BEFORE terrain.Render(): {preRenderError}");
             }
 
-            // Render terrain
-            terrain.Render(new System.Numerics.Vector3(viewPos.X, viewPos.Y, viewPos.Z));
+            // === INFINITE STREAMING TERRAIN MODE ===
+            if (terrain.Mode == TerrainMode.InfiniteStreaming)
+            {
+                // Check if terrain parameters changed - reset tiles if needed
+                bool parametersChanged = (_lastStreamingSeed != terrain.ProceduralSeed ||
+                                         _lastNoiseScale != terrain.NoiseScale ||
+                                         _lastOctaves != terrain.Octaves);
+
+                if (parametersChanged && _tileManager != null)
+                {
+                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] Terrain parameters changed - resetting tiles");
+                    _tileManager.Reset();
+                    _lastStreamingSeed = terrain.ProceduralSeed;
+                    _lastNoiseScale = terrain.NoiseScale;
+                    _lastOctaves = terrain.Octaves;
+                }
+
+                // Initialize tile streaming if not already done
+                if (_tileManager == null)
+                {
+                    _tileManager = new Tile.TerrainTileManager();
+                    _tileManager.TileGenerator = (tx, ty, lod) =>
+                        Tile.TileCpuGenerator.GenerateCachedTile(terrain, tx, ty, lod);
+                    _tileManager.VegetationGenerator = (t, tx, ty) =>
+                        VegetationGenerator.GenerateVegetationForTile(t, tx, ty, t.StreamingTileSize);
+                    _tileManager.StartBackgroundWorker();
+                    _lastStreamingSeed = terrain.ProceduralSeed;
+                    _lastNoiseScale = terrain.NoiseScale;
+                    _lastOctaves = terrain.Octaves;
+                    Engine.Utils.DebugLogger.Log("[TerrainRenderer] Initialized infinite terrain streaming");
+                }
+
+                // Request tiles around camera
+                _tileManager.RequestTilesAround(terrain, viewPos.X, viewPos.Z, terrain.StreamingRadius);
+
+                // Process up to 5 tile GPU uploads per frame for better responsiveness
+                _tileManager.TryProcessUploads(tile =>
+                {
+                    if (tile.VerticesCpu == null || tile.IndicesCpu == null) return;
+
+                    // Create GL buffers
+                    int vao = GL.GenVertexArray();
+                    int vbo = GL.GenBuffer();
+                    int ebo = GL.GenBuffer();
+
+                    GL.BindVertexArray(vao);
+
+                    // Upload vertices
+                    GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
+                    GL.BufferData(BufferTarget.ArrayBuffer, tile.VerticesCpu.Length * sizeof(float), tile.VerticesCpu, BufferUsageHint.StaticDraw);
+
+                    // Upload indices
+                    GL.BindBuffer(BufferTarget.ElementArrayBuffer, ebo);
+                    GL.BufferData(BufferTarget.ElementArrayBuffer, tile.IndicesCpu.Length * sizeof(uint), tile.IndicesCpu, BufferUsageHint.StaticDraw);
+
+                    // Setup vertex attributes (pos, normal, uv)
+                    GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), 0);
+                    GL.EnableVertexAttribArray(0);
+                    GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 8 * sizeof(float), 3 * sizeof(float));
+                    GL.EnableVertexAttribArray(1);
+                    GL.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, 8 * sizeof(float), 6 * sizeof(float));
+                    GL.EnableVertexAttribArray(2);
+
+                    GL.BindVertexArray(0);
+
+                    // Generate vegetation for this tile
+                    if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                    {
+                        var vegInstances = VegetationGenerator.GenerateVegetationForTile(terrain, tile.X, tile.Y, terrain.StreamingTileSize);
+                        if (vegInstances.Count > 0)
+                        {
+                            tile.AttachVegetation(vegInstances);
+                        }
+                    }
+
+                    // Mark as uploaded
+                    tile.OnUploadedToGpu(vao, vbo, ebo);
+                });
+
+                // Render all visible tiles
+                _tileManager.ForEachRenderable(tile =>
+                {
+                    if (tile.Vao != 0 && tile.IndexCount > 0)
+                    {
+                        GL.BindVertexArray(tile.Vao);
+                        GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
+                        GL.BindVertexArray(0);
+                    }
+                });
+            }
+            else
+            {
+                // === CLASSIC SINGLE TERRAIN MODE ===
+                terrain.Render(new System.Numerics.Vector3(viewPos.X, viewPos.Y, viewPos.Z));
+            }
 
             // Check for errors after rendering
             var postRenderError = GL.GetError();
@@ -1008,11 +1107,69 @@ namespace Engine.Rendering.Terrain
                     AssetDatabase.MaterialSaved -= OnMaterialSaved;
                     _subscribedToMaterialChanges = false;
                 }
-                
+
                 _shader?.Dispose();
                 _materialCache.Clear();
+
+                // Dispose tile manager
+                _tileManager?.Dispose();
+                _tileManager = null;
+
                 _disposed = true;
             }
+        }
+
+        /// <summary>
+        /// Get streaming statistics (for inspector/debugging).
+        /// </summary>
+        /// <summary>
+        /// Reset streaming tile manager - clears all tiles and cache.
+        /// </summary>
+        public void ResetStreamingTiles()
+        {
+            if (_tileManager != null)
+            {
+                _tileManager.Reset();
+            }
+        }
+
+        /// <summary>
+        /// Get all vegetation instances from all renderable tiles (Infinite Streaming mode only).
+        /// Returns a dictionary of layer index -> list of transforms, ready for VegetationRenderer.UpdateBatch().
+        /// </summary>
+        public System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? GetStreamingVegetationInstances()
+        {
+            if (_tileManager == null) return null;
+
+            var result = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
+
+            // Collect instances from all renderable tiles
+            _tileManager.ForEachRenderable(tile =>
+            {
+                if (tile.VegetationInstances == null || tile.VegetationInstances.Count == 0)
+                    return;
+
+                foreach (var kvp in tile.VegetationInstances)
+                {
+                    int layerIndex = kvp.Key;
+                    var instances = kvp.Value;
+
+                    if (!result.ContainsKey(layerIndex))
+                    {
+                        result[layerIndex] = new System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>();
+                    }
+
+                    result[layerIndex].AddRange(instances);
+                }
+            });
+
+            return result.Count > 0 ? result : null;
+        }
+
+        public (int loaded, int renderable, int loading, float memoryMB)? GetStreamingStats()
+        {
+            if (_tileManager == null) return null;
+            return (_tileManager.LoadedTiles, _tileManager.RenderableTiles, _tileManager.LoadingTiles, _tileManager.GetMemoryUsageMB());
         }
     }
 }
