@@ -97,12 +97,18 @@ namespace Engine.Rendering.Terrain.Tile
 
         /// <summary>
         /// Request generation of a single tile.
+        /// CRITICAL: Only one LOD can be active for a given (x,y) position at a time.
         /// </summary>
         public TerrainTile RequestTile(int x, int y, int lod)
         {
             lock (_tilesLock)
             {
                 var key = (x, y, lod);
+
+                // CRITICAL FIX: Evict all other LODs for this position (x,y) first!
+                // This prevents multiple LOD meshes from rendering on top of each other
+                EvictOtherLODs(x, y, lod);
+
                 if (_tiles.TryGetValue(key, out var existing))
                 {
                     // If tile was evicted, re-request generation
@@ -267,6 +273,45 @@ namespace Engine.Rendering.Terrain.Tile
         public bool TryProcessOneUpload(Action<TerrainTile> uploadAction)
         {
             return TryProcessUploads(uploadAction, 1) > 0;
+        }
+
+        /// <summary>
+        /// Evict all other LODs for a given tile position (x,y), keeping only the specified LOD.
+        /// This ensures only one LOD is active per position, preventing z-fighting/overlapping meshes.
+        /// </summary>
+        private void EvictOtherLODs(int x, int y, int keepLod)
+        {
+            // Note: Called from within RequestTile which already holds _tilesLock
+            var toEvict = new List<(int, int, int)>();
+
+            // Find all tiles at position (x,y) with different LOD
+            foreach (var kv in _tiles)
+            {
+                var tile = kv.Value;
+                if (tile.X == x && tile.Y == y && tile.Lod != keepLod)
+                {
+                    toEvict.Add(kv.Key);
+                }
+            }
+
+            // Evict and free GPU resources
+            foreach (var key in toEvict)
+            {
+                if (_tiles.TryGetValue(key, out var tile))
+                {
+                    try
+                    {
+                        // Free GPU resources (must be called on GL thread!)
+                        if (tile.Vao != 0) OpenTK.Graphics.OpenGL4.GL.DeleteVertexArray(tile.Vao);
+                        if (tile.Vbo != 0) OpenTK.Graphics.OpenGL4.GL.DeleteBuffer(tile.Vbo);
+                        if (tile.Ebo != 0) OpenTK.Graphics.OpenGL4.GL.DeleteBuffer(tile.Ebo);
+                        tile.Evict();
+                    }
+                    catch { }
+
+                    _tiles.Remove(key);
+                }
+            }
         }
 
         /// <summary>
