@@ -2282,12 +2282,10 @@ namespace Engine.Components
         /// <returns>Normal vector (normalized)</returns>
         public OpenTK.Mathematics.Vector3 GetNormalAtPosition(float worldX, float worldZ)
         {
-            if (_heightData == null)
-                return OpenTK.Mathematics.Vector3.UnitY; // Default to up
-
             // Sample heights in a cross pattern around the point
             float sampleDistance = 1.0f; // 1 meter sampling distance
 
+            // Use GetHeightAtPosition which handles both Single and Infinite modes
             float h = GetHeightAtPosition(worldX, worldZ);
             float hL = GetHeightAtPosition(worldX - sampleDistance, worldZ);
             float hR = GetHeightAtPosition(worldX + sampleDistance, worldZ);

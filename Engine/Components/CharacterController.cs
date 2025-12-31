@@ -10,10 +10,11 @@ namespace Engine.Components
     /// Modern character controller with two modes: Kinematic (manual control) and Physics (rigidbody).
     ///
     /// KINEMATIC MODE:
-    /// - Manual movement via Move() method
+    /// - Manual movement via Move() method or SetDesiredVelocity() for smooth inertia
     /// - Capsule-based collision detection
     /// - Ground detection, slope handling, step-up
-    /// - Gravity applied manually
+    /// - Gravity applied manually with customizable scale
+    /// - Advanced movement feel: inertia, air control, coyote time, jump buffer
     /// - Perfect for player controllers
     ///
     /// PHYSICS MODE (Future - requires BulletSharp):
@@ -22,11 +23,27 @@ namespace Engine.Components
     /// - Physics constraints
     /// - Perfect for NPCs and physics-driven characters
     ///
-    /// USAGE:
+    /// USAGE (Legacy - Direct Movement):
     /// var cc = entity.AddComponent&lt;CharacterController&gt;();
     /// cc.Mode = CharacterControllerMode.Kinematic;
+    /// cc.EnableMovementFeel = false; // Use legacy direct movement
     /// cc.Move(inputVector * speed * Time.DeltaTime);
     /// if (cc.IsGrounded && Input.Jump) cc.Jump(jumpForce);
+    ///
+    /// USAGE (Recommended - Inertia System):
+    /// var cc = entity.AddComponent&lt;CharacterController&gt;();
+    /// cc.Mode = CharacterControllerMode.Kinematic;
+    /// cc.EnableMovementFeel = true; // Enable smooth acceleration/deceleration
+    /// // In Update():
+    /// cc.SetDesiredVelocity(inputVector * maxSpeed); // Set target velocity
+    /// if (Input.JumpPressed) cc.RequestJump(jumpForce); // Supports buffering and coyote time
+    ///
+    /// MOVEMENT FEEL PARAMETERS:
+    /// - GravityScale: 1.0 = normal, >1 = heavy, <1 = floaty
+    /// - GroundAcceleration/Deceleration: Higher = snappier movement
+    /// - AirControl: 0-1, how much control you have while airborne
+    /// - CoyoteTime: Grace period after leaving ground where you can still jump
+    /// - JumpBufferTime: Grace period before landing where jump input is remembered
     /// </summary>
     public class CharacterController : Component
     {
@@ -101,10 +118,110 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("gravity")]
         public Vector3 Gravity { get; set; } = new Vector3(0, -20f, 0);
 
+        // ===== MOVEMENT FEEL SETTINGS =====
+
+        /// <summary>Gravity multiplier - affects fall speed and feeling of weight (1.0 = normal, >1 = heavy, <1 = floaty)</summary>
+        [Engine.Serialization.SerializableAttribute("gravityScale")]
+        public float GravityScale { get; set; } = 1.0f;
+
+        /// <summary>Maximum falling speed (prevents infinite acceleration)</summary>
+        [Engine.Serialization.SerializableAttribute("terminalVelocity")]
+        public float TerminalVelocity { get; set; } = 50f;
+
+        /// <summary>Ground acceleration - how fast you reach max speed when grounded (higher = snappier)</summary>
+        [Engine.Serialization.SerializableAttribute("groundAcceleration")]
+        public float GroundAcceleration { get; set; } = 30f;
+
+        /// <summary>Ground deceleration - how fast you stop when no input (higher = snappier stop)</summary>
+        [Engine.Serialization.SerializableAttribute("groundDeceleration")]
+        public float GroundDeceleration { get; set; } = 25f;
+
+        /// <summary>Ground friction coefficient applied each frame (0-1, lower = more slippery)</summary>
+        [Engine.Serialization.SerializableAttribute("groundFriction")]
+        public float GroundFriction { get; set; } = 0.92f;
+
+        /// <summary>Air control - how much you can influence movement while airborne (0-1, 1 = full control)</summary>
+        [Engine.Serialization.SerializableAttribute("airControl")]
+        public float AirControl { get; set; } = 0.3f;
+
+        /// <summary>Air acceleration - how fast you can change direction in air</summary>
+        [Engine.Serialization.SerializableAttribute("airAcceleration")]
+        public float AirAcceleration { get; set; } = 15f;
+
+        /// <summary>Air drag coefficient - resistance when moving through air (0-1)</summary>
+        [Engine.Serialization.SerializableAttribute("airDrag")]
+        public float AirDrag { get; set; } = 0.98f;
+
+        /// <summary>Coyote time - grace period after leaving ground where you can still jump (seconds)</summary>
+        [Engine.Serialization.SerializableAttribute("coyoteTime")]
+        public float CoyoteTime { get; set; } = 0.15f;
+
+        /// <summary>Jump buffer time - grace period before landing where jump input is remembered (seconds)</summary>
+        [Engine.Serialization.SerializableAttribute("jumpBufferTime")]
+        public float JumpBufferTime { get; set; } = 0.1f;
+
+        /// <summary>Enable advanced movement feel (inertia, air control, etc.). If false, uses legacy direct movement.</summary>
+        [Engine.Serialization.SerializableAttribute("enableMovementFeel")]
+        public bool EnableMovementFeel { get; set; } = true;
+
+        // ===== SLOPE SLIDING SETTINGS =====
+
+        /// <summary>Enable realistic sliding on steep slopes (slopes steeper than SlopeLimit)</summary>
+        [Engine.Serialization.SerializableAttribute("enableSliding")]
+        public bool EnableSliding { get; set; } = true;
+
+        /// <summary>Sliding friction coefficient - how much the slope resists sliding (0-1, lower = more slippery)</summary>
+        [Engine.Serialization.SerializableAttribute("slideFriction")]
+        public float SlideFriction { get; set; } = 0.3f;
+
+        /// <summary>Gravity multiplier when sliding (higher = slides faster down slopes)</summary>
+        [Engine.Serialization.SerializableAttribute("slideGravityMultiplier")]
+        public float SlideGravityMultiplier { get; set; } = 1.5f;
+
+        /// <summary>How much player input can affect slide direction (0-1, 0 = no control, 1 = full control)</summary>
+        [Engine.Serialization.SerializableAttribute("slideControl")]
+        public float SlideControl { get; set; } = 0.4f;
+
+        /// <summary>Maximum slide speed (prevents infinite acceleration)</summary>
+        [Engine.Serialization.SerializableAttribute("maxSlideSpeed")]
+        public float MaxSlideSpeed { get; set; } = 20f;
+
+        /// <summary>Minimum slope angle (degrees) to start sliding. Slopes between SlopeLimit and this are walkable but slow.</summary>
+        [Engine.Serialization.SerializableAttribute("minSlideAngle")]
+        public float MinSlideAngle { get; set; } = 50f;
+
+        // ===== SLOPE MOMENTUM SETTINGS =====
+
+        /// <summary>Enable momentum-based slope climbing (like Mario 64)</summary>
+        [Engine.Serialization.SerializableAttribute("enableSlopeMomentum")]
+        public bool EnableSlopeMomentum { get; set; } = true;
+
+        /// <summary>How much momentum is retained when going uphill (0-1, 1 = full momentum retained)</summary>
+        [Engine.Serialization.SerializableAttribute("slopeMomentumRetention")]
+        public float SlopeMomentumRetention { get; set; } = 0.7f;
+
+        /// <summary>Deceleration rate when climbing slopes (higher = slower climb)</summary>
+        [Engine.Serialization.SerializableAttribute("slopeClimbDeceleration")]
+        public float SlopeClimbDeceleration { get; set; } = 8f;
+
+        /// <summary>Minimum speed to maintain before starting to slide backwards on steep slopes</summary>
+        [Engine.Serialization.SerializableAttribute("minSpeedBeforeBackslide")]
+        public float MinSpeedBeforeBackslide { get; set; } = 1f;
+
+        /// <summary>Start sliding backwards if stopped on slope steeper than this angle</summary>
+        [Engine.Serialization.SerializableAttribute("backslideAngle")]
+        public float BackslideAngle { get; set; } = 35f;
+
         // ===== STATE (READ-ONLY) =====
 
         /// <summary>Is the controller currently grounded?</summary>
         public bool IsGrounded { get; private set; } = false;
+
+        /// <summary>Is the controller currently sliding on a steep slope?</summary>
+        public bool IsSliding { get; private set; } = false;
+
+        /// <summary>Current slope angle in degrees (0 = flat, 90 = vertical)</summary>
+        public float CurrentSlopeAngle { get; private set; } = 0f;
 
         /// <summary>Current velocity (affected by gravity, jumps, external forces)</summary>
         public Vector3 Velocity { get; private set; } = Vector3.Zero;
@@ -126,6 +243,15 @@ namespace Engine.Components
         private Terrain? _cachedTerrain = null;
         private int _terrainCacheFrame = -1;
         private bool _isGroundedOnTerrain = false; // Track if grounded on terrain vs physics collider
+
+        // ===== MOVEMENT FEEL INTERNAL STATE =====
+
+        private float _timeLeftGround = 0f; // Time since we left the ground (for coyote time)
+        private float _jumpBufferCounter = 0f; // Countdown for jump buffer
+        private Vector3 _desiredVelocity = Vector3.Zero; // Target velocity for smooth acceleration
+        private bool _wasGroundedLastFrame = false; // Track grounding state changes
+        private Vector3 _slideVelocity = Vector3.Zero; // Accumulated slide velocity (separate from normal velocity)
+        private float _postSlideInertiaTimer = 0f; // Timer to reduce deceleration after exiting slide
 
         // ===== INTERPOLATION =====
         // Transform.Position = Physics position (ground truth, never modified by interpolation)
@@ -197,12 +323,69 @@ namespace Engine.Components
                 return;
 
             // KINEMATIC MODE: Movement in Update (synchronized with camera LateUpdate)
-            // No interpolation needed - everything runs in the same frame loop
 
-            // Apply gravity only when NOT grounded
+            // Update coyote time and jump buffer counters
+            if (!IsGrounded)
+                _timeLeftGround += deltaTime;
+            else
+                _timeLeftGround = 0f;
+
+            if (_jumpBufferCounter > 0f)
+                _jumpBufferCounter -= deltaTime;
+
+            // Track grounding state changes
+            if (IsGrounded && !_wasGroundedLastFrame)
+            {
+                // Just landed - check if there's a buffered jump
+                if (_jumpBufferCounter > 0f)
+                {
+                    // Execute buffered jump
+                    Jump(10f); // Default jump force - you can expose this later
+                    _jumpBufferCounter = 0f;
+                }
+            }
+
+            // Reset slide velocity when we stop sliding or leave ground
+            if (!IsSliding && _slideVelocity.LengthSquared > 0.01f)
+            {
+                // Transfer slide momentum to regular velocity when exiting slide
+                if (IsGrounded)
+                {
+                    Velocity = new Vector3(_slideVelocity.X, Velocity.Y, _slideVelocity.Z);
+                    _postSlideInertiaTimer = 0.5f; // Reduce deceleration for 0.5 seconds after slide
+                }
+                _slideVelocity = Vector3.Zero;
+            }
+
+            // Decay post-slide inertia timer
+            if (_postSlideInertiaTimer > 0f)
+                _postSlideInertiaTimer -= deltaTime;
+
+            _wasGroundedLastFrame = IsGrounded;
+
+            // Apply gravity with scale and terminal velocity
             if (EnableGravity && !IsGrounded)
             {
-                Velocity += Gravity * deltaTime;
+                Velocity += Gravity * GravityScale * deltaTime;
+
+                // Clamp to terminal velocity
+                if (Velocity.Y < -TerminalVelocity)
+                    Velocity = new Vector3(Velocity.X, -TerminalVelocity, Velocity.Z);
+            }
+
+            // ADVANCED MOVEMENT FEEL: Apply acceleration/deceleration with inertia
+            if (EnableMovementFeel)
+            {
+                ApplyMovementFeel(deltaTime);
+            }
+            else
+            {
+                // LEGACY MODE: Direct velocity application (old behavior)
+                // Decay velocity when grounded (friction)
+                if (IsGrounded)
+                {
+                    Velocity = new Vector3(Velocity.X * 0.9f, 0f, Velocity.Z * 0.9f);
+                }
             }
 
             // TERRAIN-SPECIFIC MOVEMENT: Separate horizontal and vertical
@@ -222,12 +405,6 @@ namespace Engine.Components
 
             // Check ground state AFTER applying movement (critical for terrain following)
             CheckGround();
-
-            // Decay velocity when grounded (friction)
-            if (IsGrounded)
-            {
-                Velocity = new Vector3(Velocity.X * 0.9f, 0f, Velocity.Z * 0.9f);
-            }
         }
 
         public override void FixedUpdate(float deltaTime)
@@ -313,18 +490,335 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Perform a simple jump with the given force
+        /// Set desired movement velocity (for smooth acceleration with inertia).
+        /// Use this instead of directly setting Velocity when EnableMovementFeel is true.
+        /// </summary>
+        public void SetDesiredVelocity(Vector3 desiredVelocity)
+        {
+            _desiredVelocity = desiredVelocity;
+        }
+
+        /// <summary>
+        /// Request a jump (supports jump buffering).
+        /// Call this when the player presses jump - it will be buffered if in air.
+        /// </summary>
+        public void RequestJump(float jumpForce)
+        {
+            if (Mode != CharacterControllerMode.Kinematic)
+                return;
+
+            // If grounded or within coyote time, jump immediately
+            if (IsGrounded || _timeLeftGround <= CoyoteTime)
+            {
+                Jump(jumpForce);
+            }
+            else
+            {
+                // Buffer the jump for when we land
+                _jumpBufferCounter = JumpBufferTime;
+            }
+        }
+
+        /// <summary>
+        /// Perform a simple jump with the given force.
+        /// For player input, use RequestJump() instead (supports buffering).
         /// </summary>
         public void Jump(float jumpForce)
         {
-            if (!IsGrounded || Mode != CharacterControllerMode.Kinematic)
+            if (Mode != CharacterControllerMode.Kinematic)
+                return;
+
+            // Allow jump if grounded OR within coyote time
+            if (!IsGrounded && _timeLeftGround > CoyoteTime)
                 return;
 
             Velocity = new Vector3(Velocity.X, jumpForce, Velocity.Z);
             IsGrounded = false;
+            _timeLeftGround = CoyoteTime + 0.01f; // Prevent double-jump via coyote time
         }
 
         // ===== INTERNAL METHODS - KINEMATIC MODE =====
+
+        /// <summary>
+        /// Apply movement feel with inertia, acceleration, and drag.
+        /// This creates smooth, responsive character movement with weight.
+        /// </summary>
+        private void ApplyMovementFeel(float deltaTime)
+        {
+            // Extract horizontal velocity (we don't apply friction to vertical velocity)
+            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
+            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
+
+            if (IsSliding)
+            {
+                // === SLIDING ON STEEP SLOPE ===
+                ApplySlidePhysics(deltaTime);
+            }
+            else if (IsGrounded)
+            {
+                // === GROUNDED MOVEMENT ===
+
+                // Check if we're on a slope that affects movement
+                bool isOnSlope = CurrentSlopeAngle > 5f; // More than 5 degrees = consider it a slope
+
+                if (isOnSlope && EnableSlopeMomentum)
+                {
+                    // Apply slope momentum physics
+                    ApplySlopeMomentum(deltaTime);
+                }
+                else
+                {
+                    // Normal flat ground movement
+                    ApplyFlatGroundMovement(deltaTime);
+                }
+            }
+            else
+            {
+                // === AIR MOVEMENT ===
+
+                // Apply air control - player has limited influence over movement in air
+                if (horizontalDesired.LengthSquared > 0.01f)
+                {
+                    // Accelerate in air (slower than on ground)
+                    float airAccel = AirAcceleration * AirControl * deltaTime;
+                    Vector3 targetVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, airAccel);
+
+                    // Update horizontal velocity
+                    horizontalVelocity = targetVelocity;
+                }
+
+                // Apply air drag (slight deceleration when moving through air)
+                horizontalVelocity *= AirDrag;
+
+                // Update velocity (preserve vertical component)
+                Velocity = new Vector3(horizontalVelocity.X, Velocity.Y, horizontalVelocity.Z);
+            }
+
+            // Reset desired velocity after applying (scripts must set it every frame)
+            _desiredVelocity = Vector3.Zero;
+        }
+
+        /// <summary>
+        /// Apply normal flat ground movement with acceleration and friction.
+        /// </summary>
+        private void ApplyFlatGroundMovement(float deltaTime)
+        {
+            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
+            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
+
+            float currentSpeed = horizontalVelocity.Length;
+            float desiredSpeed = horizontalDesired.Length;
+
+            Vector3 targetVelocity;
+            if (desiredSpeed > 0.01f)
+            {
+                // Player is inputting movement - accelerate towards desired velocity
+                float acceleration = GroundAcceleration * deltaTime;
+                targetVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, acceleration);
+            }
+            else
+            {
+                // No input - decelerate to stop
+                float deceleration = GroundDeceleration * deltaTime;
+
+                // Reduce deceleration after exiting a slide (preserve momentum)
+                if (_postSlideInertiaTimer > 0f)
+                {
+                    float inertiaFactor = _postSlideInertiaTimer / 0.5f; // 0-1 based on remaining time
+                    deceleration *= (1f - inertiaFactor * 0.7f); // Reduce decel by up to 70%
+                }
+
+                targetVelocity = Vector3.Lerp(horizontalVelocity, Vector3.Zero, deceleration);
+
+                // Stop completely if very slow (prevents sliding)
+                if (targetVelocity.LengthSquared < 0.01f)
+                    targetVelocity = Vector3.Zero;
+            }
+
+            // Apply ground friction (independent of input)
+            // Also reduced by post-slide inertia
+            float friction = GroundFriction;
+            if (_postSlideInertiaTimer > 0f)
+            {
+                float inertiaFactor = _postSlideInertiaTimer / 0.5f;
+                friction = MathHelper.Lerp(friction, 1.0f, inertiaFactor * 0.5f); // Less friction after slide
+            }
+            targetVelocity *= friction;
+
+            // Update velocity (preserve vertical component)
+            Velocity = new Vector3(targetVelocity.X, Velocity.Y, targetVelocity.Z);
+        }
+
+        /// <summary>
+        /// Apply slope momentum physics (like Mario 64).
+        /// Allows running up slopes with momentum, deceleration, and backsliding.
+        /// </summary>
+        private void ApplySlopeMomentum(float deltaTime)
+        {
+            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
+            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
+
+            // Calculate slope direction
+            Vector3 slopeDirection = CalculateSlopeDirection(GroundNormal);
+
+            // Determine if we're going uphill or downhill
+            // Dot product between velocity and slope down direction
+            // > 0 = going downhill, < 0 = going uphill
+            float slopeDot = Vector3.Dot(horizontalVelocity, slopeDirection);
+            bool isGoingUphill = slopeDot < -0.1f;
+
+            if (isGoingUphill)
+            {
+                // === CLIMBING SLOPE ===
+
+                // Apply deceleration when climbing (fighting gravity)
+                float climbDecel = SlopeClimbDeceleration * deltaTime;
+
+                // Apply player input with reduced effectiveness on slopes
+                if (horizontalDesired.LengthSquared > 0.01f)
+                {
+                    // Blend between current velocity and desired, with slope retention
+                    float acceleration = GroundAcceleration * SlopeMomentumRetention * deltaTime;
+                    horizontalVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, acceleration);
+                }
+
+                // Apply climb deceleration (simulates gravity pulling back)
+                float currentSpeed = horizontalVelocity.Length;
+                currentSpeed = MathF.Max(0f, currentSpeed - climbDecel);
+
+                if (currentSpeed > 0.01f)
+                {
+                    horizontalVelocity = Vector3.Normalize(horizontalVelocity) * currentSpeed;
+                }
+                else
+                {
+                    horizontalVelocity = Vector3.Zero;
+                }
+
+                // Check if we should start backsliding
+                if (currentSpeed < MinSpeedBeforeBackslide && CurrentSlopeAngle > BackslideAngle)
+                {
+                    // Start sliding backwards down the slope
+                    // This will be picked up by the slide detection on next frame
+                    _slideVelocity = slopeDirection * 0.5f; // Small initial backslide velocity
+                }
+            }
+            else
+            {
+                // === GOING DOWNHILL OR FLAT ===
+
+                // Normal movement with slight speed boost from gravity
+                float currentSpeed = horizontalVelocity.Length;
+                float desiredSpeed = horizontalDesired.Length;
+
+                Vector3 targetVelocity;
+                if (desiredSpeed > 0.01f)
+                {
+                    // Player input - normal acceleration
+                    float acceleration = GroundAcceleration * deltaTime;
+                    targetVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, acceleration);
+                }
+                else
+                {
+                    // No input - decelerate (but slower on downhill)
+                    float deceleration = GroundDeceleration * 0.7f * deltaTime; // Less decel downhill
+                    targetVelocity = Vector3.Lerp(horizontalVelocity, Vector3.Zero, deceleration);
+
+                    if (targetVelocity.LengthSquared < 0.01f)
+                        targetVelocity = Vector3.Zero;
+                }
+
+                // Apply friction
+                targetVelocity *= GroundFriction;
+
+                horizontalVelocity = targetVelocity;
+            }
+
+            // Update velocity (preserve vertical component)
+            Velocity = new Vector3(horizontalVelocity.X, Velocity.Y, horizontalVelocity.Z);
+        }
+
+        /// <summary>
+        /// Apply realistic sliding physics on steep slopes.
+        /// Simulates gravity along the slope with friction and player control.
+        /// </summary>
+        private void ApplySlidePhysics(float deltaTime)
+        {
+            // Calculate the slope direction (direction of steepest descent)
+            // Project gravity onto the slope plane
+            Vector3 slopeDirection = CalculateSlopeDirection(GroundNormal);
+
+            // Apply gravity along the slope (accelerate down the slope)
+            float gravityMagnitude = Gravity.Length * SlideGravityMultiplier;
+            Vector3 slopeGravity = slopeDirection * gravityMagnitude * deltaTime;
+
+            // Accumulate slide velocity
+            _slideVelocity += slopeGravity;
+
+            // Apply player input to influence slide direction (limited control)
+            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
+            if (horizontalDesired.LengthSquared > 0.01f && SlideControl > 0f)
+            {
+                // Project input onto slope plane (can't move perpendicular to slope)
+                Vector3 inputOnSlope = ProjectVectorOntoPlane(horizontalDesired, GroundNormal);
+
+                // Apply limited control
+                float controlInfluence = SlideControl * deltaTime * 10f; // Scale for responsiveness
+                _slideVelocity += inputOnSlope * controlInfluence;
+            }
+
+            // Apply slide friction (resists movement in all directions on slope)
+            _slideVelocity *= (1f - SlideFriction * deltaTime * 2f);
+
+            // Clamp to max slide speed
+            float slideSpeed = _slideVelocity.Length;
+            if (slideSpeed > MaxSlideSpeed)
+            {
+                _slideVelocity = Vector3.Normalize(_slideVelocity) * MaxSlideSpeed;
+            }
+
+            // Project slide velocity onto slope plane (ensure we stay on surface)
+            _slideVelocity = ProjectVectorOntoPlane(_slideVelocity, GroundNormal);
+
+            // Set final velocity (slide velocity replaces normal velocity while sliding)
+            Velocity = _slideVelocity;
+        }
+
+        /// <summary>
+        /// Calculate the direction of steepest descent on a slope.
+        /// </summary>
+        private Vector3 CalculateSlopeDirection(Vector3 normal)
+        {
+            // The slope direction is perpendicular to both the normal and the horizontal plane
+            // This gives us the direction of steepest descent
+            Vector3 right = Vector3.Cross(normal, Vector3.UnitY);
+
+            // Handle case where normal is vertical (avoid zero vector)
+            if (right.LengthSquared < 0.0001f)
+            {
+                right = Vector3.UnitX;
+            }
+            else
+            {
+                right = Vector3.Normalize(right);
+            }
+
+            // Cross product in reverse order to get downward direction
+            Vector3 slopeDown = Vector3.Cross(normal, right);
+            slopeDown = Vector3.Normalize(slopeDown);
+
+            return slopeDown;
+        }
+
+        /// <summary>
+        /// Project a vector onto a plane defined by its normal.
+        /// </summary>
+        private Vector3 ProjectVectorOntoPlane(Vector3 vector, Vector3 planeNormal)
+        {
+            // Remove the component of vector that's perpendicular to the plane
+            float distance = Vector3.Dot(vector, planeNormal);
+            return vector - planeNormal * distance;
+        }
 
         /// <summary>
         /// Try to move from current position by motion vector.
@@ -463,6 +957,8 @@ namespace Engine.Components
             if (Entity == null)
             {
                 IsGrounded = false;
+                IsSliding = false;
+                CurrentSlopeAngle = 0f;
                 return;
             }
 
@@ -475,28 +971,27 @@ namespace Engine.Components
             bool hasPhysicsGround = false;
             float physicsGroundDistance = float.MaxValue;
             Vector3 physicsGroundNormal = Vector3.UnitY;
+            float physicsSlopeAngle = 0f;
 
             // Check physics colliders
             if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.9f, -Vector3.UnitY, out RaycastHit hit, checkDistance, CollisionMask))
             {
-                float slopeAngle = Vector3.CalculateAngle(Vector3.UnitY, hit.Normal) * (180f / MathF.PI);
+                physicsSlopeAngle = Vector3.CalculateAngle(Vector3.UnitY, hit.Normal) * (180f / MathF.PI);
 
-                if (slopeAngle <= SlopeLimit)
-                {
-                    hasPhysicsGround = true;
-                    physicsGroundDistance = hit.Distance;
-                    physicsGroundNormal = hit.Normal;
-                }
+                // Accept ground even if slope is too steep (we'll slide on it instead of falling through)
+                hasPhysicsGround = true;
+                physicsGroundDistance = hit.Distance;
+                physicsGroundNormal = hit.Normal;
             }
 
             // Check terrain collision
             bool hasTerrainGround = CheckTerrainCollision(origin, out float terrainHeight, out Vector3 terrainNormal, out float terrainSlopeAngle);
             float terrainGroundDistance = hasTerrainGround ? MathF.Max(0, origin.Y - terrainHeight) : float.MaxValue;
 
-            // Validate terrain slope AND distance
+            // Validate terrain distance (but NOT slope - we want to detect steep slopes for sliding)
             if (hasTerrainGround)
             {
-                if (terrainSlopeAngle > SlopeLimit || terrainGroundDistance > checkDistance)
+                if (terrainGroundDistance > checkDistance)
                 {
                     hasTerrainGround = false;
                     terrainGroundDistance = float.MaxValue;
@@ -512,7 +1007,11 @@ namespace Engine.Components
                     IsGrounded = true;
                     GroundNormal = terrainNormal;
                     GroundDistance = terrainGroundDistance;
-                    _isGroundedOnTerrain = true; // On terrain
+                    CurrentSlopeAngle = terrainSlopeAngle;
+                    _isGroundedOnTerrain = true;
+
+                    // Determine if we're sliding on this slope
+                    DetermineSlideState(terrainSlopeAngle);
                 }
                 else if (hasPhysicsGround)
                 {
@@ -520,22 +1019,64 @@ namespace Engine.Components
                     IsGrounded = true;
                     GroundNormal = physicsGroundNormal;
                     GroundDistance = physicsGroundDistance;
-                    _isGroundedOnTerrain = false; // On physics object (platform, etc.)
+                    CurrentSlopeAngle = physicsSlopeAngle;
+                    _isGroundedOnTerrain = false;
+
+                    // Determine if we're sliding on this slope
+                    DetermineSlideState(physicsSlopeAngle);
                 }
                 else
                 {
                     IsGrounded = false;
+                    IsSliding = false;
                     GroundNormal = Vector3.UnitY;
                     GroundDistance = float.MaxValue;
+                    CurrentSlopeAngle = 0f;
                     _isGroundedOnTerrain = false;
                 }
             }
             else
             {
                 IsGrounded = false;
+                IsSliding = false;
                 GroundNormal = Vector3.UnitY;
                 GroundDistance = float.MaxValue;
+                CurrentSlopeAngle = 0f;
                 _isGroundedOnTerrain = false;
+            }
+        }
+
+        /// <summary>
+        /// Determine if the character should be sliding based on slope angle and settings.
+        /// </summary>
+        private void DetermineSlideState(float slopeAngle)
+        {
+            if (!EnableSliding)
+            {
+                // Sliding disabled - use old behavior (can't walk on slopes > SlopeLimit)
+                IsSliding = false;
+                if (slopeAngle > SlopeLimit)
+                {
+                    IsGrounded = false; // Too steep, not grounded
+                }
+                return;
+            }
+
+            // Sliding enabled - determine state based on slope angle
+            if (slopeAngle >= MinSlideAngle)
+            {
+                // Very steep slope - always slide
+                IsSliding = true;
+            }
+            else if (slopeAngle > SlopeLimit)
+            {
+                // Moderately steep - walkable but slower, might slide if moving fast
+                IsSliding = false; // For now, don't slide on moderate slopes
+            }
+            else
+            {
+                // Normal walkable slope
+                IsSliding = false;
             }
         }
 

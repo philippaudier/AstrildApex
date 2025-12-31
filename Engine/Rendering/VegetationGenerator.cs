@@ -172,7 +172,7 @@ namespace Engine.Rendering
                     continue;
 
                 // Create instance matrix (with per-tile size variation)
-                Matrix4 matrix = CreateVegetationMatrix(worldX, worldY, worldZ, layer, rng, tileSizeOffset);
+                Matrix4 matrix = CreateVegetationMatrix(terrain, worldX, worldY, worldZ, layer, rng, tileSizeOffset);
                 instances.Add(matrix);
             }
 
@@ -403,6 +403,7 @@ namespace Engine.Rendering
         /// Matches Single Terrain's matrix creation approach exactly.
         /// </summary>
         private static Matrix4 CreateVegetationMatrix(
+            Engine.Components.Terrain terrain,
             float worldX, float worldY, float worldZ,
             VegetationLayer layer,
             Random rng,
@@ -424,12 +425,42 @@ namespace Engine.Rendering
             // Random rotation around Y axis (if enabled)
             float rotationY = layer.RandomRotation ? (float)rng.NextDouble() * MathHelper.TwoPi : 0f;
 
-            // Build matrix: R*S, then set translation manually (SAME as Single Terrain)
+            // Calculate alignment with terrain normal
+            Matrix4 alignmentMatrix = Matrix4.Identity;
+
+            if (layer.AlignToNormal && layer.AlignmentStrength > 0f)
+            {
+                // Get terrain normal at this position
+                Vector3 terrainNormal = terrain.GetNormalAtPosition(worldX, worldZ);
+
+                // Interpolate between vertical (0,1,0) and terrain normal based on alignment strength
+                float strength = Math.Clamp(layer.AlignmentStrength / 100f, 0f, 1f);
+                Vector3 targetUp = Vector3.Lerp(Vector3.UnitY, terrainNormal, strength);
+                targetUp = Vector3.Normalize(targetUp);
+
+                // Build rotation matrix to align Y-axis with targetUp
+                // Choose a reference vector that's not parallel to targetUp
+                Vector3 reference = Math.Abs(targetUp.Y) < 0.999f ? Vector3.UnitY : Vector3.UnitX;
+
+                // Calculate right and forward vectors
+                Vector3 right = Vector3.Normalize(Vector3.Cross(reference, targetUp));
+                Vector3 forward = Vector3.Normalize(Vector3.Cross(targetUp, right));
+
+                // Build alignment matrix (rotation to align with terrain normal)
+                alignmentMatrix = new Matrix4(
+                    new Vector4(right, 0),
+                    new Vector4(targetUp, 0),
+                    new Vector4(forward, 0),
+                    new Vector4(0, 0, 0, 1)
+                );
+            }
+
+            // Build matrix: Alignment * RotationY * Scale
             Matrix4 scaleMatrix = Matrix4.CreateScale(scale);
             Matrix4 rotationMatrix = Matrix4.CreateRotationY(rotationY);
 
-            // Combine rotation and scale first
-            Matrix4 matrix = rotationMatrix * scaleMatrix;
+            // Combine: first scale, then rotate around Y, then align with terrain normal
+            Matrix4 matrix = scaleMatrix * rotationMatrix * alignmentMatrix;
 
             // Set translation in M41/M42/M43 (OpenTK Matrix4 stores translation in last row)
             // This ensures translation is not affected by rotation/scale
