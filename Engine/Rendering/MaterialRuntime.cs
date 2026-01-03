@@ -207,6 +207,60 @@ namespace Engine.Rendering
         public float GlassFresnelPower = 5.0f;
         public float GlassReflectionStrength = 1.0f;
 
+        // WaterForward shader properties (new advanced water shader)
+        // Phase 1: Base Color
+        public float[] WaterForwardColor = new float[] { 0.0f, 0.4f, 0.6f, 1.0f };
+        public float[] WaterForwardDeepColor = new float[] { 0.0f, 0.1f, 0.3f, 1.0f };
+        public float WaterForwardTransparency = 0.3f;
+        // Wave Animation
+        public float WaterForwardWaveSpeed = 1.0f;
+        public float WaterForwardWaveAmplitude = 0.1f;
+        public float WaterForwardWaveFrequency = 2.0f;
+        public float[] WaterForwardWaveDirection = new float[] { 1.0f, 0.0f };
+        // Phase 2: Normal Mapping
+        public float WaterForwardNormalStrength = 1.0f;
+        public float WaterForwardNormalStrength2 = 0.5f;
+        public float WaterForwardNormalBlend = 0.5f;
+        public float WaterForwardNormalMapScale = 1.0f; // Legacy: use WaterForwardNormalLayer1Scale/WaterForwardNormalLayer2Scale instead
+        public float WaterForwardNormalLayer1Scale = 1.0f;
+        public float WaterForwardNormalLayer2Scale = 1.3f;
+        public float WaterForwardNormalLayer1Speed = 0.05f;
+        public float WaterForwardNormalLayer2Speed = -0.03f;
+        public float[] WaterForwardNormalLayer1Direction = new float[] { 1.0f, 0.0f };
+        public float[] WaterForwardNormalLayer2Direction = new float[] { 0.0f, 1.0f };
+        // Phase 2: Depth & Refraction
+        public float WaterForwardDepthFadeDistance = 2.0f;
+        public float WaterForwardRefractionStrength = 0.05f;
+        public bool WaterForwardUseRefraction = true;
+        // Phase 3: PBR & Lighting
+        public float WaterForwardRoughness = 0.1f;
+        public float WaterForwardMetallic = 0.0f;
+        public float WaterForwardFresnel = 1.0f;
+        public float WaterForwardSpecularStrength = 1.0f;
+        // Phase 4: Color Absorption
+        public float[] WaterForwardAbsorptionColor = new float[] { 0.4f, 0.8f, 1.0f };
+        public float WaterForwardAbsorptionStrength = 0.1f;
+        // Phase 5: Foam
+        public float WaterForwardFoamAmount = 0.5f;
+        public float WaterForwardFoamCutoff = 0.5f;
+        public float[] WaterForwardFoamColor = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+        public float WaterForwardFoamTextureScale = 4.0f;
+        public float WaterForwardFoamAlphaClipThreshold = 0.1f;
+        public float WaterForwardEdgeFadeDistance = 1.0f;
+        // Phase 6: AAA Features
+        public bool WaterForwardUseCaustics = true;
+        public float WaterForwardCausticsStrength = 1.0f;
+        public float WaterForwardCausticsScale = 2.0f;
+        public float WaterForwardCausticsSpeed = 0.5f;
+        public float[] WaterForwardCausticsColor = new float[] { 1.0f, 0.95f, 0.8f };
+        public float WaterForwardCausticsSplit = 0.01f;
+        public float WaterForwardCausticsDistortion = 1.0f;
+        public bool WaterForwardUsePlanarReflections = false;
+        public float WaterForwardReflectionBlur = 0.0f;
+        public int WaterForwardReflectionResolution = 1024;
+        public bool WaterForwardFlipReflectionX = false;
+        public bool WaterForwardFlipReflectionY = false;
+
         public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
         {
             TextureCache.Initialize();
@@ -385,6 +439,80 @@ namespace Engine.Rendering
                     {
                         mr.TransparencyMode = 1;
                     }
+                }
+            }
+            catch { }
+
+            // Load WaterForward properties if present
+            try
+            {
+                if (a?.WaterProperties != null && string.Equals(a?.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Loading WaterForward properties for material {a.Name}"); } catch { }
+                    var w = a.WaterProperties;
+
+                    // Phase 1: Base Color
+                    mr.WaterForwardColor = w.WaterColor ?? new float[] { 0.0f, 0.4f, 0.6f, 1.0f };
+                    mr.WaterForwardDeepColor = w.DeepWaterColor ?? new float[] { 0.0f, 0.1f, 0.3f, 1.0f };
+                    mr.WaterForwardTransparency = w.Transparency;
+
+                    // Wave Animation
+                    mr.WaterForwardWaveSpeed = w.WaveSpeed;
+                    mr.WaterForwardWaveAmplitude = w.WaveAmplitude;
+                    mr.WaterForwardWaveFrequency = w.WaveFrequency;
+                    mr.WaterForwardWaveDirection = w.WaveDirection ?? new float[] { 1.0f, 0.0f };
+
+                    // Phase 2: Normal Mapping
+                    mr.WaterForwardNormalStrength = w.NormalStrength;
+                    mr.WaterForwardNormalStrength2 = w.NormalStrength2;
+                    mr.WaterForwardNormalBlend = w.NormalBlend;
+                    mr.WaterForwardNormalMapScale = w.NormalMapScale; // Legacy
+                    mr.WaterForwardNormalLayer1Scale = w.NormalLayer1Scale;
+                    mr.WaterForwardNormalLayer2Scale = w.NormalLayer2Scale;
+                    mr.WaterForwardNormalLayer1Speed = w.NormalLayer1Speed;
+                    mr.WaterForwardNormalLayer2Speed = w.NormalLayer2Speed;
+                    mr.WaterForwardNormalLayer1Direction = w.NormalLayer1Direction ?? new float[] { 1.0f, 0.0f };
+                    mr.WaterForwardNormalLayer2Direction = w.NormalLayer2Direction ?? new float[] { 0.0f, 1.0f };
+
+                    // Phase 2: Depth & Refraction
+                    mr.WaterForwardDepthFadeDistance = w.DepthFadeDistance;
+                    mr.WaterForwardRefractionStrength = w.RefractionStrength;
+                    mr.WaterForwardUseRefraction = w.UseRefraction;
+
+                    // Phase 3: PBR & Lighting
+                    mr.WaterForwardRoughness = w.Roughness;
+                    mr.WaterForwardMetallic = w.Metallic;
+                    mr.WaterForwardFresnel = w.Fresnel;
+                    mr.WaterForwardSpecularStrength = w.SpecularStrength;
+
+                    // Phase 4: Color Absorption
+                    mr.WaterForwardAbsorptionColor = w.AbsorptionColor ?? new float[] { 0.4f, 0.8f, 1.0f };
+                    mr.WaterForwardAbsorptionStrength = w.AbsorptionStrength;
+
+                    // Phase 5: Foam
+                    mr.WaterForwardFoamAmount = w.FoamAmount;
+                    mr.WaterForwardFoamCutoff = w.FoamCutoff;
+                    mr.WaterForwardFoamColor = w.FoamColor ?? new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+                    mr.WaterForwardFoamTextureScale = w.FoamTextureScale;
+                    mr.WaterForwardFoamAlphaClipThreshold = w.FoamAlphaClipThreshold;
+                    mr.WaterForwardEdgeFadeDistance = w.EdgeFadeDistance;
+
+                    // Phase 6: AAA Features
+                    mr.WaterForwardUseCaustics = w.UseCaustics;
+                    mr.WaterForwardCausticsStrength = w.CausticsStrength;
+                    mr.WaterForwardCausticsScale = w.CausticsScale;
+                    mr.WaterForwardCausticsSpeed = w.CausticsSpeed;
+                    mr.WaterForwardCausticsColor = w.CausticsColor ?? new float[] { 1.0f, 0.95f, 0.8f };
+                    mr.WaterForwardCausticsSplit = w.CausticsSplit;
+                    mr.WaterForwardCausticsDistortion = w.CausticsDistortion;
+                    mr.WaterForwardUsePlanarReflections = w.UsePlanarReflections;
+                    mr.WaterForwardReflectionBlur = w.ReflectionBlur;
+                    mr.WaterForwardReflectionResolution = w.ReflectionResolution;
+                    mr.WaterForwardFlipReflectionX = w.FlipReflectionX;
+                    mr.WaterForwardFlipReflectionY = w.FlipReflectionY;
+
+                    // Force transparency mode for WaterForward shader
+                    mr.TransparencyMode = 1;
                 }
             }
             catch { }
@@ -683,6 +811,105 @@ namespace Engine.Rendering
                     sh.SetInt("u_SceneColorTex", 19);
                 }
                 catch { }
+            }
+
+            // Bind WaterForward shader uniforms if shader is "WaterForward"
+            if (string.Equals(ShaderName, "WaterForward", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding WaterForward shader uniforms"); } catch { }
+
+                    // Phase 1: Base Color
+                    sh.SetVec4("u_WaterColor", new OpenTK.Mathematics.Vector4(
+                        WaterForwardColor[0], WaterForwardColor[1], WaterForwardColor[2], WaterForwardColor[3]));
+                    sh.SetVec4("u_DeepWaterColor", new OpenTK.Mathematics.Vector4(
+                        WaterForwardDeepColor[0], WaterForwardDeepColor[1], WaterForwardDeepColor[2], WaterForwardDeepColor[3]));
+                    sh.SetFloat("u_Transparency", WaterForwardTransparency);
+
+                    // Wave Animation
+                    sh.SetFloat("u_WaveSpeed", WaterForwardWaveSpeed);
+                    sh.SetFloat("u_WaveAmplitude", WaterForwardWaveAmplitude);
+                    sh.SetFloat("u_WaveFrequency", WaterForwardWaveFrequency);
+                    sh.SetVec2("u_WaveDirection", new OpenTK.Mathematics.Vector2(
+                        WaterForwardWaveDirection[0], WaterForwardWaveDirection[1]));
+
+                    // Phase 2: Normal Mapping (two layers)
+                    sh.SetFloat("u_NormalStrength", WaterForwardNormalStrength);
+                    sh.SetFloat("u_NormalStrength2", WaterForwardNormalStrength2);
+                    sh.SetFloat("u_NormalBlend", WaterForwardNormalBlend);
+                    sh.SetFloat("u_NormalMapScale", WaterForwardNormalMapScale); // Legacy fallback
+                    sh.SetFloat("u_NormalLayer1Scale", WaterForwardNormalLayer1Scale);
+                    sh.SetFloat("u_NormalLayer2Scale", WaterForwardNormalLayer2Scale);
+                    sh.SetFloat("u_NormalLayer1Speed", WaterForwardNormalLayer1Speed);
+                    sh.SetFloat("u_NormalLayer2Speed", WaterForwardNormalLayer2Speed);
+                    sh.SetVec2("u_NormalLayer1Direction", new OpenTK.Mathematics.Vector2(
+                        WaterForwardNormalLayer1Direction[0], WaterForwardNormalLayer1Direction[1]));
+                    sh.SetVec2("u_NormalLayer2Direction", new OpenTK.Mathematics.Vector2(
+                        WaterForwardNormalLayer2Direction[0], WaterForwardNormalLayer2Direction[1]));
+
+                    // Phase 2: Depth & Refraction
+                    sh.SetFloat("u_DepthFadeDistance", WaterForwardDepthFadeDistance);
+                    sh.SetFloat("u_RefractionStrength", WaterForwardRefractionStrength);
+                    sh.SetInt("u_UseRefraction", WaterForwardUseRefraction ? 1 : 0);
+
+                    // Phase 3: PBR & Lighting
+                    sh.SetFloat("u_Roughness", WaterForwardRoughness);
+                    sh.SetFloat("u_Metallic", WaterForwardMetallic);
+                    sh.SetFloat("u_Fresnel", WaterForwardFresnel);
+                    sh.SetFloat("u_SpecularStrength", WaterForwardSpecularStrength);
+
+                    // Phase 4: Color Absorption
+                    sh.SetVec3("u_AbsorptionColor", new OpenTK.Mathematics.Vector3(
+                        WaterForwardAbsorptionColor[0], WaterForwardAbsorptionColor[1], WaterForwardAbsorptionColor[2]));
+                    sh.SetFloat("u_AbsorptionStrength", WaterForwardAbsorptionStrength);
+
+                    // Phase 5: Foam
+                    sh.SetFloat("u_FoamAmount", WaterForwardFoamAmount);
+                    sh.SetFloat("u_FoamCutoff", WaterForwardFoamCutoff);
+                    sh.SetVec4("u_FoamColor", new OpenTK.Mathematics.Vector4(
+                        WaterForwardFoamColor[0], WaterForwardFoamColor[1], WaterForwardFoamColor[2], WaterForwardFoamColor[3]));
+                    sh.SetFloat("u_FoamTextureScale", WaterForwardFoamTextureScale);
+                    sh.SetFloat("u_FoamAlphaClipThreshold", WaterForwardFoamAlphaClipThreshold);
+                    sh.SetFloat("u_EdgeFadeDistance", WaterForwardEdgeFadeDistance);
+
+                    // Phase 6: AAA Features
+                    sh.SetInt("u_UseCaustics", WaterForwardUseCaustics ? 1 : 0);
+                    sh.SetFloat("u_CausticsStrength", WaterForwardCausticsStrength);
+                    sh.SetFloat("u_CausticsScale", WaterForwardCausticsScale);
+                    sh.SetFloat("u_CausticsSpeed", WaterForwardCausticsSpeed);
+                    sh.SetVec3("u_CausticsColor", new OpenTK.Mathematics.Vector3(
+                        WaterForwardCausticsColor[0], WaterForwardCausticsColor[1], WaterForwardCausticsColor[2]));
+                    sh.SetFloat("u_CausticsSplit", WaterForwardCausticsSplit);
+                    sh.SetFloat("u_CausticsDistortion", WaterForwardCausticsDistortion);
+                    int usePlanarReflections = WaterForwardUsePlanarReflections ? 1 : 0;
+                    sh.SetInt("u_UsePlanarReflections", usePlanarReflections);
+                    sh.SetFloat("u_ReflectionBlur", WaterForwardReflectionBlur);
+
+                    // DEBUG: Log planar reflections status
+                    try { Engine.Utils.DebugLogger.Log($"[WATER SHADER] u_UsePlanarReflections = {usePlanarReflections}"); } catch { }
+
+                    // Texture samplers (using existing texture slots)
+                    // u_NormalTex = slot 1 (first normal map layer)
+                    // u_NormalTex2 = slot 3 (second normal map layer) - use Metallic texture slot
+                    sh.SetInt("u_NormalTex2", 3);
+                    // u_FoamTex = slot 2 (foam texture) - use Emissive texture slot
+                    sh.SetInt("u_FoamTex", 2);
+
+                    // Depth buffer and scene color texture (bound by ViewportRenderer)
+                    sh.SetInt("u_DepthTex", 18);
+                    sh.SetInt("u_SceneColorTex", 19);
+
+                    // Planar reflection texture (bound by ViewportRenderer to slot 22)
+                    sh.SetInt("u_PlanarReflectionTex", 22);
+
+                    // Planar reflection view-projection matrix
+                    sh.SetMat4("u_ReflectionViewProj", Engine.Rendering.ReflectionBuffer.ReflectionViewProj);
+                }
+                catch (Exception ex)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Error binding WaterForward uniforms: {ex.Message}"); } catch { }
+                }
             }
 
             // Set time uniform for all shaders that need animation (Water, BlackHole, etc.)

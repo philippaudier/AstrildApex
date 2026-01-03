@@ -60,4 +60,11 @@ void main(){
     vNormal   = smoothedNormal;
     vUV = aUV * u_TextureTiling + u_TextureOffset;
     gl_Position = uViewProj * wp;
+
+    // Clipping plane support (for planar reflections)
+    if (uClipPlaneEnabled > 0.5) {
+        gl_ClipDistance[0] = dot(wp, uClipPlane);
+    } else {
+        gl_ClipDistance[0] = 1.0; // Always pass if clipping disabled
+    }
 }

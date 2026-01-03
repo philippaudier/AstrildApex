@@ -314,209 +314,24 @@ namespace Editor.Inspector
                     InspectorWidgets.EndSection();
                 }
 
-                // === SLOPE SLIDING SECTION (Kinematic only) ===
-                if (InspectorWidgets.Section("Slope Sliding", defaultOpen: true))
+                // === SLOPE BEHAVIOR (SIMPLE) ===
+                if (InspectorWidgets.Section("Slope Behavior", defaultOpen: true))
                 {
-                    bool enableSliding = controller.EnableSliding;
-                    if (ImGui.Checkbox("Enable Slope Sliding", ref enableSliding))
-                    {
-                        controller.EnableSliding = enableSliding;
-                    }
+                    ImGui.TextColored(UI.Info, "Simple slope handling:");
+                    ImGui.BulletText("Slope > SlopeLimit: Slides down automatically");
+                    ImGui.BulletText("Trying to climb steep slope: Blocked (like a wall)");
+                    ImGui.BulletText("Slide uses gravity + friction from above");
+                    ImGui.BulletText("Deceleration when leaving slope");
 
-                    if (ImGui.IsItemHovered())
-                    {
-                        ImGui.SetTooltip("Enable realistic sliding on steep slopes instead of falling through.\nAllows you to slide down slopes > SlopeLimit with friction and player control.");
-                    }
-
-                    if (controller.EnableSliding)
-                    {
-                        ImGui.Separator();
-
-                        ImGui.Text("Min Slide Angle (degrees)");
-                        float minSlideAngle = controller.MinSlideAngle;
-                        if (ImGui.DragFloat("##MinSlideAngle", ref minSlideAngle, 1.0f, controller.SlopeLimit, 90.0f))
-                        {
-                            controller.MinSlideAngle = minSlideAngle;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Minimum angle to start sliding. Slopes between SlopeLimit and this are walkable.");
-                        }
-
-                        ImGui.Text("Slide Friction");
-                        float slideFriction = controller.SlideFriction;
-                        if (ImGui.SliderFloat("##SlideFriction", ref slideFriction, 0.0f, 1.0f))
-                        {
-                            controller.SlideFriction = slideFriction;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("How much the slope resists sliding (0 = ice, 1 = high friction)");
-                        }
-
-                        ImGui.Text("Slide Gravity Multiplier");
-                        float slideGravMult = controller.SlideGravityMultiplier;
-                        if (ImGui.DragFloat("##SlideGravMult", ref slideGravMult, 0.1f, 0.1f, 5.0f))
-                        {
-                            controller.SlideGravityMultiplier = slideGravMult;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Gravity multiplier when sliding (higher = faster slide)");
-                        }
-
-                        ImGui.Text("Slide Control");
-                        float slideControl = controller.SlideControl;
-                        if (ImGui.SliderFloat("##SlideControl", ref slideControl, 0.0f, 1.0f))
-                        {
-                            controller.SlideControl = slideControl;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("How much player input can affect slide direction (0 = no control, 1 = full control)");
-                        }
-
-                        ImGui.Text("Max Slide Speed");
-                        float maxSlideSpeed = controller.MaxSlideSpeed;
-                        if (ImGui.DragFloat("##MaxSlideSpeed", ref maxSlideSpeed, 1.0f, 1.0f, 100.0f))
-                        {
-                            controller.MaxSlideSpeed = maxSlideSpeed;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Maximum sliding speed (prevents infinite acceleration)");
-                        }
-
-                        ImGui.Separator();
-
-                        // Quick presets for sliding
-                        if (ImGui.Button("Preset: Icy Slope"))
-                        {
-                            controller.SlideFriction = 0.05f;
-                            controller.SlideGravityMultiplier = 2.0f;
-                            controller.SlideControl = 0.2f;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Preset: Rocky Slope"))
-                        {
-                            controller.SlideFriction = 0.5f;
-                            controller.SlideGravityMultiplier = 1.2f;
-                            controller.SlideControl = 0.6f;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Preset: Default"))
-                        {
-                            controller.SlideFriction = 0.3f;
-                            controller.SlideGravityMultiplier = 1.5f;
-                            controller.SlideControl = 0.4f;
-                            controller.MaxSlideSpeed = 20f;
-                            controller.MinSlideAngle = 50f;
-                        }
-                    }
-                    else
-                    {
-                        ImGui.TextDisabled("Sliding disabled - slopes > SlopeLimit will not be walkable.");
-                    }
+                    ImGui.Separator();
+                    ImGui.TextDisabled("All slope behavior is controlled by:");
+                    ImGui.BulletText("SlopeLimit (above)");
+                    ImGui.BulletText("Gravity Scale (Movement Feel)");
+                    ImGui.BulletText("Ground Friction (Movement Feel)");
 
                     InspectorWidgets.EndSection();
                 }
 
-                // === SLOPE MOMENTUM SECTION (Kinematic only) ===
-                if (InspectorWidgets.Section("Slope Momentum (Mario 64 style)", defaultOpen: true))
-                {
-                    bool enableSlopeMomentum = controller.EnableSlopeMomentum;
-                    if (ImGui.Checkbox("Enable Slope Momentum", ref enableSlopeMomentum))
-                    {
-                        controller.EnableSlopeMomentum = enableSlopeMomentum;
-                    }
-
-                    if (ImGui.IsItemHovered())
-                    {
-                        ImGui.SetTooltip("Enable Mario 64-style slope momentum.\nRun up slopes with momentum, decelerate, and slide back if too slow.");
-                    }
-
-                    if (controller.EnableSlopeMomentum)
-                    {
-                        ImGui.Separator();
-
-                        ImGui.Text("Slope Momentum Retention");
-                        float momentumRetention = controller.SlopeMomentumRetention;
-                        if (ImGui.SliderFloat("##MomentumRetention", ref momentumRetention, 0.0f, 1.0f))
-                        {
-                            controller.SlopeMomentumRetention = momentumRetention;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("How much momentum is kept when climbing (1 = full momentum, 0 = stop immediately)");
-                        }
-
-                        ImGui.Text("Slope Climb Deceleration");
-                        float climbDecel = controller.SlopeClimbDeceleration;
-                        if (ImGui.DragFloat("##ClimbDecel", ref climbDecel, 0.5f, 0.0f, 50.0f))
-                        {
-                            controller.SlopeClimbDeceleration = climbDecel;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Deceleration when climbing slopes (higher = slower climb)");
-                        }
-
-                        ImGui.Text("Min Speed Before Backslide");
-                        float minSpeedBackslide = controller.MinSpeedBeforeBackslide;
-                        if (ImGui.DragFloat("##MinSpeedBackslide", ref minSpeedBackslide, 0.1f, 0.0f, 10.0f))
-                        {
-                            controller.MinSpeedBeforeBackslide = minSpeedBackslide;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Minimum speed to maintain before sliding backwards");
-                        }
-
-                        ImGui.Text("Backslide Angle (degrees)");
-                        float backslideAngle = controller.BackslideAngle;
-                        if (ImGui.DragFloat("##BackslideAngle", ref backslideAngle, 1.0f, 0.0f, controller.SlopeLimit))
-                        {
-                            controller.BackslideAngle = backslideAngle;
-                        }
-                        if (ImGui.IsItemHovered())
-                        {
-                            ImGui.SetTooltip("Slope angle where backsliding starts if stopped");
-                        }
-
-                        ImGui.Separator();
-
-                        // Quick presets
-                        if (ImGui.Button("Preset: Mario 64"))
-                        {
-                            controller.SlopeMomentumRetention = 0.7f;
-                            controller.SlopeClimbDeceleration = 8f;
-                            controller.MinSpeedBeforeBackslide = 1f;
-                            controller.BackslideAngle = 35f;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Preset: Easy Climb"))
-                        {
-                            controller.SlopeMomentumRetention = 0.9f;
-                            controller.SlopeClimbDeceleration = 4f;
-                            controller.MinSpeedBeforeBackslide = 0.5f;
-                            controller.BackslideAngle = 40f;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Preset: Realistic"))
-                        {
-                            controller.SlopeMomentumRetention = 0.5f;
-                            controller.SlopeClimbDeceleration = 15f;
-                            controller.MinSpeedBeforeBackslide = 2f;
-                            controller.BackslideAngle = 30f;
-                        }
-                    }
-                    else
-                    {
-                        ImGui.TextDisabled("Slope momentum disabled - slopes behave like flat ground.");
-                    }
-
-                    InspectorWidgets.EndSection();
-                }
             }
 
             // === COLLISION SECTION ===

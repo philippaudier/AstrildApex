@@ -51,6 +51,9 @@ namespace Editor.Rendering
 
         // Time tracking for wind animation
         private System.Diagnostics.Stopwatch _timeStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        // Shadow system
+        private Engine.Rendering.Shadows.ShadowManager? _shadowManager;
         
         // Track subscribed terrains to avoid duplicate subscriptions
         private HashSet<Engine.Components.Terrain> _subscribedTerrains = new HashSet<Engine.Components.Terrain>();
@@ -290,6 +293,16 @@ namespace Editor.Rendering
             catch (Exception ex)
             {
                 Console.WriteLine($"[GameRenderer] Failed to initialize VegetationRenderer: {ex.Message}");
+            }
+
+            // Initialize shadow manager
+            try
+            {
+                _shadowManager = new Engine.Rendering.Shadows.ShadowManager();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameRenderer] Failed to initialize ShadowManager: {ex.Message}");
             }
 
             // Initialize particle renderer
@@ -715,6 +728,53 @@ void main()
                 Console.WriteLine($"[GameRenderer] TextureCache.ProcessPendingUploads failed: {ex.Message}");
             }
 
+            // === SHADOW PASS (BEFORE MAIN RENDERING) ===
+            var shadowSettings = State.EditorSettings.ShadowsSettings;
+            if (_shadowManager != null && shadowSettings.Enabled)
+            {
+                try
+                {
+                    // Get directional light for shadow casting
+                    Vector3 lightDir = new Vector3(0, -1, 0);
+                    foreach (var entity in _scene.Entities.Where(e => e.Active))
+                    {
+                        var light = entity.GetComponent<Engine.Components.LightComponent>();
+                        if (light != null && light.Enabled && light.Type == Engine.Components.LightType.Directional)
+                        {
+                            lightDir = light.Direction;
+                            break;
+                        }
+                    }
+
+                    // Get camera position
+                    Vector3 camPos = _camera.Entity?.Transform?.Position ?? Vector3.Zero;
+
+                    // Calculate scene bounds
+                    Vector3 sceneCenter = camPos;
+                    float sceneRadius = shadowSettings.ShadowDistance;
+
+                    // Calculate light-space matrix
+                    _shadowManager.CalculateLightMatrix(lightDir, sceneCenter, sceneRadius);
+
+                    // Begin shadow rendering pass
+                    _shadowManager.BeginShadowPass();
+
+                    // Render vegetation shadows (simplified - only vegetation for now)
+                    if (_vegetationRenderer != null)
+                    {
+                        float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                        _vegetationRenderer.RenderShadowPass(_shadowManager.LightSpaceMatrix, camPos, time);
+                    }
+
+                    // End shadow pass
+                    _shadowManager.EndShadowPass();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[GameRenderer] Shadow pass error: {ex.Message}");
+                }
+            }
+
             // Bind framebuffer
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
             GL.Viewport(0, 0, _width, _height);
@@ -987,6 +1047,16 @@ void main()
                         }
                     }
 
+                    // Get shadow parameters
+                    int shadowTexture = 0;
+                    Matrix4? shadowMatrix = null;
+                    bool shadowsAllowed = shadowSettings.Enabled;
+                    if (shadowsAllowed && _shadowManager != null)
+                    {
+                        shadowTexture = _shadowManager.ShadowTexture;
+                        shadowMatrix = _shadowManager.LightSpaceMatrix;
+                    }
+
                     _vegetationRenderer.Render(
                         view, proj, currentTime,
                         weather.WindStrength, windDir, weather.WindSpeed, weather.WindGustiness,
@@ -996,7 +1066,12 @@ void main()
                         weather.RainIntensity, weather.SnowAccumulation, weather.SnowIntensity, weather.Wetness,
                         weather.SnowSlopeMin, weather.SnowSlopeMax, weather.SnowSparkle, weather.SnowDisplacement,
                         camPos, lightDir, lightColor, ambientColor,
-                        0 // objectId
+                        0, // objectId
+                        // Shadow parameters
+                        shadowTexture, shadowMatrix, shadowsAllowed,
+                        shadowSettings.ShadowBias, _shadowManager?.ShadowMapSize ?? 2048f, shadowSettings.ShadowStrength,
+                        // Shadow quality parameters
+                        shadowSettings.ShadowQuality, shadowSettings.ShadowNormalBias, shadowSettings.PCFSamples, shadowSettings.LightSize
                     );
                 }
             }
@@ -1373,6 +1448,8 @@ void main()
                 }
 
                 /* try { _planarReflectionRenderer?.Dispose(); } catch { } */
+
+                try { _shadowManager?.Dispose(); } catch { }
 
                 _disposed = true;
             }

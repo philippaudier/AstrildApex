@@ -195,21 +195,31 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _shader;
         private ShaderProgram? _luminanceShader;
+        private ShaderProgram? _downsampleShader;
+        private ShaderProgram? _exposureAdaptShader;
 
-        // Auto-exposure resources
+        // Auto-exposure resources - GPU-only optimized version
         private int _luminanceTexture = 0;
         private int _luminanceFBO = 0;
+
+        // Downsampling chain for fast average luminance calculation
+        private const int MAX_DOWNSAMPLES = 8; // 256->128->64->32->16->8->4->2->1
+        private int[] _downsampleTextures = new int[MAX_DOWNSAMPLES];
+        private int[] _downsampleFBOs = new int[MAX_DOWNSAMPLES];
+
+        // Exposure adaptation textures (1x1 for temporal smoothing)
+        private int _currentExposureTexture = 0;
+        private int _previousExposureTexture = 0;
+        private int _exposureAdaptFBO = 0;
+
         private int _lastWidth = 0;
         private int _lastHeight = 0;
-        // Temporal smoothing state for adaptive exposure
-        private float _lastExposure = 1.0f;
-        private bool _exposureInitialized = false; // Track if we've initialized from scene
+        private bool _exposureInitialized = false; // Track first frame for immediate adaptation
 
-        // Quick-fix: reduce luminance resolution and sample less frequently to improve CPU/GPU usage
-        private int _luminanceMaxSize = 256; // clamp luminance texture to at most 256x256 (tunable)
+        // Optimized: smaller initial resolution for luminance calculation
+        private int _luminanceMaxSize = 64; // Reduced from 256 - much faster without quality loss
         private int _frameCounter = 0;
-        private int _sampleInterval = 2; // compute luminance every N frames (2 = every other frame)
-        // Rate-limited console logs for quick perf checks (only when not in verbose logger)
+        private int _sampleInterval = 1; // Compute every frame now (it's fast enough with GPU-only approach)
         private DateTime _lastLumLogTime = DateTime.MinValue;
 
         public void Initialize()
@@ -220,6 +230,8 @@ namespace Engine.Rendering
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var fragPath = Path.Combine(baseDir, "tonemap.frag");
                 var lumPath = Path.Combine(baseDir, "luminance.frag");
+                var downsamplePath = Path.Combine(baseDir, "downsample.frag");
+                var exposureAdaptPath = Path.Combine(baseDir, "exposure_adapt.frag");
 
                 // Load tonemap shader
                 string vertexSource = System.IO.File.ReadAllText(vertPath);
@@ -232,15 +244,27 @@ namespace Engine.Rendering
                     string lumSource = System.IO.File.ReadAllText(lumPath);
                     _luminanceShader = ShaderProgram.FromSource(vertexSource, lumSource);
                 }
-                else
+
+                // Load downsample shader for GPU-optimized luminance calculation
+                if (File.Exists(downsamplePath))
                 {
-                    // Luminance shader missing: fall back to instant adaptation (no logging)
+                    string downsampleSource = System.IO.File.ReadAllText(downsamplePath);
+                    _downsampleShader = ShaderProgram.FromSource(vertexSource, downsampleSource);
+                }
+
+                // Load exposure adaptation shader for GPU-side temporal smoothing
+                if (File.Exists(exposureAdaptPath))
+                {
+                    string exposureAdaptSource = System.IO.File.ReadAllText(exposureAdaptPath);
+                    _exposureAdaptShader = ShaderProgram.FromSource(vertexSource, exposureAdaptSource);
                 }
             }
             catch (Exception)
             {
                 _shader = null;
                 _luminanceShader = null;
+                _downsampleShader = null;
+                _exposureAdaptShader = null;
             }
         }
 
@@ -256,16 +280,48 @@ namespace Engine.Rendering
                 GL.DeleteFramebuffer(_luminanceFBO);
             }
 
-            // Create luminance texture with mipmaps for average calculation
+            // Clean up downsample chain
+            for (int i = 0; i < MAX_DOWNSAMPLES; i++)
+            {
+                if (_downsampleTextures[i] != 0)
+                {
+                    GL.DeleteTexture(_downsampleTextures[i]);
+                    _downsampleTextures[i] = 0;
+                }
+                if (_downsampleFBOs[i] != 0)
+                {
+                    GL.DeleteFramebuffer(_downsampleFBOs[i]);
+                    _downsampleFBOs[i] = 0;
+                }
+            }
+
+            // Clean up exposure textures
+            if (_currentExposureTexture != 0)
+            {
+                GL.DeleteTexture(_currentExposureTexture);
+                _currentExposureTexture = 0;
+            }
+            if (_previousExposureTexture != 0)
+            {
+                GL.DeleteTexture(_previousExposureTexture);
+                _previousExposureTexture = 0;
+            }
+            if (_exposureAdaptFBO != 0)
+            {
+                GL.DeleteFramebuffer(_exposureAdaptFBO);
+                _exposureAdaptFBO = 0;
+            }
+
+            // Create initial luminance texture (no mipmaps needed!)
             _luminanceTexture = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R16f, width, height, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
-            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
 
-            // Create FBO
+            // Create FBO for luminance
             _luminanceFBO = GL.GenFramebuffer();
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
             GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceTexture, 0);
@@ -273,6 +329,61 @@ namespace Engine.Rendering
             if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete)
             {
                 throw new Exception("Luminance framebuffer is not complete");
+            }
+
+            // Create downsampling chain
+            int currentWidth = width;
+            int currentHeight = height;
+            for (int i = 0; i < MAX_DOWNSAMPLES && currentWidth > 1 && currentHeight > 1; i++)
+            {
+                currentWidth = Math.Max(1, currentWidth / 2);
+                currentHeight = Math.Max(1, currentHeight / 2);
+
+                // Create texture for this downsample level
+                _downsampleTextures[i] = GL.GenTexture();
+                GL.BindTexture(TextureTarget.Texture2D, _downsampleTextures[i]);
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R16f, currentWidth, currentHeight, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+                // Create FBO for this level
+                _downsampleFBOs[i] = GL.GenFramebuffer();
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampleFBOs[i]);
+                GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _downsampleTextures[i], 0);
+
+                if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete)
+                {
+                    throw new Exception($"Downsample framebuffer {i} is not complete");
+                }
+            }
+
+            // Create exposure adaptation textures (1x1)
+            _currentExposureTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _currentExposureTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R16f, 1, 1, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            _previousExposureTexture = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _previousExposureTexture);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R16f, 1, 1, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+
+            // Create FBO for exposure adaptation
+            _exposureAdaptFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _exposureAdaptFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _currentExposureTexture, 0);
+
+            if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete)
+            {
+                throw new Exception("Exposure adaptation framebuffer is not complete");
             }
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -313,7 +424,7 @@ namespace Engine.Rendering
                 _exposureInitialized = false;
             }
 
-            if (toneMap.AutoExposure && _luminanceShader != null)
+            if (toneMap.AutoExposure && _luminanceShader != null && _downsampleShader != null && _exposureAdaptShader != null)
             {
                 int lumW = Math.Min(context.Width, _luminanceMaxSize);
                 int lumH = Math.Min(context.Height, _luminanceMaxSize);
@@ -324,7 +435,7 @@ namespace Engine.Rendering
 
                     var swLum = System.Diagnostics.Stopwatch.StartNew();
 
-                    // Render luminance to texture
+                    // Step 1: Render initial luminance to texture
                     GL.BindFramebuffer(FramebufferTarget.Framebuffer, _luminanceFBO);
                     GL.Viewport(0, 0, lumW, lumH);
                     GL.Clear(ClearBufferMask.ColorBufferBit);
@@ -335,94 +446,113 @@ namespace Engine.Rendering
                     _luminanceShader.SetInt("u_SourceTexture", 0);
                     GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
-                    // Generate mipmaps for average luminance calculation
-                    GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
-                    GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+                    // Step 2: Manual progressive downsampling (replaces expensive GL.GenerateMipmap)
+                    int currentWidth = lumW;
+                    int currentHeight = lumH;
+                    int sourceTexture = _luminanceTexture;
 
-                    // Read smallest mip (1x1) to compute average log-luminance on CPU
-                    try
+                    for (int i = 0; i < MAX_DOWNSAMPLES && currentWidth > 1 && currentHeight > 1; i++)
                     {
-                        int maxDim = Math.Max(lumW, lumH);
-                        int maxLevel = Math.Max(0, (int)Math.Floor(Math.Log(Math.Max(1, maxDim), 2)));
+                        // Calculate next mip size
+                        int nextWidth = Math.Max(1, currentWidth / 2);
+                        int nextHeight = Math.Max(1, currentHeight / 2);
 
-                        // Bind luminance texture and read the Red channel of the 1x1 mip
-                        GL.BindTexture(TextureTarget.Texture2D, _luminanceTexture);
-                        float[] pixel = new float[1];
-                        GL.GetTexImage(TextureTarget.Texture2D, maxLevel, PixelFormat.Red, PixelType.Float, pixel);
+                        // Render downsampled version
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampleFBOs[i]);
+                        GL.Viewport(0, 0, nextWidth, nextHeight);
 
-                        float avgLogLum = pixel.Length > 0 ? pixel[0] : 0.0f;
-                        float avgLum = MathF.Exp(avgLogLum);
+                        _downsampleShader.Use();
+                        GL.ActiveTexture(TextureUnit.Texture0);
+                        GL.BindTexture(TextureTarget.Texture2D, sourceTexture);
+                        _downsampleShader.SetInt("u_SourceTexture", 0);
+                        _downsampleShader.SetVec2("u_TexelSize", new Vector2(1.0f / currentWidth, 1.0f / currentHeight));
+                        GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
-                        // Avoid degenerate values
-                        if (avgLum <= 0) avgLum = 0.0001f;
+                        // Next iteration will downsample from this level
+                        sourceTexture = _downsampleTextures[i];
+                        currentWidth = nextWidth;
+                        currentHeight = nextHeight;
 
-                        // Compute target exposure and clamp
-                        float targetExposure = toneMap.TargetBrightness / avgLum;
-                        targetExposure = MathF.Max(toneMap.MinExposure, MathF.Min(toneMap.MaxExposure, targetExposure));
-
-                        // First frame: initialize immediately to avoid jarring transition from default 1.0
-                        if (!_exposureInitialized)
-                        {
-                            _lastExposure = targetExposure;
-                            _exposureInitialized = true;
-                        }
-                        else
-                        {
-                            // Adaptation smoothing: treat AdaptationSpeed as a time constant (seconds)
-                            // lerpFactor = 1 - exp(-dt / tau) where tau = AdaptationSpeed
-                            float adaptationTime = MathF.Max(0.001f, toneMap.AdaptationSpeed);
-                            float lerpFactor = 1.0f - MathF.Exp(-deltaTime / adaptationTime);
-                            _lastExposure = _lastExposure + lerpFactor * (targetExposure - _lastExposure);
-                        }
-
-                        // Apply exposure compensation (EV scale: 2^compensation)
-                        // +1 EV = 2x brighter, -1 EV = 0.5x darker
-                        float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
-
-                        // Compose final exposure (base exposure * intensity * adaptive factor * compensation)
-                        float finalExposureComputed = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
-
-                        // Store computed exposure into a local variable; we'll set the uniform after binding the shader
-                        exposureToSet = finalExposureComputed;
-                        cpuComputedExposure = true;
-
-                        swLum.Stop();
-                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ToneMapping] Luminance computed (size={lumW}x{lumH}) in {swLum.Elapsed.TotalMilliseconds:F2} ms (avgExp={_lastExposure:F3})"); } catch { }
-                        // Ensure we emit at least occasional console feedback for quick local testing
-                        try
-                        {
-                            if ((DateTime.UtcNow - _lastLumLogTime).TotalSeconds > 1.0)
-                            {
-                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ToneMapping] Luminance computed: {lumW}x{lumH} -> {swLum.Elapsed.TotalMilliseconds:F2} ms, exposure={_lastExposure:F3}"); } catch { }
-                                _lastLumLogTime = DateTime.UtcNow;
-                            }
-                        }
-                        catch { }
+                        // Stop when we reach 1x1
+                        if (nextWidth == 1 && nextHeight == 1)
+                            break;
                     }
-                    catch
-                    {
-                        // If readback fails, fall back to shader auto-exposure (instant adaptation)
-                        // This is expected on some GPU/driver combinations
-                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
-                        GL.Viewport(0, 0, context.Width, context.Height);
-                    }
+
+                    // Step 3: GPU-side exposure adaptation with temporal smoothing
+                    // This replaces the CPU readback + smoothing logic
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, _exposureAdaptFBO);
+                    GL.Viewport(0, 0, 1, 1);
+
+                    _exposureAdaptShader.Use();
+
+                    // Bind current average luminance (1x1 from downsampling chain)
+                    GL.ActiveTexture(TextureUnit.Texture0);
+                    GL.BindTexture(TextureTarget.Texture2D, sourceTexture); // Last downsample (1x1)
+                    _exposureAdaptShader.SetInt("u_CurrentLuminance", 0);
+
+                    // Bind previous exposure for temporal smoothing
+                    GL.ActiveTexture(TextureUnit.Texture1);
+                    GL.BindTexture(TextureTarget.Texture2D, _previousExposureTexture);
+                    _exposureAdaptShader.SetInt("u_PreviousExposure", 1);
+
+                    // Set parameters
+                    _exposureAdaptShader.SetFloat("u_TargetBrightness", toneMap.TargetBrightness);
+                    _exposureAdaptShader.SetFloat("u_MinExposure", toneMap.MinExposure);
+                    _exposureAdaptShader.SetFloat("u_MaxExposure", toneMap.MaxExposure);
+                    _exposureAdaptShader.SetFloat("u_AdaptationSpeed", toneMap.AdaptationSpeed);
+                    _exposureAdaptShader.SetFloat("u_DeltaTime", deltaTime);
+                    _exposureAdaptShader.SetInt("u_FirstFrame", _exposureInitialized ? 0 : 1);
+
+                    // Render to compute adapted exposure
+                    GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+
+                    // Mark as initialized
+                    _exposureInitialized = true;
+
+                    // Step 4: Swap exposure textures for next frame (ping-pong buffering)
+                    // Current becomes previous for next frame
+                    int temp = _previousExposureTexture;
+                    _previousExposureTexture = _currentExposureTexture;
+                    _currentExposureTexture = temp;
+
+                    // Re-attach the new current texture to the FBO for next frame
+                    GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _currentExposureTexture, 0);
 
                     // Restore original framebuffer
                     GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
                     GL.Viewport(0, 0, context.Width, context.Height);
-                }
-                else
-                {
-                    // Not computing this frame: reuse last computed exposure if available to avoid shader readback
-                    if (_exposureInitialized)
+
+                    swLum.Stop();
+                    try
                     {
+                        if ((DateTime.UtcNow - _lastLumLogTime).TotalSeconds > 1.0)
+                        {
+                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ToneMapping] GPU-optimized auto-exposure computed in {swLum.Elapsed.TotalMilliseconds:F2} ms"); } catch { }
+                            _lastLumLogTime = DateTime.UtcNow;
+                        }
+                    }
+                    catch { }
+                }
+
+                // GPU-computed exposure is stored in _previousExposureTexture
+                // Read it back (1x1 pixel only - very fast, minimal stall)
+                if (_exposureInitialized)
+                {
+                    try
+                    {
+                        GL.BindTexture(TextureTarget.Texture2D, _previousExposureTexture);
+                        float[] exposurePixel = new float[1];
+                        GL.GetTexImage(TextureTarget.Texture2D, 0, PixelFormat.Red, PixelType.Float, exposurePixel);
+
+                        // Apply exposure compensation and intensity
                         float compensationMultiplier = MathF.Pow(2.0f, toneMap.ExposureCompensation);
-                        exposureToSet = toneMap.Exposure * toneMap.Intensity * _lastExposure * compensationMultiplier;
+                        exposureToSet = toneMap.Exposure * toneMap.Intensity * exposurePixel[0] * compensationMultiplier;
                         cpuComputedExposure = true;
                     }
-                    else
+                    catch
                     {
-                        // No previous exposure yet: leave cpuComputedExposure=false so shader auto-exposure can run as fallback
+                        // If readback fails, fall back to manual exposure
+                        cpuComputedExposure = false;
                     }
                 }
             }
@@ -435,7 +565,7 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
             _shader.SetInt("u_SourceTexture", 0);
 
-            // Bind luminance texture for auto-exposure
+            // Bind luminance texture for auto-exposure (legacy fallback)
             if (toneMap.AutoExposure && _luminanceTexture != 0)
             {
                 GL.ActiveTexture(TextureUnit.Texture1);
@@ -487,6 +617,10 @@ namespace Engine.Rendering
             _shader = null;
             _luminanceShader?.Dispose();
             _luminanceShader = null;
+            _downsampleShader?.Dispose();
+            _downsampleShader = null;
+            _exposureAdaptShader?.Dispose();
+            _exposureAdaptShader = null;
 
             if (_luminanceTexture != 0)
             {
@@ -498,6 +632,38 @@ namespace Engine.Rendering
             {
                 GL.DeleteFramebuffer(_luminanceFBO);
                 _luminanceFBO = 0;
+            }
+
+            // Clean up downsample chain
+            for (int i = 0; i < MAX_DOWNSAMPLES; i++)
+            {
+                if (_downsampleTextures[i] != 0)
+                {
+                    GL.DeleteTexture(_downsampleTextures[i]);
+                    _downsampleTextures[i] = 0;
+                }
+                if (_downsampleFBOs[i] != 0)
+                {
+                    GL.DeleteFramebuffer(_downsampleFBOs[i]);
+                    _downsampleFBOs[i] = 0;
+                }
+            }
+
+            // Clean up exposure textures
+            if (_currentExposureTexture != 0)
+            {
+                GL.DeleteTexture(_currentExposureTexture);
+                _currentExposureTexture = 0;
+            }
+            if (_previousExposureTexture != 0)
+            {
+                GL.DeleteTexture(_previousExposureTexture);
+                _previousExposureTexture = 0;
+            }
+            if (_exposureAdaptFBO != 0)
+            {
+                GL.DeleteFramebuffer(_exposureAdaptFBO);
+                _exposureAdaptFBO = 0;
             }
         }
     }

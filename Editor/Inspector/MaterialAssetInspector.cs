@@ -80,15 +80,47 @@ namespace Editor.Inspector
             } : null
             ,WaterProperties = m.WaterProperties != null ? new Engine.Assets.WaterProperties
             {
+                // Phase 1: Base Color
+                WaterColor = m.WaterProperties.WaterColor != null ? (float[])m.WaterProperties.WaterColor.Clone() : new float[] { 0.0f, 0.4f, 0.6f, 1.0f },
+                DeepWaterColor = m.WaterProperties.DeepWaterColor != null ? (float[])m.WaterProperties.DeepWaterColor.Clone() : new float[] { 0.0f, 0.1f, 0.3f, 1.0f },
+                Transparency = m.WaterProperties.Transparency,
+                // Wave Animation
                 WaveSpeed = m.WaterProperties.WaveSpeed,
+                WaveAmplitude = m.WaterProperties.WaveAmplitude,
                 WaveHeight = m.WaterProperties.WaveHeight,
                 WaveFrequency = m.WaterProperties.WaveFrequency,
+                WaveDirection = m.WaterProperties.WaveDirection != null ? (float[])m.WaterProperties.WaveDirection.Clone() : new float[] { 1.0f, 0.0f },
+                // Phase 2: Normal Mapping
+                NormalStrength = m.WaterProperties.NormalStrength,
+                NormalStrength2 = m.WaterProperties.NormalStrength2,
+                NormalBlend = m.WaterProperties.NormalBlend,
+                NormalLayer1Speed = m.WaterProperties.NormalLayer1Speed,
+                NormalLayer2Speed = m.WaterProperties.NormalLayer2Speed,
+                NormalLayer1Direction = m.WaterProperties.NormalLayer1Direction != null ? (float[])m.WaterProperties.NormalLayer1Direction.Clone() : new float[] { 1.0f, 0.0f },
+                NormalLayer2Direction = m.WaterProperties.NormalLayer2Direction != null ? (float[])m.WaterProperties.NormalLayer2Direction.Clone() : new float[] { 0.0f, 1.0f },
+                // Phase 2: Depth & Refraction
+                DepthFadeDistance = m.WaterProperties.DepthFadeDistance,
+                RefractionStrength = m.WaterProperties.RefractionStrength,
+                UseRefraction = m.WaterProperties.UseRefraction,
+                // Phase 3: PBR & Lighting
+                Roughness = m.WaterProperties.Roughness,
+                Metallic = m.WaterProperties.Metallic,
+                Fresnel = m.WaterProperties.Fresnel,
+                SpecularStrength = m.WaterProperties.SpecularStrength,
+                // Legacy
                 Reflectivity = m.WaterProperties.Reflectivity,
                 FresnelPower = m.WaterProperties.FresnelPower,
                 DistortionStrength = m.WaterProperties.DistortionStrength,
-                Transparency = m.WaterProperties.Transparency,
                 SpecularPower = m.WaterProperties.SpecularPower,
-                SpecularColor = m.WaterProperties.SpecularColor != null ? (float[])m.WaterProperties.SpecularColor.Clone() : new float[] { 1f, 1f, 1f }
+                SpecularColor = m.WaterProperties.SpecularColor != null ? (float[])m.WaterProperties.SpecularColor.Clone() : new float[] { 1f, 1f, 1f },
+                // Phase 4: Color Absorption
+                AbsorptionColor = m.WaterProperties.AbsorptionColor != null ? (float[])m.WaterProperties.AbsorptionColor.Clone() : new float[] { 0.4f, 0.8f, 1.0f },
+                AbsorptionStrength = m.WaterProperties.AbsorptionStrength,
+                // Phase 5: Foam
+                FoamAmount = m.WaterProperties.FoamAmount,
+                FoamCutoff = m.WaterProperties.FoamCutoff,
+                FoamColor = m.WaterProperties.FoamColor != null ? (float[])m.WaterProperties.FoamColor.Clone() : new float[] { 1.0f, 1.0f, 1.0f, 1.0f },
+                EdgeFadeDistance = m.WaterProperties.EdgeFadeDistance
             } : null
         };
 
@@ -239,9 +271,25 @@ namespace Editor.Inspector
                 return;
             }
 
-            // NOTE: WaterForward shader and its inspector were removed. Water-specific
-            // properties should be edited via the generic "Water" shader or the
-            // Terrain/Material workflows. Skip special-case UI here.
+            // If WaterForward shader, show water properties
+            if (string.Equals(mat.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
+            {
+                if (mat.WaterProperties == null)
+                {
+                    mat.WaterProperties = new Engine.Assets.WaterProperties();
+                    mat.TransparencyMode = 1; // Water is transparent
+                    mat.CullingMode = 2; // None - water should be visible from both sides
+                    SaveAndApplyImmediate(guid, mat, "Initialize Water");
+                }
+                // Always enforce CullingMode = None for water (visible from both sides)
+                if (mat.CullingMode != 2)
+                {
+                    mat.CullingMode = 2;
+                    SaveAndApplyImmediate(guid, mat, "Fix Water Culling");
+                }
+                WaterForwardInspector.DrawWaterForwardProperties(mat);
+                return;
+            }
 
             // NOTE: Legacy Water shader support retained but planar reflection controls
             // have been removed as planar reflection system was purged.
@@ -400,6 +448,10 @@ namespace Editor.Inspector
                 {
                     BeginEdit("Render Mode");
                     mat.TransparencyMode = Math.Clamp(mode, 0, 1);
+
+                    // CRITICAL FIX: Invalidate material cache to ensure new TransparencyMode is picked up
+                    Engine.Assets.AssetDatabase.InvalidateMaterial(guid);
+
                     SaveAndApplyImmediate(guid, mat, "Render Mode");
                 }
             }
@@ -411,6 +463,10 @@ namespace Editor.Inspector
                 {
                     BeginEdit("Alpha Clipping");
                     mat.AlphaClippingEnabled = alphaClip;
+
+                    // CRITICAL FIX: Invalidate material cache to ensure new AlphaClippingEnabled is picked up
+                    Engine.Assets.AssetDatabase.InvalidateMaterial(guid);
+
                     SaveAndApplyImmediate(guid, mat, "Alpha Clipping");
                 }
                 if (ImGui.IsItemHovered()) ImGui.SetTooltip("Discard pixels below threshold (essential for leaves/foliage).\nKeeps Back culling for performance while eliminating transparent pixels.");
@@ -437,6 +493,10 @@ namespace Editor.Inspector
                 {
                     BeginEdit("Culling Mode");
                     mat.CullingMode = Math.Clamp(cullMode, 0, 2);
+
+                    // CRITICAL FIX: Invalidate material cache to ensure new CullingMode is picked up
+                    Engine.Assets.AssetDatabase.InvalidateMaterial(guid);
+
                     SaveAndApplyImmediate(guid, mat, "Culling Mode");
                 }
                 if (ImGui.IsItemHovered())

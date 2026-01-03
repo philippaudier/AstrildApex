@@ -92,6 +92,8 @@ namespace Engine.Rendering
         private const int InitialInstanceBufferSize = 10000;
 
         private ShaderProgram? _vegetationShader = null;
+        private ShaderProgram? _shadowDepthShader = null;
+        private ShaderProgram? _shadowDepthAlphaClipShader = null;
 
         // Default white texture for materials without albedo
         private int _defaultWhiteTexture = 0;
@@ -117,6 +119,8 @@ namespace Engine.Rendering
         public VegetationRenderer()
         {
             LoadShader();
+            LoadShadowDepthShader();
+            LoadShadowDepthAlphaClipShader();
             CreateDefaultWhiteTexture();
         }
 
@@ -208,6 +212,98 @@ namespace Engine.Rendering
             }
         }
 
+        private void LoadShadowDepthShader()
+        {
+            try
+            {
+                string vertPath = "Engine/Rendering/Shaders/Shadow/ShadowDepthInstanced.vert";
+                string fragPath = "Engine/Rendering/Shaders/Shadow/ShadowDepth.frag";
+
+                // Check if files exist
+                if (!System.IO.File.Exists(vertPath))
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth shader vertex not found: {vertPath} ***");
+                    _shadowDepthShader = null;
+                    return;
+                }
+                if (!System.IO.File.Exists(fragPath))
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth shader fragment not found: {fragPath} ***");
+                    _shadowDepthShader = null;
+                    return;
+                }
+
+                _shadowDepthShader = ShaderProgram.FromFiles(vertPath, fragPath);
+
+                if (_shadowDepthShader == null)
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth shader failed to create program (FromFiles returned null) ***");
+                    return;
+                }
+
+                // Verify shader program is valid
+                GL.GetProgram(_shadowDepthShader.Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
+                if (linkStatus == 0)
+                {
+                    string infoLog = GL.GetProgramInfoLog(_shadowDepthShader.Handle);
+                    Console.WriteLine($"[VegetationRenderer] *** ShadowDepthInstanced LINK ERROR ***:\n{infoLog}");
+                    _shadowDepthShader = null;
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VegetationRenderer] *** Shadow depth shader load EXCEPTION ***:\n{ex.Message}\n{ex.StackTrace}");
+                _shadowDepthShader = null;
+            }
+        }
+
+        private void LoadShadowDepthAlphaClipShader()
+        {
+            try
+            {
+                string vertPath = "Engine/Rendering/Shaders/Shadow/ShadowDepthInstanced.vert";
+                string fragPath = "Engine/Rendering/Shaders/Shadow/ShadowDepthAlphaClip.frag";
+
+                // Check if files exist
+                if (!System.IO.File.Exists(vertPath))
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth alpha clip shader vertex not found: {vertPath} ***");
+                    _shadowDepthAlphaClipShader = null;
+                    return;
+                }
+                if (!System.IO.File.Exists(fragPath))
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth alpha clip shader fragment not found: {fragPath} ***");
+                    _shadowDepthAlphaClipShader = null;
+                    return;
+                }
+
+                _shadowDepthAlphaClipShader = ShaderProgram.FromFiles(vertPath, fragPath);
+
+                if (_shadowDepthAlphaClipShader == null)
+                {
+                    Console.WriteLine($"[VegetationRenderer] *** Shadow depth alpha clip shader failed to create program (FromFiles returned null) ***");
+                    return;
+                }
+
+                // Verify shader program is valid
+                GL.GetProgram(_shadowDepthAlphaClipShader.Handle, GetProgramParameterName.LinkStatus, out int linkStatus);
+                if (linkStatus == 0)
+                {
+                    string infoLog = GL.GetProgramInfoLog(_shadowDepthAlphaClipShader.Handle);
+                    Console.WriteLine($"[VegetationRenderer] *** ShadowDepthAlphaClip LINK ERROR ***:\n{infoLog}");
+                    _shadowDepthAlphaClipShader = null;
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[VegetationRenderer] *** Shadow depth alpha clip shader load EXCEPTION ***:\n{ex.Message}\n{ex.StackTrace}");
+                _shadowDepthAlphaClipShader = null;
+            }
+        }
+
         // === PUBLIC API ===
 
         /// <summary>
@@ -241,6 +337,12 @@ namespace Engine.Rendering
                 batch.CullingMode = cullingMode;
                 batch.MaxRenderDistance = maxRenderDistance;
                 batch.CullingSphereRadius = cullingSphereRadius;
+
+                // DEBUG: Log culling mode updates
+                if (_renderCallCounter % 120 == 0)
+                {
+                    Console.WriteLine($"[VegetationRenderer] UpdateBatch existing: {batchKey}, CullingMode={cullingMode}");
+                }
             }
 
             // Batch is guaranteed to be non-null at this point
@@ -265,6 +367,48 @@ namespace Engine.Rendering
             {
                 LoadMeshForBatch(batch);
             }
+            else
+            {
+                // CRITICAL FIX: Reload MaterialGuid AND CullingMode even if mesh is already loaded
+                // This ensures material changes (CullingMode, AlphaClipping, etc.) are picked up
+                // in infinite streaming mode when batches are updated without full reload
+                try
+                {
+                    var meshAsset = AssetDatabase.LoadMeshAsset(batch.ModelGuid);
+                    if (meshAsset != null && meshAsset.SubMeshes != null && batch.SubmeshIndex < meshAsset.SubMeshes.Count)
+                    {
+                        var submesh = meshAsset.SubMeshes[batch.SubmeshIndex];
+                        if (submesh.MaterialIndex >= 0 && submesh.MaterialIndex < meshAsset.MaterialGuids.Count)
+                        {
+                            var materialGuid = meshAsset.MaterialGuids[submesh.MaterialIndex];
+                            batch.MaterialGuid = materialGuid;
+
+                            // CRITICAL: Also reload CullingMode from the material file
+                            // Otherwise we use the old CullingMode from the parameter even though MaterialGuid changed
+                            if (materialGuid.HasValue && materialGuid.Value != Guid.Empty)
+                            {
+                                try
+                                {
+                                    // CRITICAL FIX: Invalidate material cache before loading to ensure fresh values
+                                    // This prevents using stale CullingMode from cache in Infinite Streaming mode
+                                    AssetDatabase.InvalidateMaterial(materialGuid.Value);
+
+                                    var material = AssetDatabase.LoadMaterial(materialGuid.Value);
+                                    if (material != null)
+                                    {
+                                        batch.CullingMode = (Engine.Components.CullingMode)material.CullingMode;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore material reload failures - batch will use existing MaterialGuid
+                }
+            }
         }
 
         /// <summary>
@@ -278,7 +422,11 @@ namespace Engine.Rendering
             float rainIntensity = 0.0f, float snowAccumulation = 0.0f, float snowIntensity = 0.0f, float wetness = 0.0f,
             float snowSlopeMin = 0.0f, float snowSlopeMax = 45.0f, float snowSparkle = 0.5f, float snowDisplacement = 0.02f,
             Vector3 cameraPos = default, Vector3 lightDir = default, Vector3 lightColor = default, Vector3 ambientColor = default,
-            uint objectId = 0)
+            uint objectId = 0,
+            // Shadow parameters
+            int shadowTexture = 0, Matrix4? shadowMatrix = null, bool useShadows = false,
+            float shadowBias = 0.001f, float shadowMapSize = 2048f, float shadowStrength = 0.7f,
+            int shadowQuality = 1, float shadowNormalBias = 0.001f, int pcfSamples = 9, float lightSize = 0.05f)
         {
             if (_batches.Count == 0)
             {
@@ -296,6 +444,10 @@ namespace Engine.Rendering
                     return;
                 }
             }
+
+            // CRITICAL FIX: Ensure correct winding order for vegetation rendering
+            // Skybox and other renderers may have changed this to CW, so reset to CCW (standard for imported models)
+            GL.FrontFace(FrontFaceDirection.Ccw);
 
             // Fetch authoritative weather state from WeatherManager to avoid caller desync
             try
@@ -418,6 +570,37 @@ namespace Engine.Rendering
                                 GL.UseProgram(shToUse.Handle);
                             }
                         }
+                    }
+                }
+                catch { }
+
+                // Set shadow uniforms (must be set before material binding to ensure shadow map is bound)
+                try
+                {
+                    if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+                    {
+                        shToUse.SetInt("u_UseShadows", 1);
+                        shToUse.SetFloat("u_ShadowBias", shadowBias);
+                        shToUse.SetFloat("u_ShadowMapSize", shadowMapSize);
+                        shToUse.SetFloat("u_ShadowStrength", shadowStrength);
+
+                        // Shadow quality uniforms (improved shadow system - Levels 1 & 2)
+                        shToUse.SetInt("u_ShadowQuality", shadowQuality); // 0 = PCF Grid, 1 = Rotated Poisson, 2 = PCSS
+                        shToUse.SetFloat("u_ShadowNormalBias", shadowNormalBias);
+                        shToUse.SetFloat("u_LightSize", lightSize);
+                        shToUse.SetInt("u_PCFSamples", pcfSamples);
+
+                        // Bind shadow map texture to unit 17 (same as PBR shader)
+                        GL.ActiveTexture(TextureUnit.Texture17);
+                        GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
+                        shToUse.SetInt("u_ShadowMap", 17);
+
+                        // Set shadow matrix
+                        shToUse.SetMat4("u_ShadowMatrix", shadowMatrix.Value);
+                    }
+                    else
+                    {
+                        shToUse.SetInt("u_UseShadows", 0);
                     }
                 }
                 catch { }
@@ -562,6 +745,23 @@ namespace Engine.Rendering
                 }
                 catch { }
 
+                // CRITICAL FIX: Re-bind shadow map AFTER all material/texture bindings
+                // MaterialRuntime.Bind() may have changed texture unit states, so we ensure
+                // the shadow map is still bound to the correct unit before drawing
+                try
+                {
+                    if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+                    {
+                        GL.ActiveTexture(TextureUnit.Texture17);
+                        GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
+                        shToUse.SetInt("u_ShadowMap", 17);
+
+                        // Restore active texture unit to 0
+                        GL.ActiveTexture(TextureUnit.Texture0);
+                    }
+                }
+                catch { }
+
                 // === TRANSPARENCY HANDLING ===
                 // Enable/disable blending based on material TransparencyMode (CRITICAL FIX)
                 bool isTransparent = mr != null && mr.TransparencyMode != 0;
@@ -618,6 +818,213 @@ namespace Engine.Rendering
             GL.UseProgram(0);
             GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
             GL.DepthMask(true); // Restore depth writing
+        }
+
+        /// <summary>
+        /// Render vegetation instances to the shadow map.
+        /// Called during the shadow pass to make vegetation cast shadows.
+        /// </summary>
+        public void RenderShadowPass(Matrix4 lightSpaceMatrix, Vector3 cameraPos, float time = 0f)
+        {
+            if (_batches.Count == 0) return;
+
+            if (_shadowDepthShader == null)
+            {
+                // Try reloading shader
+                LoadShadowDepthShader();
+                if (_shadowDepthShader == null)
+                {
+                    Engine.Utils.DebugLogger.Log("[VegetationRenderer] Cannot render shadow pass - shadow depth shader is null");
+                    return;
+                }
+            }
+
+            if (_shadowDepthAlphaClipShader == null)
+            {
+                // Try reloading alpha clip shader
+                LoadShadowDepthAlphaClipShader();
+                if (_shadowDepthAlphaClipShader == null)
+                {
+                    Engine.Utils.DebugLogger.Log("[VegetationRenderer] Cannot render shadow pass - alpha clip shader is null");
+                    return;
+                }
+            }
+
+            // Fetch authoritative weather state from WeatherManager (same as forward pass)
+            float windStrength = 0f, windSpeed = 1f, windGustiness = 0f;
+            Vector2 windDirection = Vector2.Zero;
+            float branchAmplitude = 1f, branchSpeed = 3f, branchTurbulence = 0.5f;
+            float trunkStiffness = 0.7f, trunkBendAmount = 0.5f;
+            float leafFlutter = 0.3f, leafFlutterSpeed = 5f;
+            float rainIntensity = 0f, snowAccumulation = 0f, snowIntensity = 0f;
+            float snowSlopeMin = 0f, snowSlopeMax = 45f, snowDisplacement = 0.02f;
+
+            try
+            {
+                var wm = Engine.Systems.WeatherManager.GetCurrentWeather();
+                if (wm != null)
+                {
+                    windStrength = wm.WindStrength;
+                    windDirection = new Vector2(wm.GetWindDirection().X, wm.GetWindDirection().Y);
+                    windSpeed = wm.WindSpeed;
+                    windGustiness = wm.WindGustiness;
+
+                    branchAmplitude = wm.BranchAmplitude;
+                    branchSpeed = wm.BranchSpeed;
+                    branchTurbulence = wm.BranchTurbulence;
+                    trunkStiffness = wm.TrunkStiffness;
+                    trunkBendAmount = wm.TrunkBendAmount;
+                    leafFlutter = wm.LeafFlutter;
+                    leafFlutterSpeed = wm.LeafFlutterSpeed;
+
+                    rainIntensity = wm.RainIntensity;
+                    snowAccumulation = wm.SnowAccumulation;
+                    snowIntensity = wm.SnowIntensity;
+
+                    snowSlopeMin = wm.SnowSlopeMin;
+                    snowSlopeMax = wm.SnowSlopeMax;
+                    snowDisplacement = wm.SnowDisplacement;
+                }
+            }
+            catch { }
+
+            // Extract frustum planes from light-space matrix for culling
+            _frustumCuller.ExtractPlanes(lightSpaceMatrix);
+
+            // Render each batch
+            foreach (var batch in _batches.Values)
+            {
+                if (batch.Transforms.Count == 0 || batch.VAO == 0) continue;
+
+                // Perform culling to populate VisibleTransforms
+                CullBatch(batch, cameraPos);
+
+                // Update GPU buffer if needed
+                if (batch.NeedsGPUUpdate)
+                {
+                    UpdateInstanceBuffer(batch);
+                    batch.NeedsGPUUpdate = false;
+                }
+
+                if (batch.InstanceCount == 0) continue;
+
+                // Load material to determine alpha clipping and transparency
+                Engine.Assets.MaterialAsset? matAsset = null;
+                Engine.Rendering.MaterialRuntime? mr = null;
+                bool hasAlphaClipping = false;
+                float alphaClipThreshold = 0.5f;
+
+                if (batch.MaterialGuid.HasValue)
+                {
+                    try
+                    {
+                        matAsset = AssetDatabase.LoadMaterial(batch.MaterialGuid.Value);
+                        if (matAsset != null)
+                        {
+                            Func<Guid, string?> resolver = g => AssetDatabase.TryGet(g, out var r) ? r.Path : null;
+                            mr = Engine.Rendering.MaterialRuntime.FromAsset(matAsset, resolver);
+
+                            if (mr != null)
+                            {
+                                // Skip fully transparent objects in shadow pass
+                                if (mr.TransparencyMode != 0)
+                                {
+                                    continue;
+                                }
+
+                                // Check if alpha clipping is enabled
+                                hasAlphaClipping = mr.AlphaClippingEnabled != 0;
+                                alphaClipThreshold = mr.AlphaClipThreshold;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Choose shader based on alpha clipping requirement
+                ShaderProgram shader = hasAlphaClipping ? _shadowDepthAlphaClipShader! : _shadowDepthShader!;
+
+                // DEBUG: Log which shader is being used
+                if (_renderCallCounter % 120 == 0) // Every 2 seconds
+                {
+                    string batchId = $"{batch.ModelGuid}_{batch.SubmeshIndex}";
+                    Console.WriteLine($"[VegetationRenderer] Shadow pass batch {batchId}: hasAlphaClipping={hasAlphaClipping}, instances={batch.InstanceCount}, mat={batch.MaterialGuid?.ToString() ?? "null"}");
+                }
+
+                shader.Use();
+                shader.SetMat4("u_LightSpaceMatrix", lightSpaceMatrix);
+
+                // Set texture tiling/offset (needed for UVs in vertex shader)
+                if (mr != null)
+                {
+                    shader.SetVec2("u_TextureTiling", new Vector2(mr.TextureTiling[0], mr.TextureTiling[1]));
+                    shader.SetVec2("u_TextureOffset", new Vector2(mr.TextureOffset[0], mr.TextureOffset[1]));
+                }
+                else
+                {
+                    shader.SetVec2("u_TextureTiling", new Vector2(1f, 1f));
+                    shader.SetVec2("u_TextureOffset", new Vector2(0f, 0f));
+                }
+
+                // If alpha clipping, bind albedo texture and set parameters
+                if (hasAlphaClipping && mr != null)
+                {
+                    GL.ActiveTexture(TextureUnit.Texture0);
+                    GL.BindTexture(TextureTarget.Texture2D, mr.AlbedoTex);
+                    shader.SetInt("u_AlbedoTex", 0);
+                    shader.SetInt("u_AlphaClippingEnabled", 1);
+                    shader.SetFloat("u_AlphaClipThreshold", alphaClipThreshold);
+                }
+                else
+                {
+                    shader.SetInt("u_AlphaClippingEnabled", 0);
+                }
+
+                // CRITICAL: Set wind/weather uniforms for animated shadows
+                // The shadow depth shader has the same wind animation code as the forward shader
+                try
+                {
+                    shader.SetFloat("u_Time", time);
+
+                    // Primary wind parameters
+                    shader.SetFloat("u_WindStrength", windStrength);
+                    shader.SetVec2("u_WindDirection", windDirection);
+                    shader.SetFloat("u_WindSpeed", windSpeed);
+                    shader.SetFloat("u_WindGustiness", windGustiness);
+
+                    // Advanced wind parameters
+                    shader.SetFloat("u_BranchAmplitude", branchAmplitude);
+                    shader.SetFloat("u_BranchSpeed", branchSpeed);
+                    shader.SetFloat("u_BranchTurbulence", branchTurbulence);
+                    shader.SetFloat("u_TrunkStiffness", trunkStiffness);
+                    shader.SetFloat("u_TrunkBendAmount", trunkBendAmount);
+                    shader.SetFloat("u_LeafFlutter", leafFlutter);
+                    shader.SetFloat("u_LeafFlutterSpeed", leafFlutterSpeed);
+
+                    // Weather effects
+                    shader.SetFloat("u_RainIntensity", rainIntensity);
+                    shader.SetFloat("u_SnowCoverage", snowIntensity); // Note: shader uses u_SnowCoverage
+                    shader.SetFloat("u_SnowAccumulation", snowAccumulation);
+                    shader.SetFloat("u_SnowDisplacement", snowDisplacement);
+                    shader.SetFloat("u_SnowSlopeMin", snowSlopeMin);
+                    shader.SetFloat("u_SnowSlopeMax", snowSlopeMax);
+                }
+                catch { }
+
+                // Draw instanced (depth only)
+                GL.BindVertexArray(batch.VAO);
+                GL.DrawElementsInstanced(
+                    PrimitiveType.Triangles,
+                    batch.IndexCount,
+                    DrawElementsType.UnsignedInt,
+                    IntPtr.Zero,
+                    batch.InstanceCount
+                );
+            }
+
+            // Restore OpenGL state
+            GL.BindVertexArray(0);
+            GL.UseProgram(0);
         }
 
         /// <summary>
@@ -886,6 +1293,8 @@ namespace Engine.Rendering
 
             ClearBatches();
             _vegetationShader?.Dispose();
+            _shadowDepthShader?.Dispose();
+            _shadowDepthAlphaClipShader?.Dispose();
 
             if (_defaultWhiteTexture != 0)
             {

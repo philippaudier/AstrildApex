@@ -424,43 +424,41 @@ namespace Engine.Rendering
 
             // Random rotation around Y axis (if enabled)
             float rotationY = layer.RandomRotation ? (float)rng.NextDouble() * MathHelper.TwoPi : 0f;
+            Quaternion rotation = Quaternion.FromAxisAngle(Vector3.UnitY, rotationY);
 
-            // Calculate alignment with terrain normal
-            Matrix4 alignmentMatrix = Matrix4.Identity;
-
+            // Calculate alignment with terrain normal using quaternions (same as Single Terrain mode)
+            // This ensures determinant = +1 (pure rotation, not reflection) to preserve winding order
             if (layer.AlignToNormal && layer.AlignmentStrength > 0f)
             {
                 // Get terrain normal at this position
                 Vector3 terrainNormal = terrain.GetNormalAtPosition(worldX, worldZ);
 
-                // Interpolate between vertical (0,1,0) and terrain normal based on alignment strength
+                // Calculate alignment rotation from up vector to terrain normal
+                var up = Vector3.UnitY;
+                var alignmentRotation = CalculateAlignmentRotation(up, terrainNormal);
+
+                // Apply alignment strength (0-100%)
                 float strength = Math.Clamp(layer.AlignmentStrength / 100f, 0f, 1f);
-                Vector3 targetUp = Vector3.Lerp(Vector3.UnitY, terrainNormal, strength);
-                targetUp = Vector3.Normalize(targetUp);
+                if (strength < 1f)
+                {
+                    // Lerp between identity (no alignment) and full alignment
+                    alignmentRotation = Quaternion.Slerp(
+                        Quaternion.Identity,
+                        alignmentRotation,
+                        strength);
+                }
 
-                // Build rotation matrix to align Y-axis with targetUp
-                // Choose a reference vector that's not parallel to targetUp
-                Vector3 reference = Math.Abs(targetUp.Y) < 0.999f ? Vector3.UnitY : Vector3.UnitX;
-
-                // Calculate right and forward vectors
-                Vector3 right = Vector3.Normalize(Vector3.Cross(reference, targetUp));
-                Vector3 forward = Vector3.Normalize(Vector3.Cross(targetUp, right));
-
-                // Build alignment matrix (rotation to align with terrain normal)
-                alignmentMatrix = new Matrix4(
-                    new Vector4(right, 0),
-                    new Vector4(targetUp, 0),
-                    new Vector4(forward, 0),
-                    new Vector4(0, 0, 0, 1)
-                );
+                // Combine alignment rotation with Y-axis rotation
+                rotation = alignmentRotation * rotation;
             }
 
-            // Build matrix: Alignment * RotationY * Scale
+            // Build transform matrix: first rotation + scale, then set translation manually
+            // This matches Single Terrain mode exactly for consistent winding order
             Matrix4 scaleMatrix = Matrix4.CreateScale(scale);
-            Matrix4 rotationMatrix = Matrix4.CreateRotationY(rotationY);
+            Matrix4 rotationMatrix = Matrix4.CreateFromQuaternion(rotation);
 
-            // Combine: first scale, then rotate around Y, then align with terrain normal
-            Matrix4 matrix = scaleMatrix * rotationMatrix * alignmentMatrix;
+            // Combine rotation and scale first (same order as Single Terrain)
+            Matrix4 matrix = rotationMatrix * scaleMatrix;
 
             // Set translation in M41/M42/M43 (OpenTK Matrix4 stores translation in last row)
             // This ensures translation is not affected by rotation/scale
@@ -469,6 +467,49 @@ namespace Engine.Rendering
             matrix.M43 = worldZ;
 
             return matrix;
+        }
+
+        /// <summary>
+        /// Calculate a rotation quaternion that aligns 'from' vector to 'to' vector.
+        /// This ensures a pure rotation (determinant = +1) without reflection.
+        /// Same implementation as Terrain.CalculateAlignmentRotation for consistency.
+        /// </summary>
+        private static Quaternion CalculateAlignmentRotation(Vector3 from, Vector3 to)
+        {
+            from = Vector3.Normalize(from);
+            to = Vector3.Normalize(to);
+
+            float dot = Vector3.Dot(from, to);
+
+            // Vectors are parallel
+            if (dot >= 0.999999f)
+            {
+                return Quaternion.Identity;
+            }
+
+            // Vectors are opposite
+            if (dot <= -0.999999f)
+            {
+                var axis = Vector3.Cross(Vector3.UnitX, from);
+                if (axis.LengthSquared < 0.000001f)
+                {
+                    axis = Vector3.Cross(Vector3.UnitZ, from);
+                }
+                axis = Vector3.Normalize(axis);
+                return Quaternion.FromAxisAngle(axis, (float)Math.PI);
+            }
+
+            // General case
+            var cross = Vector3.Cross(from, to);
+            float s = (float)Math.Sqrt((1 + dot) * 2);
+            float invS = 1f / s;
+
+            return new Quaternion(
+                cross.X * invS,
+                cross.Y * invS,
+                cross.Z * invS,
+                s * 0.5f
+            );
         }
 
         /// <summary>

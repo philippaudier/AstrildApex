@@ -55,15 +55,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\Water.tese</Link>
     </None>
-    <!-- WaterForward shader removed from repository; no project links needed -->
-    <!-- Maintain backward compatibility: also provide 'Water' shader name by duplicating files -->
-    <None Update="Rendering\Shaders\Forward\Water.vert">
+    <!-- WaterForward shader - Advanced water with IBL, refraction, foam -->
+    <None Update="Rendering\Shaders\Forward\WaterForward.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\Water.vert</Link>
+      <Link>Engine\Rendering\Shaders\Forward\WaterForward.vert</Link>
     </None>
-    <None Update="Rendering\Shaders\Forward\Water.frag">
+    <None Update="Rendering\Shaders\Forward\WaterForward.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>Engine\Rendering\Shaders\Forward\Water.frag</Link>
+      <Link>Engine\Rendering\Shaders\Forward\WaterForward.frag</Link>
     </None>
     <None Update="Rendering\Shaders\Forward\Glass.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -154,6 +153,14 @@
     <None Update="Rendering\Shaders\PostProcess\luminance.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\luminance.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\downsample.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\downsample.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\exposure_adapt.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\exposure_adapt.frag</Link>
     </None>
     <None Update="Rendering\Shaders\PostProcess\chromatic_aberration.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -291,9 +298,17 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Shadow\ShadowDepth.vert</Link>
     </None>
+    <None Update="Rendering\Shaders\Shadow\ShadowDepthInstanced.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Shadow\ShadowDepthInstanced.vert</Link>
+    </None>
     <None Update="Rendering\Shaders\Shadow\ShadowDepth.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Shadow\ShadowDepth.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Shadow\ShadowDepthAlphaClip.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Shadow\ShadowDepthAlphaClip.frag</Link>
     </None>
 
     <!-- Terrain Shaders -->

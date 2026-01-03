@@ -515,8 +515,28 @@ namespace Editor.Panels
                 ImGui.Spacing();
                 ImGui.Separator();
 
+                // === Shadow Quality Mode ===
+                ImGui.Text("Shadow Quality Mode");
+                ImGui.SetNextItemWidth(-1);
+
+                int shadowQuality = s.ShadowQuality;
+                string[] qualityNames = { "PCF Grid (Fast)", "Poisson Disk (Recommended)", "PCSS Soft Shadows (Best)" };
+                if (ImGui.Combo("##ShadowQuality", ref shadowQuality, qualityNames, qualityNames.Length))
+                {
+                    s.ShadowQuality = Math.Clamp(shadowQuality, 0, 2);
+                    Editor.State.EditorSettings.ShadowsSettings = s;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Shadow filtering algorithm:\n" +
+                                   "PCF Grid = Basic, fast, configurable kernel\n" +
+                                   "Poisson Disk = Better quality, eliminates banding (RECOMMENDED)\n" +
+                                   "PCSS = Physically correct soft shadows with contact hardening");
+
+                ImGui.Spacing();
+                ImGui.Separator();
+
                 // === Shadow Map Resolution ===
-                ImGui.Text("Shadow Quality (Resolution)");
+                ImGui.Text("Shadow Map Resolution");
                 ImGui.SetNextItemWidth(-1);
 
                 int shadowMapSize = s.ShadowMapSize;
@@ -533,17 +553,61 @@ namespace Editor.Panels
                 ImGui.Separator();
 
                 // === Bias Settings ===
-                ImGui.Text("Bias (prevents shadow artifacts)");
+                ImGui.Text("Bias Settings (prevent artifacts)");
 
                 float shadowBias = s.ShadowBias;
                 ImGui.SetNextItemWidth(-1);
-                if (ImGui.SliderFloat("##ShadowBias", ref shadowBias, 0.0f, 0.5f, "%.3f"))
+                if (ImGui.SliderFloat("Depth Bias##ShadowBias", ref shadowBias, 0.0f, 0.5f, "%.3f"))
                 {
                     s.ShadowBias = shadowBias;
                     Editor.State.EditorSettings.ShadowsSettings = s;
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Prevents shadow acne (striped shadows)\nIncrease if you see striped patterns\nDecrease if shadows detach from objects");
+                    ImGui.SetTooltip("Constant depth bias - prevents shadow acne (striped shadows)\nIncrease if you see striped patterns\nDecrease if shadows detach from objects");
+
+                float shadowNormalBias = s.ShadowNormalBias;
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.SliderFloat("Normal Bias##ShadowNormalBias", ref shadowNormalBias, 0.0f, 0.01f, "%.4f"))
+                {
+                    s.ShadowNormalBias = shadowNormalBias;
+                    Editor.State.EditorSettings.ShadowsSettings = s;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Normal-based bias - prevents shadow acne on slopes\nAdjust if you see artifacts on angled surfaces");
+
+                ImGui.Spacing();
+                ImGui.Separator();
+
+                // === Advanced Quality Settings (mode-specific) ===
+                ImGui.Text("Advanced Quality Settings");
+
+                // PCF Samples (only for Grid mode)
+                if (s.ShadowQuality == 0)
+                {
+                    int pcfSamples = s.PCFSamples;
+                    ImGui.SetNextItemWidth(-1);
+                    if (ImGui.SliderInt("PCF Kernel Size##PCFSamples", ref pcfSamples, 9, 25))
+                    {
+                        s.PCFSamples = pcfSamples;
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Number of samples for PCF Grid filtering\n9 = 3x3 kernel (fast)\n16 = 4x4 kernel\n25 = 5x5 kernel (best quality)");
+                }
+
+                // Light Size (only for PCSS mode)
+                if (s.ShadowQuality == 2)
+                {
+                    float lightSize = s.LightSize;
+                    ImGui.SetNextItemWidth(-1);
+                    if (ImGui.SliderFloat("Light Source Size##LightSize", ref lightSize, 0.01f, 0.2f, "%.3f"))
+                    {
+                        s.LightSize = lightSize;
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Virtual light source size for PCSS\nLarger = softer shadows\nSmaller = sharper shadows");
+                }
 
                 ImGui.Spacing();
                 ImGui.Separator();

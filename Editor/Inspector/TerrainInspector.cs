@@ -55,40 +55,34 @@ namespace Editor.Inspector
 
             if (ImGui.Combo("Mode", ref modeIndex, modeLabels, modeLabels.Length))
             {
-                // Mode changed - clear previous mode's data
-                if (previousMode == 0) // Was Single Terrain
-                {
-                    terrain.ClearTerrain();
-                    LogManager.LogInfo("Cleared single terrain mesh", "TerrainInspector");
-                }
-                else // Was Infinite Streaming
-                {
-                    // Clear tile cache (tiles will regenerate automatically)
-                    try
-                    {
-                        string cacheDir = System.IO.Path.Combine("Cache", "Terrain", "tiles");
-                        if (System.IO.Directory.Exists(cacheDir))
-                        {
-                            var files = System.IO.Directory.GetFiles(cacheDir, "*.cache", System.IO.SearchOption.AllDirectories);
-                            foreach (var file in files)
-                            {
-                                try { System.IO.File.Delete(file); } catch { }
-                            }
-                            LogManager.LogInfo($"Cleared {files.Length} tile cache files", "TerrainInspector");
-                        }
-                    }
-                    catch { }
-                }
+                var newMode = (Engine.Components.TerrainMode)modeIndex;
+                var oldMode = terrain.Mode;
 
-                terrain.Mode = (Engine.Components.TerrainMode)modeIndex;
+                Console.WriteLine($"");
+                Console.WriteLine($"[TerrainInspector] ╔════════════════════════════════════════════════╗");
+                Console.WriteLine($"[TerrainInspector] ║   USER CHANGING MODE: {oldMode} → {newMode}");
+                Console.WriteLine($"[TerrainInspector] ╚════════════════════════════════════════════════╝");
 
-                if (modeIndex == 1)
+                // CRITICAL: Call ViewportRenderer to handle the complete mode switch
+                // This ensures proper cleanup and regeneration
+                var renderer = Editor.Panels.EditorUI.MainViewport?.Renderer;
+                if (renderer != null)
                 {
-                    LogManager.LogInfo($"Switched to infinite streaming mode", "TerrainInspector");
+                    Console.WriteLine($"[TerrainInspector] Calling ViewportRenderer.HandleTerrainModeChange()");
+
+                    // Set the new mode first
+                    terrain.Mode = newMode;
+
+                    // Call the robust mode change handler
+                    //renderer.HandleTerrainModeChange(terrain);
+
+                    LogManager.LogInfo($"✓ Mode changed to {newMode} - terrain and vegetation regenerated", "TerrainInspector");
                 }
                 else
                 {
-                    LogManager.LogInfo($"Switched to single terrain mode", "TerrainInspector");
+                    Console.WriteLine($"[TerrainInspector] ✗ WARNING: ViewportRenderer is null - mode change may be incomplete!");
+                    terrain.Mode = newMode;
+                    LogManager.LogWarning($"ViewportRenderer not available - terrain may need manual regeneration", "TerrainInspector");
                 }
             }
 
@@ -272,31 +266,14 @@ namespace Editor.Inspector
 
                 if (ImGui.Button("Clear & Regenerate All Tiles", new System.Numerics.Vector2(-1, 40)))
                 {
-                    try
+                    var renderer = Editor.Panels.EditorUI.MainViewport?.Renderer;
+                    if (renderer != null)
                     {
-                        // Delete tile cache
-                        string cacheDir = System.IO.Path.Combine("Cache", "Terrain", "tiles");
-                        if (System.IO.Directory.Exists(cacheDir))
-                        {
-                            var files = System.IO.Directory.GetFiles(cacheDir, "*.cache", System.IO.SearchOption.AllDirectories);
-                            int deleted = 0;
-                            foreach (var file in files)
-                            {
-                                try { System.IO.File.Delete(file); deleted++; } catch { }
-                            }
-                            LogManager.LogInfo($"Deleted {deleted} tile cache files", "TerrainInspector");
-                        }
-
-                        // Force tile manager reset by toggling seed
-                        int oldSeed = terrain.ProceduralSeed;
-                        terrain.ProceduralSeed = oldSeed + 1;
-                        terrain.ProceduralSeed = oldSeed;
-
-                        LogManager.LogInfo("Tiles reset - will regenerate immediately", "TerrainInspector");
+                        //renderer.ClearAndRegenerateTiles(terrain);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        LogManager.LogWarning($"Failed to clear tiles: {ex.Message}", "TerrainInspector");
+                        LogManager.LogWarning("ViewportRenderer not available", "TerrainInspector");
                     }
                 }
 

@@ -237,4 +237,11 @@ void main()
 
     // Final vertex position using Common.glsl's uViewProj
     gl_Position = uViewProj * worldPos;
+
+    // Clipping plane support (for planar reflections)
+    if (uClipPlaneEnabled > 0.5) {
+        gl_ClipDistance[0] = dot(worldPos, uClipPlane);
+    } else {
+        gl_ClipDistance[0] = 1.0; // Always pass if clipping disabled
+    }
 }

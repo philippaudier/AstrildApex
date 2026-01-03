@@ -164,53 +164,8 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("enableMovementFeel")]
         public bool EnableMovementFeel { get; set; } = true;
 
-        // ===== SLOPE SLIDING SETTINGS =====
-
-        /// <summary>Enable realistic sliding on steep slopes (slopes steeper than SlopeLimit)</summary>
-        [Engine.Serialization.SerializableAttribute("enableSliding")]
-        public bool EnableSliding { get; set; } = true;
-
-        /// <summary>Sliding friction coefficient - how much the slope resists sliding (0-1, lower = more slippery)</summary>
-        [Engine.Serialization.SerializableAttribute("slideFriction")]
-        public float SlideFriction { get; set; } = 0.3f;
-
-        /// <summary>Gravity multiplier when sliding (higher = slides faster down slopes)</summary>
-        [Engine.Serialization.SerializableAttribute("slideGravityMultiplier")]
-        public float SlideGravityMultiplier { get; set; } = 1.5f;
-
-        /// <summary>How much player input can affect slide direction (0-1, 0 = no control, 1 = full control)</summary>
-        [Engine.Serialization.SerializableAttribute("slideControl")]
-        public float SlideControl { get; set; } = 0.4f;
-
-        /// <summary>Maximum slide speed (prevents infinite acceleration)</summary>
-        [Engine.Serialization.SerializableAttribute("maxSlideSpeed")]
-        public float MaxSlideSpeed { get; set; } = 20f;
-
-        /// <summary>Minimum slope angle (degrees) to start sliding. Slopes between SlopeLimit and this are walkable but slow.</summary>
-        [Engine.Serialization.SerializableAttribute("minSlideAngle")]
-        public float MinSlideAngle { get; set; } = 50f;
-
-        // ===== SLOPE MOMENTUM SETTINGS =====
-
-        /// <summary>Enable momentum-based slope climbing (like Mario 64)</summary>
-        [Engine.Serialization.SerializableAttribute("enableSlopeMomentum")]
-        public bool EnableSlopeMomentum { get; set; } = true;
-
-        /// <summary>How much momentum is retained when going uphill (0-1, 1 = full momentum retained)</summary>
-        [Engine.Serialization.SerializableAttribute("slopeMomentumRetention")]
-        public float SlopeMomentumRetention { get; set; } = 0.7f;
-
-        /// <summary>Deceleration rate when climbing slopes (higher = slower climb)</summary>
-        [Engine.Serialization.SerializableAttribute("slopeClimbDeceleration")]
-        public float SlopeClimbDeceleration { get; set; } = 8f;
-
-        /// <summary>Minimum speed to maintain before starting to slide backwards on steep slopes</summary>
-        [Engine.Serialization.SerializableAttribute("minSpeedBeforeBackslide")]
-        public float MinSpeedBeforeBackslide { get; set; } = 1f;
-
-        /// <summary>Start sliding backwards if stopped on slope steeper than this angle</summary>
-        [Engine.Serialization.SerializableAttribute("backslideAngle")]
-        public float BackslideAngle { get; set; } = 35f;
+        // ===== SLOPE SETTINGS =====
+        // NO SLIDING - Slopes > SlopeLimit act like walls (can't climb)
 
         // ===== STATE (READ-ONLY) =====
 
@@ -250,8 +205,7 @@ namespace Engine.Components
         private float _jumpBufferCounter = 0f; // Countdown for jump buffer
         private Vector3 _desiredVelocity = Vector3.Zero; // Target velocity for smooth acceleration
         private bool _wasGroundedLastFrame = false; // Track grounding state changes
-        private Vector3 _slideVelocity = Vector3.Zero; // Accumulated slide velocity (separate from normal velocity)
-        private float _postSlideInertiaTimer = 0f; // Timer to reduce deceleration after exiting slide
+        private bool _wasSlidingLastFrame = false; // Track sliding state changes
 
         // ===== INTERPOLATION =====
         // Transform.Position = Physics position (ground truth, never modified by interpolation)
@@ -345,23 +299,9 @@ namespace Engine.Components
                 }
             }
 
-            // Reset slide velocity when we stop sliding or leave ground
-            if (!IsSliding && _slideVelocity.LengthSquared > 0.01f)
-            {
-                // Transfer slide momentum to regular velocity when exiting slide
-                if (IsGrounded)
-                {
-                    Velocity = new Vector3(_slideVelocity.X, Velocity.Y, _slideVelocity.Z);
-                    _postSlideInertiaTimer = 0.5f; // Reduce deceleration for 0.5 seconds after slide
-                }
-                _slideVelocity = Vector3.Zero;
-            }
-
-            // Decay post-slide inertia timer
-            if (_postSlideInertiaTimer > 0f)
-                _postSlideInertiaTimer -= deltaTime;
-
+            // Track state changes
             _wasGroundedLastFrame = IsGrounded;
+            _wasSlidingLastFrame = IsSliding;
 
             // Apply gravity with scale and terminal velocity
             if (EnableGravity && !IsGrounded)
@@ -461,10 +401,11 @@ namespace Engine.Components
                 Vector3 slideDirection = Vector3.Normalize(remainingMotion - Vector3.Dot(remainingMotion, hitNormal) * hitNormal);
                 remainingMotion = slideDirection * remainingDistance;
 
-                // If sliding up a steep slope, stop
+                // Block movement up steep slopes (treat as walls)
                 float slopeAngle = Vector3.CalculateAngle(Vector3.UnitY, hitNormal) * (180f / MathF.PI);
                 if (slopeAngle > SlopeLimit)
                 {
+                    // Slope too steep - can't climb (blocked like a wall)
                     break;
                 }
             }
@@ -558,19 +499,8 @@ namespace Engine.Components
             {
                 // === GROUNDED MOVEMENT ===
 
-                // Check if we're on a slope that affects movement
-                bool isOnSlope = CurrentSlopeAngle > 5f; // More than 5 degrees = consider it a slope
-
-                if (isOnSlope && EnableSlopeMomentum)
-                {
-                    // Apply slope momentum physics
-                    ApplySlopeMomentum(deltaTime);
-                }
-                else
-                {
-                    // Normal flat ground movement
-                    ApplyFlatGroundMovement(deltaTime);
-                }
+                // Normal flat ground movement (slopes are now handled purely by slide mechanics)
+                ApplyFlatGroundMovement(deltaTime);
             }
             else
             {
@@ -606,11 +536,8 @@ namespace Engine.Components
             Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
             Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
 
-            float currentSpeed = horizontalVelocity.Length;
-            float desiredSpeed = horizontalDesired.Length;
-
             Vector3 targetVelocity;
-            if (desiredSpeed > 0.01f)
+            if (horizontalDesired.LengthSquared > 0.01f)
             {
                 // Player is inputting movement - accelerate towards desired velocity
                 float acceleration = GroundAcceleration * deltaTime;
@@ -620,168 +547,35 @@ namespace Engine.Components
             {
                 // No input - decelerate to stop
                 float deceleration = GroundDeceleration * deltaTime;
-
-                // Reduce deceleration after exiting a slide (preserve momentum)
-                if (_postSlideInertiaTimer > 0f)
-                {
-                    float inertiaFactor = _postSlideInertiaTimer / 0.5f; // 0-1 based on remaining time
-                    deceleration *= (1f - inertiaFactor * 0.7f); // Reduce decel by up to 70%
-                }
-
                 targetVelocity = Vector3.Lerp(horizontalVelocity, Vector3.Zero, deceleration);
 
-                // Stop completely if very slow (prevents sliding)
+                // Stop completely if very slow
                 if (targetVelocity.LengthSquared < 0.01f)
                     targetVelocity = Vector3.Zero;
             }
 
-            // Apply ground friction (independent of input)
-            // Also reduced by post-slide inertia
-            float friction = GroundFriction;
-            if (_postSlideInertiaTimer > 0f)
-            {
-                float inertiaFactor = _postSlideInertiaTimer / 0.5f;
-                friction = MathHelper.Lerp(friction, 1.0f, inertiaFactor * 0.5f); // Less friction after slide
-            }
-            targetVelocity *= friction;
+            // Apply ground friction
+            targetVelocity *= GroundFriction;
 
             // Update velocity (preserve vertical component)
             Velocity = new Vector3(targetVelocity.X, Velocity.Y, targetVelocity.Z);
         }
 
         /// <summary>
-        /// Apply slope momentum physics (like Mario 64).
-        /// Allows running up slopes with momentum, deceleration, and backsliding.
-        /// </summary>
-        private void ApplySlopeMomentum(float deltaTime)
-        {
-            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
-            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
-
-            // Calculate slope direction
-            Vector3 slopeDirection = CalculateSlopeDirection(GroundNormal);
-
-            // Determine if we're going uphill or downhill
-            // Dot product between velocity and slope down direction
-            // > 0 = going downhill, < 0 = going uphill
-            float slopeDot = Vector3.Dot(horizontalVelocity, slopeDirection);
-            bool isGoingUphill = slopeDot < -0.1f;
-
-            if (isGoingUphill)
-            {
-                // === CLIMBING SLOPE ===
-
-                // Apply deceleration when climbing (fighting gravity)
-                float climbDecel = SlopeClimbDeceleration * deltaTime;
-
-                // Apply player input with reduced effectiveness on slopes
-                if (horizontalDesired.LengthSquared > 0.01f)
-                {
-                    // Blend between current velocity and desired, with slope retention
-                    float acceleration = GroundAcceleration * SlopeMomentumRetention * deltaTime;
-                    horizontalVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, acceleration);
-                }
-
-                // Apply climb deceleration (simulates gravity pulling back)
-                float currentSpeed = horizontalVelocity.Length;
-                currentSpeed = MathF.Max(0f, currentSpeed - climbDecel);
-
-                if (currentSpeed > 0.01f)
-                {
-                    horizontalVelocity = Vector3.Normalize(horizontalVelocity) * currentSpeed;
-                }
-                else
-                {
-                    horizontalVelocity = Vector3.Zero;
-                }
-
-                // Check if we should start backsliding
-                if (currentSpeed < MinSpeedBeforeBackslide && CurrentSlopeAngle > BackslideAngle)
-                {
-                    // Start sliding backwards down the slope
-                    // This will be picked up by the slide detection on next frame
-                    _slideVelocity = slopeDirection * 0.5f; // Small initial backslide velocity
-                }
-            }
-            else
-            {
-                // === GOING DOWNHILL OR FLAT ===
-
-                // Normal movement with slight speed boost from gravity
-                float currentSpeed = horizontalVelocity.Length;
-                float desiredSpeed = horizontalDesired.Length;
-
-                Vector3 targetVelocity;
-                if (desiredSpeed > 0.01f)
-                {
-                    // Player input - normal acceleration
-                    float acceleration = GroundAcceleration * deltaTime;
-                    targetVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired, acceleration);
-                }
-                else
-                {
-                    // No input - decelerate (but slower on downhill)
-                    float deceleration = GroundDeceleration * 0.7f * deltaTime; // Less decel downhill
-                    targetVelocity = Vector3.Lerp(horizontalVelocity, Vector3.Zero, deceleration);
-
-                    if (targetVelocity.LengthSquared < 0.01f)
-                        targetVelocity = Vector3.Zero;
-                }
-
-                // Apply friction
-                targetVelocity *= GroundFriction;
-
-                horizontalVelocity = targetVelocity;
-            }
-
-            // Update velocity (preserve vertical component)
-            Velocity = new Vector3(horizontalVelocity.X, Velocity.Y, horizontalVelocity.Z);
-        }
-
-        /// <summary>
-        /// Apply realistic sliding physics on steep slopes.
-        /// Simulates gravity along the slope with friction and player control.
+        /// Apply slope sliding - simple gravity-based acceleration down the slope.
         /// </summary>
         private void ApplySlidePhysics(float deltaTime)
         {
-            // Calculate the slope direction (direction of steepest descent)
-            // Project gravity onto the slope plane
+            // Calculate slope direction (downward along the slope)
             Vector3 slopeDirection = CalculateSlopeDirection(GroundNormal);
 
-            // Apply gravity along the slope (accelerate down the slope)
-            float gravityMagnitude = Gravity.Length * SlideGravityMultiplier;
+            // Apply gravity along the slope
+            float gravityMagnitude = Gravity.Length * GravityScale;
             Vector3 slopeGravity = slopeDirection * gravityMagnitude * deltaTime;
+            Velocity += slopeGravity;
 
-            // Accumulate slide velocity
-            _slideVelocity += slopeGravity;
-
-            // Apply player input to influence slide direction (limited control)
-            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
-            if (horizontalDesired.LengthSquared > 0.01f && SlideControl > 0f)
-            {
-                // Project input onto slope plane (can't move perpendicular to slope)
-                Vector3 inputOnSlope = ProjectVectorOntoPlane(horizontalDesired, GroundNormal);
-
-                // Apply limited control
-                float controlInfluence = SlideControl * deltaTime * 10f; // Scale for responsiveness
-                _slideVelocity += inputOnSlope * controlInfluence;
-            }
-
-            // Apply slide friction (resists movement in all directions on slope)
-            _slideVelocity *= (1f - SlideFriction * deltaTime * 2f);
-
-            // Clamp to max slide speed
-            float slideSpeed = _slideVelocity.Length;
-            if (slideSpeed > MaxSlideSpeed)
-            {
-                _slideVelocity = Vector3.Normalize(_slideVelocity) * MaxSlideSpeed;
-            }
-
-            // Project slide velocity onto slope plane (ensure we stay on surface)
-            _slideVelocity = ProjectVectorOntoPlane(_slideVelocity, GroundNormal);
-
-            // Set final velocity (slide velocity replaces normal velocity while sliding)
-            Velocity = _slideVelocity;
+            // Apply basic friction to prevent infinite acceleration
+            Velocity *= GroundFriction;
         }
 
         /// <summary>
@@ -1047,35 +841,20 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Determine if the character should be sliding based on slope angle and settings.
+        /// Determine if the character should be sliding based on slope angle.
+        /// Simple: Slope > SlopeLimit = slide down
         /// </summary>
         private void DetermineSlideState(float slopeAngle)
         {
-            if (!EnableSliding)
-            {
-                // Sliding disabled - use old behavior (can't walk on slopes > SlopeLimit)
-                IsSliding = false;
-                if (slopeAngle > SlopeLimit)
-                {
-                    IsGrounded = false; // Too steep, not grounded
-                }
-                return;
-            }
+            // Hysteresis to prevent jittering
+            const float HYSTERESIS = 2f;
 
-            // Sliding enabled - determine state based on slope angle
-            if (slopeAngle >= MinSlideAngle)
+            if (slopeAngle > SlopeLimit + HYSTERESIS)
             {
-                // Very steep slope - always slide
                 IsSliding = true;
             }
-            else if (slopeAngle > SlopeLimit)
+            else if (slopeAngle < SlopeLimit - HYSTERESIS)
             {
-                // Moderately steep - walkable but slower, might slide if moving fast
-                IsSliding = false; // For now, don't slide on moderate slopes
-            }
-            else
-            {
-                // Normal walkable slope
                 IsSliding = false;
             }
         }

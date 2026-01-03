@@ -1134,6 +1134,111 @@ namespace Engine.Rendering.Terrain
         }
 
         /// <summary>
+        /// Clear and dispose the tile manager.
+        /// Call this when switching from Infinite Streaming to Single Terrain mode.
+        /// </summary>
+        public void ClearTileManager()
+        {
+            if (_tileManager != null)
+            {
+                try
+                {
+                    _tileManager.Dispose();
+                }
+                catch { }
+                _tileManager = null;
+                _lastStreamingSeed = 0;
+                _lastNoiseScale = 0;
+                _lastOctaves = 0;
+            }
+        }
+
+        /// <summary>
+        /// Initialize tile manager and force synchronous tile generation/upload.
+        /// Call this after scene load to ensure tiles are ready before first shadow pass.
+        /// </summary>
+        public void InitializeAndProcessTiles(Engine.Components.Terrain terrain, OpenTK.Mathematics.Vector3 cameraPos, int maxTiles = 30)
+        {
+            if (terrain.Mode != TerrainMode.InfiniteStreaming) return;
+
+            // Initialize tile manager if not already done
+            if (_tileManager == null)
+            {
+                _tileManager = new Tile.TerrainTileManager();
+                _tileManager.TileGenerator = (tx, ty, lod) =>
+                    Tile.TileCpuGenerator.GenerateCachedTile(terrain, tx, ty, lod);
+                _tileManager.VegetationGenerator = (t, tx, ty) =>
+                    VegetationGenerator.GenerateVegetationForTile(t, tx, ty, t.StreamingTileSize);
+                _tileManager.StartBackgroundWorker();
+                _lastStreamingSeed = terrain.ProceduralSeed;
+                _lastNoiseScale = terrain.NoiseScale;
+                _lastOctaves = terrain.Octaves;
+                Engine.Utils.DebugLogger.Log("[TerrainRenderer] Initialized tile manager for scene load");
+            }
+
+            // Request tiles around camera
+            _tileManager.RequestTilesAround(terrain, cameraPos.X, cameraPos.Z, terrain.StreamingRadius);
+
+            // Force synchronous processing of tiles for immediate availability
+            ForceProcessTileUploads(terrain, maxTiles);
+        }
+
+        /// <summary>
+        /// Force synchronous processing of pending tile uploads.
+        /// Useful after scene load to ensure vegetation is immediately available.
+        /// </summary>
+        public void ForceProcessTileUploads(Engine.Components.Terrain terrain, int maxTiles = 20)
+        {
+            if (_tileManager == null) return;
+
+            int processed = 0;
+            _tileManager.TryProcessUploads(tile =>
+            {
+                if (processed >= maxTiles) return;
+                if (tile.VerticesCpu == null || tile.IndicesCpu == null) return;
+
+                // Create GL buffers
+                int vao = OpenTK.Graphics.OpenGL4.GL.GenVertexArray();
+                int vbo = OpenTK.Graphics.OpenGL4.GL.GenBuffer();
+                int ebo = OpenTK.Graphics.OpenGL4.GL.GenBuffer();
+
+                OpenTK.Graphics.OpenGL4.GL.BindVertexArray(vao);
+
+                // Upload vertices
+                OpenTK.Graphics.OpenGL4.GL.BindBuffer(OpenTK.Graphics.OpenGL4.BufferTarget.ArrayBuffer, vbo);
+                OpenTK.Graphics.OpenGL4.GL.BufferData(OpenTK.Graphics.OpenGL4.BufferTarget.ArrayBuffer, tile.VerticesCpu.Length * sizeof(float), tile.VerticesCpu, OpenTK.Graphics.OpenGL4.BufferUsageHint.StaticDraw);
+
+                // Upload indices
+                OpenTK.Graphics.OpenGL4.GL.BindBuffer(OpenTK.Graphics.OpenGL4.BufferTarget.ElementArrayBuffer, ebo);
+                OpenTK.Graphics.OpenGL4.GL.BufferData(OpenTK.Graphics.OpenGL4.BufferTarget.ElementArrayBuffer, tile.IndicesCpu.Length * sizeof(uint), tile.IndicesCpu, OpenTK.Graphics.OpenGL4.BufferUsageHint.StaticDraw);
+
+                // Setup vertex attributes (pos, normal, uv)
+                OpenTK.Graphics.OpenGL4.GL.VertexAttribPointer(0, 3, OpenTK.Graphics.OpenGL4.VertexAttribPointerType.Float, false, 8 * sizeof(float), 0);
+                OpenTK.Graphics.OpenGL4.GL.EnableVertexAttribArray(0);
+                OpenTK.Graphics.OpenGL4.GL.VertexAttribPointer(1, 3, OpenTK.Graphics.OpenGL4.VertexAttribPointerType.Float, false, 8 * sizeof(float), 3 * sizeof(float));
+                OpenTK.Graphics.OpenGL4.GL.EnableVertexAttribArray(1);
+                OpenTK.Graphics.OpenGL4.GL.VertexAttribPointer(2, 2, OpenTK.Graphics.OpenGL4.VertexAttribPointerType.Float, false, 8 * sizeof(float), 6 * sizeof(float));
+                OpenTK.Graphics.OpenGL4.GL.EnableVertexAttribArray(2);
+
+                OpenTK.Graphics.OpenGL4.GL.BindVertexArray(0);
+
+                // Generate vegetation for this tile
+                if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
+                {
+                    var vegInstances = VegetationGenerator.GenerateVegetationForTile(terrain, tile.X, tile.Y, terrain.StreamingTileSize);
+                    if (vegInstances.Count > 0)
+                    {
+                        tile.AttachVegetation(vegInstances);
+                    }
+                }
+
+                // Mark as uploaded
+                tile.OnUploadedToGpu(vao, vbo, ebo);
+                processed++;
+            });
+        }
+
+        /// <summary>
         /// Get all vegetation instances from all renderable tiles (Infinite Streaming mode only).
         /// Returns a dictionary of layer index -> list of transforms, ready for VegetationRenderer.UpdateBatch().
         /// </summary>

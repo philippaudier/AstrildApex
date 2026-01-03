@@ -84,36 +84,30 @@ namespace Editor.Inspector
                 
                 if (ImGui.Button("🗑️ Clear All Vegetation", new Vector2(-1, 0)))
                 {
-                    var scene = Editor.Panels.EditorUI.MainViewport.Renderer?.Scene;
-                    if (scene != null)
+                    var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
+                    if (renderer != null)
                     {
-                        terrain.ClearVegetation(scene);
-
-                        // CRITICAL: Manually update ViewportRenderer to clear batches immediately
-                        var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
-                        if (renderer != null)
+                        try
                         {
-                            try
-                            {
-                                var method = renderer.GetType().GetMethod("OnTerrainVegetationRegenerated",
-                                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                                if (method != null)
-                                {
-                                    Console.WriteLine("[TerrainVegetationUI] Manually clearing vegetation batches in ViewportRenderer");
-                                    method.Invoke(renderer, new object[] { terrain });
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                LogManager.LogError($"Failed to update ViewportRenderer: {ex.Message}", "TerrainVegetationUI");
-                            }
-                        }
+                            Console.WriteLine("[TerrainVegetationUI] Clearing all vegetation layers");
 
-                        LogManager.LogInfo("Vegetation cleared", "TerrainVegetationUI");
+                            // Clear vegetation layers
+                            terrain.VegetationLayers = System.Array.Empty<Engine.Assets.VegetationLayer>();
+
+                            // Force regeneration (which will clear batches since layers are now empty)
+                            //renderer.ForceRegenerateVegetation(terrain);
+
+                            LogManager.LogInfo("All vegetation cleared", "TerrainVegetationUI");
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        catch (Exception ex)
+                        {
+                            LogManager.LogError($"Failed to clear vegetation: {ex.Message}", "TerrainVegetationUI");
+                        }
                     }
                     else
                     {
-                        LogManager.LogError("Cannot clear vegetation - no active scene", "TerrainVegetationUI");
+                        LogManager.LogError("Cannot clear vegetation - ViewportRenderer not available", "TerrainVegetationUI");
                     }
                 }
                 
@@ -476,49 +470,24 @@ namespace Editor.Inspector
         }
 
         /// <summary>
-        /// Regenerate vegetation for the terrain.
+        /// Regenerate vegetation for the terrain (works for both Single and Infinite Streaming modes).
         /// </summary>
         private static void RegenerateVegetation(Terrain terrain)
         {
             try
             {
-                var scene = Editor.Panels.EditorUI.MainViewport.Renderer?.Scene;
-                if (scene == null)
+                var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
+                if (renderer == null)
                 {
-                    LogManager.LogError("Cannot regenerate vegetation - no active scene", "TerrainVegetationUI");
+                    LogManager.LogError("Cannot regenerate vegetation - ViewportRenderer not available", "TerrainVegetationUI");
                     return;
                 }
 
                 // Inspector changes modify terrain layers directly in memory, so no need to save first
-                // Generate vegetation with current in-memory values
-                Console.WriteLine($"[TerrainVegetationUI] Regenerating vegetation for terrain: {terrain.Entity?.Name ?? "(unnamed)"}");
-                terrain.GenerateVegetation(scene);
+                // Use the robust ForceRegenerateVegetation which handles both terrain modes
+                Console.WriteLine($"[TerrainVegetationUI] Regenerating vegetation for terrain: {terrain.Entity?.Name ?? "(unnamed)"}, Mode: {terrain.Mode}");
 
-                // CRITICAL: Manually update ViewportRenderer batches since event subscribers may be lost
-                // This ensures vegetation appears immediately in edit mode
-                var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
-                if (renderer != null)
-                {
-                    try
-                    {
-                        // Call the internal method that updates vegetation batches
-                        var method = renderer.GetType().GetMethod("OnTerrainVegetationRegenerated",
-                            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                        if (method != null)
-                        {
-                            Console.WriteLine("[TerrainVegetationUI] Manually calling ViewportRenderer.OnTerrainVegetationRegenerated");
-                            method.Invoke(renderer, new object[] { terrain });
-                        }
-                        else
-                        {
-                            LogManager.LogWarning("Could not find OnTerrainVegetationRegenerated method on ViewportRenderer", "TerrainVegetationUI");
-                        }
-                    }
-                    catch (Exception invokeEx)
-                    {
-                        LogManager.LogError($"Failed to update ViewportRenderer: {invokeEx.Message}", "TerrainVegetationUI");
-                    }
-                }
+                //renderer.ForceRegenerateVegetation(terrain);
 
                 // Mark scene as modified so user knows to save
                 Editor.SceneManagement.SceneManager.MarkSceneAsModified();

@@ -85,6 +85,15 @@ float PCF_Grid(vec2 shadowCoord, float compareDepth, float bias, int samples)
 // ============================================================================
 // MODE 1: PCF with Poisson Disk Sampling (Better Quality)
 // ============================================================================
+
+// Rotate a 2D vector by an angle (in radians)
+vec2 RotatePoisson(vec2 p, float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+    return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+}
+
+// PCF with Poisson Disk - Standard version (no rotation)
 float PCF_Poisson(vec2 shadowCoord, float compareDepth, float bias, float diskRadius)
 {
     float shadow = 0.0;
@@ -94,6 +103,29 @@ float PCF_Poisson(vec2 shadowCoord, float compareDepth, float bias, float diskRa
     for (int i = 0; i < 16; i++)
     {
         vec2 offset = POISSON_DISK[i] * diskRadius * texelSize;
+        shadow += texture(u_ShadowMap, vec3(shadowCoord + offset, compareDepth - bias));
+    }
+
+    return shadow / 16.0;
+}
+
+// PCF with Rotated Poisson Disk - Eliminates banding patterns
+// This is the improved version used by default for better visual quality
+float PCF_PoissonRotated(vec2 shadowCoord, float compareDepth, float bias, float diskRadius)
+{
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(u_ShadowMapSize);
+
+    // Generate pseudo-random rotation based on fragment position
+    // This breaks up regular patterns and gives more natural-looking shadows
+    float noise = fract(sin(dot(shadowCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    float angle = noise * 6.28318; // 0 to 2*PI
+
+    // Sample with rotated Poisson disk
+    for (int i = 0; i < 16; i++)
+    {
+        vec2 rotatedOffset = RotatePoisson(POISSON_DISK[i], angle);
+        vec2 offset = rotatedOffset * diskRadius * texelSize;
         shadow += texture(u_ShadowMap, vec3(shadowCoord + offset, compareDepth - bias));
     }
 
@@ -161,8 +193,8 @@ float PCSS(vec2 shadowCoord, float compareDepth, float bias)
     float filterRadius = penumbra * u_ShadowMapSize;
     filterRadius = clamp(filterRadius, 1.0, 10.0); // Limit max radius for performance
 
-    // Use Poisson disk for final filtering
-    return PCF_Poisson(shadowCoord, compareDepth, bias, filterRadius);
+    // Use rotated Poisson disk for final filtering (eliminates patterns)
+    return PCF_PoissonRotated(shadowCoord, compareDepth, bias, filterRadius);
 }
 
 // ============================================================================
@@ -203,21 +235,35 @@ float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
         return 1.0; // Outside shadow map = fully lit
     }
 
-    // Perform simple PCF shadow sampling (3x3 kernel)
-    float shadowValue = 0.0;
-    vec2 texelSize = 1.0 / vec2(u_ShadowMapSize);
+    // ============================================================================
+    // CRITICAL FIX: Use quality modes for better shadows!
+    // ============================================================================
+    // Quality modes:
+    // 0 = PCF Grid (basic, configurable kernel size)
+    // 1 = Rotated Poisson Disk (better quality, eliminates banding)
+    // 2 = PCSS (soft shadows with contact hardening)
 
-    // 3x3 kernel sampling
-    for (int x = -1; x <= 1; x++)
+    float shadowValue;
+
+    if (u_ShadowQuality == 2)
     {
-        for (int y = -1; y <= 1; y++)
-        {
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            // Hardware PCF: returns 1.0 if lit, 0.0 if shadowed
-            shadowValue += texture(u_ShadowMap, vec3(projCoords.xy + offset, projCoords.z));
-        }
+        // Mode 2: PCSS - Physically accurate soft shadows with contact hardening
+        // Shadows are sharp near contact points and soft far away
+        shadowValue = PCSS(projCoords.xy, projCoords.z, u_ShadowBias);
     }
-    shadowValue /= 9.0;
+    else if (u_ShadowQuality == 1)
+    {
+        // Mode 1: Rotated Poisson Disk - Better quality, eliminates banding patterns
+        // Disk radius of 2.0 provides good soft shadow appearance
+        shadowValue = PCF_PoissonRotated(projCoords.xy, projCoords.z, u_ShadowBias, 2.0);
+    }
+    else
+    {
+        // Mode 0: PCF Grid - Basic but robust, uses configurable sample count
+        // Falls back to 9 samples (3x3) if u_PCFSamples not set
+        int samples = max(u_PCFSamples, 9);
+        shadowValue = PCF_Grid(projCoords.xy, projCoords.z, u_ShadowBias, samples);
+    }
 
     // Apply shadow strength: mix between (1.0 - strength) and 1.0
     // shadowValue: 1.0 = lit, 0.0 = shadowed

@@ -293,17 +293,17 @@ namespace Editor.State
             // === Debug ===
             public bool DebugShowShadowMap { get; set; } = false;
 
-            // === Legacy/Deprecated (kept for compatibility) ===
-            [Obsolete("No longer used - simplified shadow system")]
-            public int ShadowQuality { get; set; } = 0;
+            // === Shadow Quality Settings ===
+            // Shadow quality mode: 0 = PCF Grid, 1 = Rotated Poisson Disk (recommended), 2 = PCSS
+            public int ShadowQuality { get; set; } = 1;
 
-            [Obsolete("No longer used - simplified shadow system")]
-            public float ShadowNormalBias { get; set; } = 0.01f;
+            // Normal-based bias to prevent shadow acne on slopes (used in addition to ShadowBias)
+            public float ShadowNormalBias { get; set; } = 0.001f;
 
-            [Obsolete("No longer used - simplified shadow system")]
-            public int PCFSamples { get; set; } = 2;
+            // Number of PCF samples for Grid mode (9, 16, 25, etc.) - only used when ShadowQuality = 0
+            public int PCFSamples { get; set; } = 9;
 
-            [Obsolete("No longer used - simplified shadow system")]
+            // Light source size for PCSS soft shadows - only used when ShadowQuality = 2
             public float LightSize { get; set; } = 0.05f;
 
             // === Legacy/Deprecated (kept for compatibility) ===

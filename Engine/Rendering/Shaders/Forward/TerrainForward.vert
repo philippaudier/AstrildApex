@@ -1,4 +1,7 @@
 #version 420 core
+
+#include "../Includes/Common.glsl"
+
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
 layout(location = 2) in vec2 a_TexCoord;
@@ -60,4 +63,11 @@ void main()
     v_NormalSmoothed = smoothedNormal;  // Smoothed normal for snow lighting
     v_TexCoord = a_TexCoord;
     gl_Position = u_Projection * u_View * worldPos;
+
+    // Clipping plane support (for planar reflections)
+    if (uClipPlaneEnabled > 0.5) {
+        gl_ClipDistance[0] = dot(worldPos, uClipPlane);
+    } else {
+        gl_ClipDistance[0] = 1.0; // Always pass if clipping disabled
+    }
 }

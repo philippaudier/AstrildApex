@@ -549,31 +549,48 @@ namespace Editor.Rendering
                     var terrain = entity.GetComponent<Engine.Components.Terrain>();
                     if (terrain != null && !_subscribedTerrains.Contains(terrain))
                     {
-                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', subscribing to VegetationRegenerated"); } catch { }
+                        try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', mode={terrain.Mode}, subscribing to events"); } catch { }
+
+                        
+
                         // Subscribe to future regenerations (only once per terrain)
                         terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
                         _subscribedTerrains.Add(terrain);
 
                         // CRITICAL: Initialize batches for existing vegetation (if already generated)
-                        if (terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0)
+                        // Different logic for Single vs Infinite Streaming modes
+                        if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
                         {
-                            try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Initializing existing vegetation batches for terrain (layers={terrain.VegetationLayers?.Length ?? 0})"); } catch { }
-                            OnTerrainVegetationRegenerated(terrain);
-                        }
-                        else if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0 && !terrain.VegetationCleared)
-                        {
-                            // In Edit Mode the terrain may have layers but no generated instances yet.
-                            // Generate instances now so the editor viewport shows vegetation without entering Play Mode.
-                            // Skip if vegetation was intentionally cleared (VegetationCleared flag).
-                            try
+                            // INFINITE STREAMING: Tiles will load asynchronously
+                            // Mark for deferred vegetation update (will happen after first tiles are loaded)
+                            if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0)
                             {
-                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Generating vegetation for terrain in editor: {entity.Name}"); } catch { }
-                                terrain.GenerateVegetation(scene);
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Infinite Streaming terrain detected - will update vegetation after tiles load"); } catch { }
+                                // Don't add to _autoInitAttempted yet - let the render loop handle it
+                            }
+                        }
+                        else // SingleTerrain mode
+                        {
+                            if (terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0)
+                            {
+                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Initializing existing vegetation batches for Single Terrain (layers={terrain.VegetationLayers?.Length ?? 0})"); } catch { }
                                 OnTerrainVegetationRegenerated(terrain);
                             }
-                            catch (Exception ex)
+                            else if (terrain.VegetationLayers != null && terrain.VegetationLayers.Length > 0 && !terrain.VegetationCleared)
                             {
-                                try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to generate vegetation in editor: {ex.Message}"); } catch { }
+                                // In Edit Mode the terrain may have layers but no generated instances yet.
+                                // Generate instances now so the editor viewport shows vegetation without entering Play Mode.
+                                // Skip if vegetation was intentionally cleared (VegetationCleared flag).
+                                try
+                                {
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Generating vegetation for Single Terrain in editor: {entity.Name}"); } catch { }
+                                    terrain.GenerateVegetation(scene);
+                                    OnTerrainVegetationRegenerated(terrain);
+                                }
+                                catch (Exception ex)
+                                {
+                                    try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to generate vegetation in editor: {ex.Message}"); } catch { }
+                                }
                             }
                         }
                     }
@@ -643,6 +660,16 @@ namespace Editor.Rendering
                 return;
             }
 
+            // CRITICAL DEBUG: Log vegetation instances mode
+            Console.WriteLine($"[ViewportRenderer] OnTerrainVegetationRegenerated: TerrainMode={terrain.Mode}, VegInstancesCount={vegetationInstances?.Count ?? 0}");
+            if (vegetationInstances != null)
+            {
+                foreach (var kvp in vegetationInstances)
+                {
+                    Console.WriteLine($"[ViewportRenderer]   LayerIndex={kvp.Key}, InstanceCount={kvp.Value?.Count ?? 0}");
+                }
+            }
+
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
             {
@@ -655,6 +682,7 @@ namespace Editor.Rendering
                     continue;
                 }
 
+                Console.WriteLine($"[ViewportRenderer] Processing Layer {layerIndex}: Name={layer.Name}, PrefabGuid={layer.PrefabGuid}, Enabled={layer.Enabled}");
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: PrefabGuid={layer.PrefabGuid?.ToString() ?? "NULL"}, ModelGuid={layer.ModelGuid?.ToString() ?? "NULL"}, Density={layer.Density}"); } catch { }
 
                 // Try to get model GUID from either direct assignment or prefab
@@ -687,6 +715,9 @@ namespace Editor.Rendering
                                         var matGuid = meshAsset.MaterialGuids[s];
                                         if (matGuid != null && matGuid != Guid.Empty)
                                         {
+                                            // CRITICAL FIX: Invalidate material cache to ensure fresh CullingMode
+                                            Engine.Assets.AssetDatabase.InvalidateMaterial(matGuid.Value);
+
                                             var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
                                             if (mat != null)
                                             {
@@ -732,10 +763,19 @@ namespace Editor.Rendering
                                 var matGuid = meshAssetSingle.MaterialGuids[sub.MaterialIndex];
                                 if (matGuid != null && matGuid != Guid.Empty)
                                 {
+                                    // CRITICAL FIX: Invalidate material cache to ensure fresh CullingMode
+                                    Engine.Assets.AssetDatabase.InvalidateMaterial(matGuid.Value);
+
                                     var mat = Engine.Assets.AssetDatabase.LoadMaterial(matGuid.Value);
                                     if (mat != null)
                                     {
                                         submeshCull = (Engine.Components.CullingMode)mat.CullingMode;
+
+                                        // DEBUG: Log material culling mode
+                                        if (Engine.Core.Time.FrameCount % 120 == 0)
+                                        {
+                                            Console.WriteLine($"[ViewportRenderer] Material {matGuid.Value} has CullingMode={mat.CullingMode} (enum={submeshCull})");
+                                        }
                                     }
                                 }
                             }
@@ -929,6 +969,9 @@ namespace Editor.Rendering
     private int _reflectionFbo = 0, _reflectionTex = 0, _reflectionDepthRbo = 0;
     private int _reflectionW = 512, _reflectionH = 512;
     private float _reflectionResolutionScale = 0.5f; // 0.5 = half resolution for performance
+    private float _cachedWaterPlaneHeight = 0f;
+    private bool _waterPlaneHeightDirty = true;
+    private System.Diagnostics.Stopwatch _waterPlaneHeightTimer = System.Diagnostics.Stopwatch.StartNew();
     // Return the post-processed texture when available, otherwise the raw color texture
     public int ColorTexture => (_postTex != 0 && _postTexHealthy) ? _postTex : _colorTex;
 
@@ -2554,6 +2597,8 @@ void main(){
         {
             if (_scene?.Entities == null || _pbrShader == null) return;
 
+            // Reflection render start log removed to avoid high-frequency logging
+
             try
             {
                 // NOTE: DO NOT set face culling here - it's already configured by the caller
@@ -2565,7 +2610,7 @@ void main(){
                 // Update Global UBO with reflection matrices
                 _globalUniforms.ViewMatrix = viewMatrix;
                 _globalUniforms.ProjectionMatrix = projMatrix;
-                _globalUniforms.ViewProjectionMatrix = viewMatrix * projMatrix;
+                _globalUniforms.ViewProjectionMatrix = viewMatrix * projMatrix; // FIXED: View * Proj (same as UpdateGlobalUniforms line 5170)
 
                 // Get camera position from view matrix (inverse translation)
                 var invView = viewMatrix.Inverted();
@@ -2605,6 +2650,26 @@ void main(){
                     // Check if material is missing
                     bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
                     var materialGuid = hasMaterial ? meshRenderer.MaterialGuid!.Value : Guid.Empty;
+
+                    // CRITICAL: Skip rendering water planes into the reflection texture to avoid
+                    // self-reflection and inverted-face artifacts. Water shader renders the
+                    // planar reflection itself and sampling the water into the reflection pass
+                    // often produces the visual inversion you're seeing.
+                    if (hasMaterial)
+                    {
+                        try
+                        {
+                            var matAsset = Engine.Assets.AssetDatabase.LoadMaterial(materialGuid);
+                            if (!string.IsNullOrEmpty(matAsset.Shader) &&
+                                (string.Equals(matAsset.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(matAsset.Shader, "Water", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                // Skip drawing the water plane into the reflection buffer
+                                continue;
+                            }
+                        }
+                        catch { }
+                    }
 
                     // Bind material if changed or forced rebind requested
                     if (materialGuid != lastBound || _forceMaterialRebind || !hasMaterial)
@@ -2684,7 +2749,10 @@ void main(){
                     }
                 }
 
+                // Reflection render summary log removed to avoid high-frequency logging
+
                 // Render terrain in reflection (simplified for performance)
+                int terrainCount = 0;
                 if (_terrainRenderer != null)
                 {
                     foreach (var entity in _scene.Entities)
@@ -2738,6 +2806,7 @@ void main(){
                                         shadowSlopeScale: 1.5f,
                                         globalUBO: _globalUBO
                                     );
+                                    terrainCount++;
                                 }
                                 catch (Exception ex)
                                 {
@@ -2746,6 +2815,77 @@ void main(){
                             }
                         }
                     }
+                }
+                // Reflection debug logging removed to avoid runtime spam and frame hitches
+
+                // Render vegetation instances (trees, grass, etc.)
+                if (_vegetationRenderer != null)
+                {
+                    try
+                    {
+                        var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                        float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+
+                        var viewMatGL = new OpenTK.Mathematics.Matrix4(
+                            viewMatrix.M11, viewMatrix.M12, viewMatrix.M13, viewMatrix.M14,
+                            viewMatrix.M21, viewMatrix.M22, viewMatrix.M23, viewMatrix.M24,
+                            viewMatrix.M31, viewMatrix.M32, viewMatrix.M33, viewMatrix.M34,
+                            viewMatrix.M41, viewMatrix.M42, viewMatrix.M43, viewMatrix.M44
+                        );
+                        var projMatGL = new OpenTK.Mathematics.Matrix4(
+                            projMatrix.M11, projMatrix.M12, projMatrix.M13, projMatrix.M14,
+                            projMatrix.M21, projMatrix.M22, projMatrix.M23, projMatrix.M24,
+                            projMatrix.M31, projMatrix.M32, projMatrix.M33, projMatrix.M34,
+                            projMatrix.M41, projMatrix.M42, projMatrix.M43, projMatrix.M44
+                        );
+
+                        var windDir = weather.GetWindDirection();
+                        var windDirGL = new OpenTK.Mathematics.Vector2(windDir.X, windDir.Y);
+                        var camPosGL = new OpenTK.Mathematics.Vector3(
+                            _globalUniforms.CameraPosition.X,
+                            _globalUniforms.CameraPosition.Y,
+                            _globalUniforms.CameraPosition.Z
+                        );
+                        var lightDirGL = new OpenTK.Mathematics.Vector3(
+                            _globalUniforms.DirLightDirection.X,
+                            _globalUniforms.DirLightDirection.Y,
+                            _globalUniforms.DirLightDirection.Z
+                        );
+                        var lightColorGL = new OpenTK.Mathematics.Vector3(
+                            _globalUniforms.DirLightColor.X,
+                            _globalUniforms.DirLightColor.Y,
+                            _globalUniforms.DirLightColor.Z
+                        );
+                        var ambientColorGL = new OpenTK.Mathematics.Vector3(
+                            _globalUniforms.AmbientColor.X,
+                            _globalUniforms.AmbientColor.Y,
+                            _globalUniforms.AmbientColor.Z
+                        );
+
+                        // Render vegetation without shadows in reflection
+                        _vegetationRenderer.Render(
+                            viewMatGL, projMatGL, time,
+                            weather.WindStrength, windDirGL, weather.WindSpeed, weather.WindGustiness,
+                            weather.BranchAmplitude, weather.BranchSpeed, weather.BranchTurbulence,
+                            weather.TrunkStiffness, weather.TrunkBendAmount,
+                            weather.LeafFlutter, weather.LeafFlutterSpeed,
+                            weather.RainIntensity, weather.SnowAccumulation, weather.SnowIntensity, weather.Wetness,
+                            weather.SnowSlopeMin, weather.SnowSlopeMax, weather.SnowSparkle, weather.SnowDisplacement,
+                            camPosGL, lightDirGL, lightColorGL, ambientColorGL,
+                            0, // objectId
+                            // Shadow parameters (disabled for reflection)
+                            0, null, false,
+                            0.0f, 2048f, 0.0f,
+                            // Shadow quality parameters
+                            0, 0.0f, 0, 1.0f
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Reflection: Error rendering vegetation: {ex.Message}", "ViewportRenderer");
+                    }
+
+                    // Reflection debug logging removed to avoid runtime spam and frame hitches
                 }
 
                 // Render skybox last (for proper depth testing)
@@ -2763,10 +2903,7 @@ void main(){
                     catch { }
                 }
 
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                {
-                    LogManager.LogVerbose($"Rendered {renderedCount} objects in reflection", "ViewportRenderer");
-                }
+                // Reflection debug logging removed to avoid runtime spam and frame hitches
 
                 // Restore normal face culling
                 GL.CullFace(TriangleFace.Back);
@@ -2781,11 +2918,72 @@ void main(){
         }
 
         /// <summary>
+        /// Find the Y position of water plane in the scene by searching for entities with WaterForward shader
+        /// Uses caching to avoid searching every frame (refreshes every second)
+        /// </summary>
+        private float GetWaterPlaneHeight()
+        {
+            // Invalidate cache every second to detect water plane movement
+            if (_waterPlaneHeightTimer.Elapsed.TotalSeconds >= 1.0)
+            {
+                _waterPlaneHeightDirty = true;
+                _waterPlaneHeightTimer.Restart();
+            }
+
+            // Use cached value if available and not dirty
+            if (!_waterPlaneHeightDirty)
+            {
+                return _cachedWaterPlaneHeight;
+            }
+
+            if (_scene?.Entities == null)
+            {
+                _cachedWaterPlaneHeight = 0f;
+                _waterPlaneHeightDirty = false;
+                return 0f;
+            }
+
+            foreach (var entity in _scene.Entities)
+            {
+                if (!entity.Active) continue;
+
+                var meshRenderer = entity.GetComponent<Engine.Components.MeshRendererComponent>();
+                if (meshRenderer == null || !meshRenderer.HasMeshToRender()) continue;
+
+                // Check if this entity uses the WaterForward shader
+                if (meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty)
+                {
+                    try
+                    {
+                        var asset = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid.Value);
+                        if (string.Equals(asset.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Found a water plane! Cache and return its Y position
+                            var worldPos = entity.Transform.GetWorldPosition();
+                            _cachedWaterPlaneHeight = worldPos.Y;
+                            _waterPlaneHeightDirty = false;
+                            return _cachedWaterPlaneHeight;
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            // No water found, default to Y=0
+            _cachedWaterPlaneHeight = 0f;
+            _waterPlaneHeightDirty = false;
+            return 0f;
+        }
+
+        /// <summary>
         /// NEW: Render planar reflection - simple and clean implementation
         /// </summary>
         private void RenderReflectionPass(float waterLevel = 0f)
         {
             if (_reflectionFbo == 0) return;
+
+            // DEBUG: Log water level
+            // Reflection debug logging removed to avoid runtime spam and frame hitches
 
             // Save state
             var savedViewport = new int[4];
@@ -2799,31 +2997,45 @@ void main(){
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _reflectionFbo);
             GL.Viewport(0, 0, _reflectionW, _reflectionH);
             GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
-            GL.ClearColor(0.5f, 0.7f, 0.9f, 1.0f);
+
+            // Clear with sky color (will be replaced by proper skybox rendering later)
+            GL.ClearColor(0.5f, 0.7f, 0.9f, 1.0f); // Light blue sky
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-            // Calculate reflected camera (mirror across water plane)
+            // FIXED: Reflect camera position, then invert view direction
             Vector3 camPos = CameraPosition();
-            Vector3 reflectedCamPos = new Vector3(camPos.X, 2f * waterLevel - camPos.Y, camPos.Z);
-            Vector3 reflectedTarget = new Vector3(_target.X, 2f * waterLevel - _target.Y, _target.Z);
 
-            // Standard LookAt with normal up vector
-            var reflectedView = Matrix4.LookAt(
-                new Vector3(reflectedCamPos.X, reflectedCamPos.Y, reflectedCamPos.Z),
-                new Vector3(reflectedTarget.X, reflectedTarget.Y, reflectedTarget.Z),
-                Vector3.UnitY
-            );
+            // Reflect camera position across water plane
+            Vector3 reflectedCamPos = camPos;
+            reflectedCamPos.Y = 2.0f * waterLevel - camPos.Y;
 
-            float aspect = _reflectionW / Math.Max(1.0f, (float)_reflectionH);
-            var reflectedProj = CreateProjectionMatrix(aspect);
+            // Calculate view direction and reflect ONLY the Y component
+            Vector3 viewDir = Vector3.Normalize(_target - camPos);
+            Vector3 reflectedViewDir = new Vector3(viewDir.X, -viewDir.Y, viewDir.Z);
 
-            // Enable clipping for reflection pass
-            // Clip geometry BELOW the water plane (in world space)
-            // Normal points UP (+Y), clip fragments where Y < waterLevel
-            //
-            // Add small offset to prevent terrain exactly at water level from appearing
-            _globalUniforms.ClipPlaneEnabled = 1;
-            _globalUniforms.ClipPlane = new Vector4(0f, 1f, 0f, -(waterLevel + 0.01f));
+            // Calculate new target from reflected position and direction
+            Vector3 reflectedTarget = reflectedCamPos + reflectedViewDir * 100.0f;
+
+            // Create view matrix for reflection using the same LH + Z-flip convention
+            // as the main camera to keep matrix handedness consistent.
+            var reflectedViewLH = LookAtLH(reflectedCamPos, reflectedTarget, Vector3.UnitY);
+            var reflectedView = reflectedViewLH * ZFlip;
+
+            // CRITICAL: Use MAIN CAMERA aspect ratio, NOT reflection texture aspect!
+            // The reflection texture can be any size, but the frustum must match the main camera
+            // to properly cover all visible water surface
+            float mainCameraAspect = _w / Math.Max(1.0f, (float)_h);
+            var reflectedProj = CreateProjectionMatrix(mainCameraAspect);
+
+            // DISABLE clipping for now - it's clipping everything!
+            // TODO: Fix clipping plane equation to keep geometry BELOW water (not above)
+            _globalUniforms.ClipPlaneEnabled = 0; // DISABLED FOR TESTING
+            _globalUniforms.ClipPlane = new Vector4(0f, 1f, 0f, -waterLevel);
+
+            // CRITICAL: Enable OpenGL clip distance feature (required for gl_ClipDistance in shaders)
+            GL.Enable(EnableCap.ClipDistance0);
+
+            // DEBUG: Log clipping plane (disabled to avoid high-frequency logging)
 
             // Render reflection with correct culling
             // The reflected camera is mirrored, so we need to flip the front face definition
@@ -2835,7 +3047,7 @@ void main(){
 
                 GL.Enable(EnableCap.CullFace);
                 GL.CullFace(TriangleFace.Back); // Cull back faces as normal
-                GL.FrontFace(FrontFaceDirection.Cw); // Flip for reflected camera (Y-mirrored)
+                GL.FrontFace(FrontFaceDirection.Cw); // Flip winding for Y-mirrored reflection camera
 
                 // Compute oblique clip plane in reflected camera space to clip geometry below water
                 var planeWorld = new Vector4(0f, 1f, 0f, -(waterLevel + 0.01f));
@@ -2856,13 +3068,23 @@ void main(){
                     var obliqueProj = CalculateObliqueMatrix(reflectedProj, clipCam);
 
                     // Render the environment into the reflection texture using the reflected camera
-                    RenderEnvironmentForReflection(reflectedView, obliqueProj);
+                    // TEMP: Use regular projection since clipping is disabled
+                    RenderEnvironmentForReflection(reflectedView, reflectedProj); // CHANGED from obliqueProj
+
+                    // Reflection debug logging removed to avoid runtime spam and frame hitches
 
                     // Publish reflection texture + view-proj for shaders to sample
                     try
                     {
                         Engine.Rendering.ReflectionBuffer.ReflectionTexture = _reflectionTex;
-                        Engine.Rendering.ReflectionBuffer.ReflectionViewProj = obliqueProj * reflectedView;
+                        // Use standard projection (not oblique) for UV mapping
+                        // The oblique projection is only for clipping during render, not for UV calculation
+                        // CRITICAL: Keep original convention: publish View * Proj to match global uniforms and existing code
+                        Engine.Rendering.ReflectionBuffer.ReflectionViewProj = reflectedView * reflectedProj;
+
+                        // DEBUG: Log reflection ViewProj matrix
+                        var vp = reflectedView * reflectedProj;
+                        // Reflection debug logging removed to avoid runtime spam and frame hitches
                     }
                     catch { }
                 }
@@ -2889,6 +3111,9 @@ void main(){
             _globalUniforms.ViewProjectionMatrix = savedViewProj;
             _globalUniforms.CameraPosition = savedCamPos;
             _globalUniforms.ClipPlaneEnabled = 0;
+
+            // Disable clip distance feature for normal rendering
+            GL.Disable(EnableCap.ClipDistance0);
 
             GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
             GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
@@ -3354,6 +3579,13 @@ void main(){
                             }
                         }
 
+                        // Determine shadow settings for vegetation
+                        var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
+                        var lighting = _scene != null ? Engine.Scene.Lighting.Build(_scene) : new Engine.Scene.LightingState();
+                        bool shadowsAllowed = shadowSettings.Enabled && lighting.HasDirectional && lighting.DirCastShadows;
+                        int vegShadowTexture = (shadowsAllowed && _shadowManager != null) ? _shadowManager.ShadowTexture : 0;
+                        OpenTK.Mathematics.Matrix4? vegShadowMatrix = (shadowsAllowed && _shadowManager != null) ? _shadowManager.LightSpaceMatrix : (OpenTK.Mathematics.Matrix4?)null;
+
                         _vegetationRenderer.Render(
                             _viewGL, _projGL, currentTime,
                             weather.WindStrength, windDir, weather.WindSpeed, weather.WindGustiness,
@@ -3363,7 +3595,12 @@ void main(){
                             weather.RainIntensity, weather.SnowAccumulation, weather.SnowIntensity, weather.Wetness,
                             weather.SnowSlopeMin, weather.SnowSlopeMax, weather.SnowSparkle, weather.SnowDisplacement,
                             vegetationCamPos, lightDir, lightColor, ambientColor,
-                            0 // objectId
+                            0, // objectId
+                            // Shadow parameters
+                            vegShadowTexture, vegShadowMatrix, shadowsAllowed,
+                            shadowSettings.ShadowBias, _shadowManager?.ShadowMapSize ?? 2048f, shadowSettings.ShadowStrength,
+                            // Shadow quality parameters (improved shadow system)
+                            shadowSettings.ShadowQuality, shadowSettings.ShadowNormalBias, shadowSettings.PCFSamples, shadowSettings.LightSize
                         );
                         // (no max draw distance) - vegetation always rendered regardless of per-layer distance
                     }
@@ -3412,6 +3649,14 @@ void main(){
             // NOTE: _sceneColorTex is already populated by ApplySSAOBeforeTransparents() if SSAO is enabled
             // If SSAO is disabled, we need to manually copy _colorTex -> _sceneColorTex
             // Check if _sceneColorTex needs manual copy (SSAO would have already done it)
+
+            // Bind depth texture to unit 18 for water shader (foam and depth fade)
+            if (_depthTex != 0)
+            {
+                GL.ActiveTexture(TextureUnit.Texture18);
+                GL.BindTexture(TextureTarget.Texture2D, _depthTex);
+            }
+
             if (_sceneColorTex != 0)
             {
                 // Bind scene color texture to unit 19 for glass shader refraction
@@ -3950,6 +4195,21 @@ void main(){
                 }
             }
 
+            // === Render Vegetation Instances (GPU Instancing) ===
+            if (_vegetationRenderer != null && _shadowManager != null)
+            {
+                try
+                {
+                    var camPos = CameraPosition();
+                    float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                    _vegetationRenderer.RenderShadowPass(_shadowManager.LightSpaceMatrix, camPos, time);
+                }
+                catch (Exception ex)
+                {
+                    LogManager.LogWarning($"Shadow: Failed to render vegetation: {ex.Message}", "ViewportRenderer");
+                }
+            }
+
             GL.BindVertexArray(0);
         }
 
@@ -3983,6 +4243,12 @@ void main(){
             shader.SetFloat("u_ShadowMapSize", _shadowManager.ShadowMapSize);
             shader.SetFloat("u_ShadowStrength", Editor.State.EditorSettings.ShadowsSettings.ShadowStrength);
             shader.SetFloat("u_ShadowDistance", Editor.State.EditorSettings.ShadowsSettings.ShadowDistance);
+
+            // === Shadow Quality Settings (new improved shadow system) ===
+            shader.SetInt("u_ShadowQuality", Editor.State.EditorSettings.ShadowsSettings.ShadowQuality);
+            shader.SetFloat("u_ShadowNormalBias", Editor.State.EditorSettings.ShadowsSettings.ShadowNormalBias);
+            shader.SetInt("u_PCFSamples", Editor.State.EditorSettings.ShadowsSettings.PCFSamples);
+            shader.SetFloat("u_LightSize", Editor.State.EditorSettings.ShadowsSettings.LightSize);
 
             // Bind shadow map texture
             GL.ActiveTexture(TextureUnit.Texture17);
@@ -5713,12 +5979,14 @@ void main(){
             GL.Viewport(0, 0, _w, _h);
 
             // === WATER REFLECTION PASS ===
-            // Simple behavior: render planar reflection around world Y=0 so water materials can sample it.
+            // Render planar reflection at the actual water plane height
             try
             {
-                float waterLevel = 0f;
                 if (_reflectionFbo != 0)
                 {
+                    // Find the actual water plane height from the scene
+                    float waterLevel = GetWaterPlaneHeight();
+
                     // Render every frame for now (could be throttled later)
                     RenderReflectionPass(waterLevel);
                 }
@@ -5942,6 +6210,40 @@ void main(){
                             GL.PatchParameter(PatchParameterInt.PatchVertices, 4);
 
                             // Planar reflection uniforms removed
+                        }
+
+                        // Bind planar reflection texture for WaterForward shader
+                        if (string.Equals(mr.ShaderName, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (_reflectionTex != 0 && Engine.Rendering.ReflectionBuffer.ReflectionTexture != 0)
+                            {
+                                GL.ActiveTexture(TextureUnit.Texture22);
+                                GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.ReflectionBuffer.ReflectionTexture);
+                            }
+                            // Set reflection flip parameters from material properties
+                            try
+                            {
+                                shaderToUse.SetInt("u_FlipReflectionX", mr.WaterForwardFlipReflectionX ? 1 : 0);
+                                shaderToUse.SetInt("u_FlipReflectionY", mr.WaterForwardFlipReflectionY ? 1 : 0);
+                                shaderToUse.SetInt("u_PlanarReflectionTex", 22);
+                            }
+                            catch { }
+                        }
+
+                        // If shader is WaterForward, also set the reflection view-proj matrix and distortion
+                        if (string.Equals(mr.ShaderName, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                // Publish the reflection ViewProj matrix to the shader
+                                shaderToUse.SetMat4("u_ReflectionViewProj", Engine.Rendering.ReflectionBuffer.ReflectionViewProj);
+
+                                // Use the material's refraction strength as a decent default distortion for reflections
+                                // MaterialRuntime exposes WaterForwardRefractionStrength
+                                float reflDist = mr.WaterForwardRefractionStrength;
+                                shaderToUse.SetFloat("u_RefractionStrength", reflDist);
+                            }
+                            catch { }
                         }
 
                         // Get weather parameters from WeatherManager (global system)
@@ -6330,6 +6632,32 @@ void main(){
                             {
                                 GL.ActiveTexture(TextureUnit.Texture19);
                                 GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+                            }
+                        }
+
+                        // CRITICAL: Re-bind depth texture for water shader (foam and depth fade)
+                        // MaterialRuntime.Bind() binds many textures which can disrupt the slot 18 binding
+                        if (string.Equals(mr3.ShaderName, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (_depthTex != 0)
+                            {
+                                GL.ActiveTexture(TextureUnit.Texture18);
+                                GL.BindTexture(TextureTarget.Texture2D, _depthTex);
+                            }
+                            if (_sceneColorTex != 0)
+                            {
+                                GL.ActiveTexture(TextureUnit.Texture19);
+                                GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
+                            }
+                            // CRITICAL: Re-bind planar reflection texture (slot 22)
+                            // MaterialRuntime.Bind() may have overwritten this binding
+                            if (_reflectionTex != 0 && Engine.Rendering.ReflectionBuffer.ReflectionTexture != 0)
+                            {
+                                GL.ActiveTexture(TextureUnit.Texture22);
+                                GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.ReflectionBuffer.ReflectionTexture);
+
+                                // DEBUG: Log texture binding
+                                // Water debug logging removed to avoid runtime spam and frame hitches
                             }
                         }
 
@@ -8879,6 +9207,10 @@ void main(){
                                 _w, _h, 1
                             );
 
+                            // Bind depth texture to unit 18 for water shader (foam and depth fade)
+                            GL.ActiveTexture(TextureUnit.Texture18);
+                            GL.BindTexture(TextureTarget.Texture2D, _depthTex);
+
                             // Bind scene color texture to unit 19 for glass shader refraction
                             GL.ActiveTexture(TextureUnit.Texture19);
                             GL.BindTexture(TextureTarget.Texture2D, _sceneColorTex);
@@ -8937,6 +9269,10 @@ void main(){
                                 _sceneColorTex, ImageTarget.Texture2D, 0, 0, 0, 0,
                                 _w, _h, 1
                             );
+
+                            // Bind depth texture to unit 18 for water shader (foam and depth fade)
+                            GL.ActiveTexture(TextureUnit.Texture18);
+                            GL.BindTexture(TextureTarget.Texture2D, _depthTex);
 
                             // Bind scene color texture to unit 19 for glass shader refraction
                             GL.ActiveTexture(TextureUnit.Texture19);

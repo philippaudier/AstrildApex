@@ -143,8 +143,32 @@ namespace Engine.Components
         // === TERRAIN STREAMING SETTINGS ===
         // Infinite terrain streaming support (opt-in)
 
+        private TerrainMode _mode = TerrainMode.SingleTerrain;
+
         [Engine.Serialization.SerializableAttribute("terrainMode")]
-        public TerrainMode Mode { get; set; } = TerrainMode.SingleTerrain;
+        public TerrainMode Mode
+        {
+            get => _mode;
+            set
+            {
+                if (_mode != value)
+                {
+                    var oldMode = _mode;
+                    _mode = value;
+                    try
+                    {
+                        ModeChanged?.Invoke(oldMode, _mode);
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Event raised when terrain mode changes (e.g., from SingleTerrain to InfiniteStreaming).
+        /// Parameters: (oldMode, newMode)
+        /// </summary>
+        public event System.Action<TerrainMode, TerrainMode>? ModeChanged;
 
         [Engine.Serialization.SerializableAttribute("streamingTileSize")]
         public float StreamingTileSize { get; set; } = 100f;  // World size of each terrain tile (meters)

@@ -73,6 +73,21 @@ uniform vec2 u_ScreenSize;
 // Debug: show shadow projection / sampling when non-zero
 uniform int u_DebugShowShadows;
 
+// === WATER CAUSTICS (for objects below water) ===
+uniform int   u_WaterCausticsEnabled;  // 0 = off, 1 = on
+uniform float u_WaterCausticsStrength;
+uniform float u_WaterCausticsScale;
+uniform float u_WaterCausticsSpeed;
+uniform vec3  u_WaterCausticsColor;
+uniform float u_WaterCausticsSplit;      // Chromatic aberration
+uniform float u_WaterCausticsDistortion; // Physics strength
+uniform sampler2D u_WaterNormalTex;      // Water surface normal map (for caustics calculation)
+uniform sampler2D u_WaterNormalTex2;     // Second water normal layer
+uniform float u_WaterNormalStrength;
+uniform float u_WaterNormalStrength2;
+uniform float u_WaterNormalBlend;
+uniform float u_Time;                    // For caustics animation
+
 // === WEATHER PARAMETERS ===
 uniform float u_RainIntensity;
 uniform float u_SnowAccumulation;  // Accumulated snow (can exceed 1.0)
@@ -325,6 +340,75 @@ vec3 SampleTriplanarNormalMap(sampler2D tex, vec3 worldPos, vec3 worldNormal, fl
 
     vec3 blended = worldNormalX * bw.x + worldNormalY * bw.y + worldNormalZ * bw.z;
     return blended;
+}
+
+/// <summary>
+/// Decode normal from normal map texture (tangent space)
+/// </summary>
+vec3 decodeWaterNormalMap(sampler2D normalTex, vec2 uv, float strength)
+{
+    vec3 normalMap = texture(normalTex, uv).rgb;
+    normalMap = normalMap * 2.0 - 1.0; // Convert from [0,1] to [-1,1]
+    normalMap.xy *= strength;
+    normalMap.z = sqrt(max(0.0, 1.0 - dot(normalMap.xy, normalMap.xy)));
+    return normalize(normalMap);
+}
+
+/// <summary>
+/// Generate physically-based caustics using water surface normals
+/// Simulates light refraction through animated water surface above this position
+/// </summary>
+vec3 generateCausticsFromNormals(vec2 worldPos, float time)
+{
+    // Sample animated water normals at this position (simulating water surface above this point)
+    vec2 uv1 = worldPos * u_WaterCausticsScale + vec2(time * u_WaterCausticsSpeed * 0.3, time * u_WaterCausticsSpeed * 0.2);
+    vec2 uv2 = worldPos * u_WaterCausticsScale * 1.3 - vec2(time * u_WaterCausticsSpeed * 0.4, -time * u_WaterCausticsSpeed * 0.3);
+
+    // Sample normals from both layers (these represent the water surface)
+    vec3 normal1 = decodeWaterNormalMap(u_WaterNormalTex, uv1, u_WaterNormalStrength);
+    vec3 normal2 = decodeWaterNormalMap(u_WaterNormalTex2, uv2, u_WaterNormalStrength2);
+    vec3 waterNormal = normalize(mix(normal1, normal2, u_WaterNormalBlend));
+
+    // Calculate light refraction direction based on water normal
+    // Snell's law simplification: water normal tilts refract light rays
+    vec2 refractOffset = waterNormal.xy * u_WaterCausticsDistortion;
+
+    // === CHROMATIC ABERRATION ===
+    // Different wavelengths refract differently (RGB split)
+    float split = u_WaterCausticsSplit;
+    vec2 offsetR = refractOffset * (1.0 + split);  // Red refracts less
+    vec2 offsetG = refractOffset;                   // Green (middle wavelength)
+    vec2 offsetB = refractOffset * (1.0 - split);  // Blue refracts more
+
+    // === CALCULATE DIVERGENCE FOR CAUSTICS INTENSITY ===
+    // Areas where light rays converge = bright caustics
+    float epsilon = 0.02;
+
+    // Sample neighboring normals for RED channel
+    vec3 nR_x = decodeWaterNormalMap(u_WaterNormalTex, uv1 + vec2(epsilon, 0), u_WaterNormalStrength);
+    vec3 nR_y = decodeWaterNormalMap(u_WaterNormalTex, uv1 + vec2(0, epsilon), u_WaterNormalStrength);
+
+    // Sample neighboring normals for GREEN channel
+    vec3 nG_x = decodeWaterNormalMap(u_WaterNormalTex, uv2 + vec2(epsilon, 0), u_WaterNormalStrength);
+    vec3 nG_y = decodeWaterNormalMap(u_WaterNormalTex, uv2 + vec2(0, epsilon), u_WaterNormalStrength);
+
+    // Calculate divergence (gradient magnitude) for each color channel
+    float divR = length(normal1 - nR_x) + length(normal1 - nR_y);
+    float divG = length(waterNormal - nG_x) + length(waterNormal - nG_y);
+    float divB = length(normal2 - nG_x) + length(normal2 - nG_y);
+
+    // Convert divergence to caustics brightness
+    // High divergence = light rays converging = bright spot
+    vec3 caustics;
+    caustics.r = pow(saturate(divR * 15.0), 2.5);
+    caustics.g = pow(saturate(divG * 15.0), 2.5);
+    caustics.b = pow(saturate(divB * 15.0), 2.5);
+
+    // Add high-frequency detail to make caustics look more realistic
+    float detail = sin(uv1.x * 10.0 + time) * sin(uv1.y * 10.0 - time * 0.7) * 0.1 + 0.9;
+    caustics *= detail;
+
+    return caustics * u_WaterCausticsColor;
 }
 
 void main(){
@@ -591,6 +675,12 @@ void main(){
     // }
 
     vec3 color = ambient + Lo;
+
+    // Apply water caustics if enabled (for objects below water surface)
+    if (u_WaterCausticsEnabled == 1) {
+        vec3 caustics = generateCausticsFromNormals(vWorldPos.xz, u_Time);
+        color += caustics * u_WaterCausticsStrength;
+    }
 
     // Apply fog
     color = processFog(color, vWorldPos);
