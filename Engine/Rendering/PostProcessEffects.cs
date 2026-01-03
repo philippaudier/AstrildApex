@@ -2524,7 +2524,19 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2D, _blurTexture);
             _combineShader.SetInt("u_SSAOTexture", 1);
 
+            // Bind depth texture for bilateral upscale
+            GL.ActiveTexture(TextureUnit.Texture2);
+            GL.BindTexture(TextureTarget.Texture2D, context.DepthTexture);
+            _combineShader.SetInt("u_DepthTexture", 2);
+
             _combineShader.SetFloat("u_Intensity", intensity);
+
+            // Set inverse projection for depth reconstruction
+            if (context.ProjectionMatrix.HasValue)
+            {
+                var invProj = context.ProjectionMatrix.Value.Inverted();
+                _combineShader.SetMat4("u_InvProjection", invProj);
+            }
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }

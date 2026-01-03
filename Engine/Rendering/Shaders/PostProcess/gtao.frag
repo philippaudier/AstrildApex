@@ -208,7 +208,7 @@ void main()
     float distanceFade = 1.0 - smoothstep(u_MaxDistance * 0.8, u_MaxDistance, -viewPos.z);
     if (distanceFade <= 0.01)
     {
-        FragColor = vec4(viewNormal, 1.0);
+        FragColor = vec4(viewNormal * 0.5 + 0.5, 1.0); // Encode normal in [0,1] range
         return;
     }
 

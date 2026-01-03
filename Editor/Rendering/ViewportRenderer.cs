@@ -967,11 +967,12 @@ namespace Editor.Rendering
     
     // === Water Reflection FBO ===
     private int _reflectionFbo = 0, _reflectionTex = 0, _reflectionDepthRbo = 0;
+    private int _reflectionPostFbo = 0, _reflectionPostTex = 0; // For post-processing ping-pong
     private int _reflectionW = 512, _reflectionH = 512;
     private float _reflectionResolutionScale = 0.5f; // 0.5 = half resolution for performance
     private float _cachedWaterPlaneHeight = 0f;
-    private bool _waterPlaneHeightDirty = true;
-    private System.Diagnostics.Stopwatch _waterPlaneHeightTimer = System.Diagnostics.Stopwatch.StartNew();
+    private float _cachedClipPlaneOffset = 0.05f;
+    private int _cachedReflectionResolution = 1024;
     // Return the post-processed texture when available, otherwise the raw color texture
     public int ColorTexture => (_postTex != 0 && _postTexHealthy) ? _postTex : _colorTex;
 
@@ -2525,14 +2526,25 @@ void main(){
         
         private void InitReflectionFramebuffer()
         {
-            // Calculate reflection texture resolution
-            _reflectionW = Math.Max(1, (int)(_w * _reflectionResolutionScale));
-            _reflectionH = Math.Max(1, (int)(_h * _reflectionResolutionScale));
+            // Use resolution from water material properties (if available)
+            // Otherwise fallback to resolution scale based on viewport size
+            if (_cachedReflectionResolution > 0)
+            {
+                _reflectionW = _cachedReflectionResolution;
+                _reflectionH = _cachedReflectionResolution;
+            }
+            else
+            {
+                _reflectionW = Math.Max(1, (int)(_w * _reflectionResolutionScale));
+                _reflectionH = Math.Max(1, (int)(_h * _reflectionResolutionScale));
+            }
 
             // Clean up old resources
             if (_reflectionTex != 0) GL.DeleteTexture(_reflectionTex);
             if (_reflectionDepthRbo != 0) GL.DeleteRenderbuffer(_reflectionDepthRbo);
             if (_reflectionFbo != 0) GL.DeleteFramebuffer(_reflectionFbo);
+            if (_reflectionPostTex != 0) GL.DeleteTexture(_reflectionPostTex);
+            if (_reflectionPostFbo != 0) GL.DeleteFramebuffer(_reflectionPostFbo);
 
             // Create reflection framebuffer
             _reflectionFbo = GL.GenFramebuffer();
@@ -2559,6 +2571,27 @@ void main(){
             if (status != FramebufferErrorCode.FramebufferComplete)
             {
                 LogManager.LogWarning($"Reflection FBO incomplete: {status}", "ViewportRenderer");
+            }
+
+            // Create post-processing FBO for reflection (for tonemapping/auto-exposure)
+            _reflectionPostFbo = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, _reflectionPostFbo);
+
+            // Create post-processing texture
+            _reflectionPostTex = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, _reflectionPostTex);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, _reflectionW, _reflectionH, 0, PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _reflectionPostTex, 0);
+
+            // Check post-processing framebuffer status
+            var postStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+            if (postStatus != FramebufferErrorCode.FramebufferComplete)
+            {
+                LogManager.LogWarning($"Reflection Post FBO incomplete: {postStatus}", "ViewportRenderer");
             }
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -2628,6 +2661,15 @@ void main(){
 
                 _pbrShader.Use();
 
+                // CRITICAL: Set clipping uniforms directly on shader (UBO clipping not working - driver/OpenGL issue?)
+                _pbrShader.SetInt("u_ClipPlaneEnabled", 1);
+                _pbrShader.SetVec4("u_ClipPlane", new OpenTK.Mathematics.Vector4(
+                    _globalUniforms.ClipPlane.X,
+                    _globalUniforms.ClipPlane.Y,
+                    _globalUniforms.ClipPlane.Z,
+                    _globalUniforms.ClipPlane.W
+                ));
+
                 // Disable shadows and SSAO for reflection (performance optimization)
                 _pbrShader.SetInt("u_SSAOEnabled", 0);
                 _pbrShader.SetInt("u_UseShadows", 0);
@@ -2646,6 +2688,9 @@ void main(){
                     // Only render mesh entities
                     var meshRenderer = entity.GetComponent<Engine.Components.MeshRendererComponent>();
                     if (meshRenderer == null || !meshRenderer.HasMeshToRender()) continue;
+
+                    // DEBUG: Log which entity is being rendered in reflection
+                    // Console.WriteLine($"[Reflection] Rendering entity: {entity.Name} at Y={entity.Transform.Position.Y}");
 
                     // Check if material is missing
                     bool hasMaterial = meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty;
@@ -2783,6 +2828,17 @@ void main(){
                                         _globalUniforms.DirLightColor.Z
                                     );
 
+                                    // CRITICAL: Pre-configure clipping uniforms on terrain shader BEFORE calling RenderTerrain
+                                    // The terrain renderer will call shader.Use() internally, so we need to set uniforms
+                                    // using a different approach: we'll modify the approach to set them after shader.Use()
+                                    
+                                    // Get terrain shader handle (accessing private field via TerrainRenderer is not possible)
+                                    // Instead, we'll use a callback approach: render terrain, then patch shader immediately
+                                    
+                                    // Store clipping state for later injection
+                                    var clipEnabled = _globalUniforms.ClipPlaneEnabled;
+                                    var clipPlane = _globalUniforms.ClipPlane;
+
                                     // Render terrain with MINIMAL quality for reflection (no shadows, no SSAO)
                                     _terrainRenderer.RenderTerrain(
                                         terrain,
@@ -2806,6 +2862,7 @@ void main(){
                                         shadowSlopeScale: 1.5f,
                                         globalUBO: _globalUBO
                                     );
+                                    
                                     terrainCount++;
                                 }
                                 catch (Exception ex)
@@ -2919,27 +2976,15 @@ void main(){
 
         /// <summary>
         /// Find the Y position of water plane in the scene by searching for entities with WaterForward shader
-        /// Uses caching to avoid searching every frame (refreshes every second)
+        /// Also updates reflection parameters (resolution, clip plane offset) from water material
         /// </summary>
         private float GetWaterPlaneHeight()
         {
-            // Invalidate cache every second to detect water plane movement
-            if (_waterPlaneHeightTimer.Elapsed.TotalSeconds >= 1.0)
-            {
-                _waterPlaneHeightDirty = true;
-                _waterPlaneHeightTimer.Restart();
-            }
-
-            // Use cached value if available and not dirty
-            if (!_waterPlaneHeightDirty)
-            {
-                return _cachedWaterPlaneHeight;
-            }
+            // Always refresh reflection parameters to ensure UI changes are picked up immediately
 
             if (_scene?.Entities == null)
             {
                 _cachedWaterPlaneHeight = 0f;
-                _waterPlaneHeightDirty = false;
                 return 0f;
             }
 
@@ -2958,10 +3003,32 @@ void main(){
                         var asset = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid.Value);
                         if (string.Equals(asset.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
                         {
-                            // Found a water plane! Cache and return its Y position
+                            // Found a water plane! Update reflection parameters from water properties
                             var worldPos = entity.Transform.GetWorldPosition();
+
+                            // Always update reflection parameters (not cached) to ensure UI changes are immediate
+                            int newResolution = 1024;
+                            float newOffset = 0.05f;
+
+                            if (asset.WaterProperties != null)
+                            {
+                                newOffset = asset.WaterProperties.ReflectionClipPlaneOffset;
+                                newResolution = asset.WaterProperties.ReflectionResolution;
+                            }
+
+                            // Check if resolution changed - need to recreate FBO
+                            bool resolutionChanged = (newResolution != _cachedReflectionResolution);
+
+                            _cachedClipPlaneOffset = newOffset;
+                            _cachedReflectionResolution = newResolution;
                             _cachedWaterPlaneHeight = worldPos.Y;
-                            _waterPlaneHeightDirty = false;
+
+                            // Recreate reflection FBO if resolution changed
+                            if (resolutionChanged)
+                            {
+                                try { InitReflectionFramebuffer(); } catch { }
+                            }
+
                             return _cachedWaterPlaneHeight;
                         }
                     }
@@ -2971,7 +3038,6 @@ void main(){
 
             // No water found, default to Y=0
             _cachedWaterPlaneHeight = 0f;
-            _waterPlaneHeightDirty = false;
             return 0f;
         }
 
@@ -2984,6 +3050,8 @@ void main(){
 
             // DEBUG: Log water level
             // Reflection debug logging removed to avoid runtime spam and frame hitches
+
+            Vector3 camPos = CameraPosition();
 
             // Save state
             var savedViewport = new int[4];
@@ -3003,14 +3071,30 @@ void main(){
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
             // FIXED: Reflect camera position, then invert view direction
-            Vector3 camPos = CameraPosition();
+            // (camPos already defined earlier for underwater check)
 
             // Reflect camera position across water plane
             Vector3 reflectedCamPos = camPos;
             reflectedCamPos.Y = 2.0f * waterLevel - camPos.Y;
 
-            // Calculate view direction and reflect ONLY the Y component
-            Vector3 viewDir = Vector3.Normalize(_target - camPos);
+            // Calculate view direction based on current mode
+            Vector3 viewDir;
+            if (_useCustomMatrices)
+            {
+                // PlayMode: Extract view direction from view matrix
+                // View matrix transforms world to camera space, so forward is -Z in camera space
+                // which corresponds to the third column of the inverse view matrix
+                var invView = _viewGL.Inverted();
+                Vector3 forward = new Vector3(-invView.M31, -invView.M32, -invView.M33);
+                viewDir = Vector3.Normalize(forward);
+            }
+            else
+            {
+                // EditMode: Use orbital camera target
+                viewDir = Vector3.Normalize(_target - camPos);
+            }
+            
+            // Reflect ONLY the Y component of view direction
             Vector3 reflectedViewDir = new Vector3(viewDir.X, -viewDir.Y, viewDir.Z);
 
             // Calculate new target from reflected position and direction
@@ -3027,10 +3111,30 @@ void main(){
             float mainCameraAspect = _w / Math.Max(1.0f, (float)_h);
             var reflectedProj = CreateProjectionMatrix(mainCameraAspect);
 
-            // DISABLE clipping for now - it's clipping everything!
-            // TODO: Fix clipping plane equation to keep geometry BELOW water (not above)
-            _globalUniforms.ClipPlaneEnabled = 0; // DISABLED FOR TESTING
-            _globalUniforms.ClipPlane = new Vector4(0f, 1f, 0f, -waterLevel);
+            // Enable clipping to prevent geometry below water from appearing in reflections
+            // For reflected camera (below water looking up), we need to clip geometry BELOW the water surface
+            // Plane equation: clip when dot(worldPos, plane) < 0
+            // We want to clip when: worldPos.y < waterLevel, which is: worldPos.y - waterLevel < 0
+            // So the plane equation is: dot(worldPos, vec4(0, 1, 0, -waterLevel)) < 0
+            // Offset is ADDED to push clipping plane UP (clip more aggressively above water surface)
+            _globalUniforms.ClipPlaneEnabled = 1;
+            _globalUniforms.ClipPlane = new Vector4(0f, 1f, 0f, -(waterLevel + _cachedClipPlaneOffset));
+            
+            // CRITICAL: Also set global reflection clipping state for TerrainRenderer
+            Engine.Rendering.ReflectionClippingState.IsEnabled = true;
+            Engine.Rendering.ReflectionClippingState.ClipPlane = new System.Numerics.Vector4(
+                _globalUniforms.ClipPlane.X,
+                _globalUniforms.ClipPlane.Y,
+                _globalUniforms.ClipPlane.Z,
+                _globalUniforms.ClipPlane.W
+            );
+
+            // Upload updated uniforms to GPU before rendering reflection
+            GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
+            GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
+            GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
+                System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
+                ref _globalUniforms);
 
             // CRITICAL: Enable OpenGL clip distance feature (required for gl_ClipDistance in shaders)
             GL.Enable(EnableCap.ClipDistance0);
@@ -3050,7 +3154,8 @@ void main(){
                 GL.FrontFace(FrontFaceDirection.Cw); // Flip winding for Y-mirrored reflection camera
 
                 // Compute oblique clip plane in reflected camera space to clip geometry below water
-                var planeWorld = new Vector4(0f, 1f, 0f, -(waterLevel + 0.01f));
+                // Use configurable offset from water material properties
+                var planeWorld = new Vector4(0f, 1f, 0f, -(waterLevel + _cachedClipPlaneOffset));
                 try
                 {
                     // Transform plane into reflected view (camera) space using inverse-transpose
@@ -3068,14 +3173,21 @@ void main(){
                     var obliqueProj = CalculateObliqueMatrix(reflectedProj, clipCam);
 
                     // Render the environment into the reflection texture using the reflected camera
-                    // TEMP: Use regular projection since clipping is disabled
-                    RenderEnvironmentForReflection(reflectedView, reflectedProj); // CHANGED from obliqueProj
+                    // Use regular projection - clipping is handled by gl_ClipDistance in shaders
+                    RenderEnvironmentForReflection(reflectedView, reflectedProj);
+
+                    // NOTE: Post-processing on reflections is disabled for now because it shares
+                    // the tonemapping renderer's internal state (exposure textures), which breaks
+                    // auto-exposure for the main scene. We'll need a separate tonemapping instance
+                    // or shared exposure values to fix this properly.
+                    // ApplyPostProcessToReflection();
 
                     // Reflection debug logging removed to avoid runtime spam and frame hitches
 
                     // Publish reflection texture + view-proj for shaders to sample
                     try
                     {
+                        // Use raw reflection texture (post-processing disabled for now)
                         Engine.Rendering.ReflectionBuffer.ReflectionTexture = _reflectionTex;
                         // Use standard projection (not oblique) for UV mapping
                         // The oblique projection is only for clipping during render, not for UV calculation
@@ -3111,6 +3223,9 @@ void main(){
             _globalUniforms.ViewProjectionMatrix = savedViewProj;
             _globalUniforms.CameraPosition = savedCamPos;
             _globalUniforms.ClipPlaneEnabled = 0;
+            
+            // CRITICAL: Disable global reflection clipping state
+            Engine.Rendering.ReflectionClippingState.IsEnabled = false;
 
             // Disable clip distance feature for normal rendering
             GL.Disable(EnableCap.ClipDistance0);
@@ -3120,6 +3235,81 @@ void main(){
             GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
                 System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
                 ref _globalUniforms);
+        }
+
+        /// <summary>
+        /// Apply post-processing (tonemapping, auto-exposure) to reflection texture
+        /// This ensures reflections match the main scene's exposure
+        /// </summary>
+        private void ApplyPostProcessToReflection()
+        {
+            if (_scene == null || _reflectionTex == 0 || _reflectionPostFbo == 0)
+                return;
+
+            try
+            {
+                // Find active ToneMappingEffect in the scene
+                Engine.Rendering.ToneMappingEffect? toneMappingEffect = null;
+                Engine.Components.IPostProcessRenderer? toneMappingRenderer = null;
+
+                foreach (var entity in _scene.Entities)
+                {
+                    if (!entity.Active) continue;
+                    var globalEffects = entity.GetComponent<Engine.Components.GlobalEffects>();
+                    if (globalEffects == null || !globalEffects.Enabled) continue;
+
+                    foreach (var effect in globalEffects.Effects.Where(e => e?.Enabled == true))
+                    {
+                        if (effect is Engine.Rendering.ToneMappingEffect toneMap)
+                        {
+                            toneMappingEffect = toneMap;
+                            // Get renderer for tonemapping
+                            if (Engine.Rendering.PostProcessManager.TryGetRenderer(typeof(Engine.Rendering.ToneMappingEffect), out var renderer))
+                            {
+                                toneMappingRenderer = renderer;
+                            }
+                            break;
+                        }
+                    }
+                    if (toneMappingEffect != null) break;
+                }
+
+                // If no tonemapping found, just copy the reflection texture as-is
+                if (toneMappingEffect == null || toneMappingRenderer == null)
+                {
+                    // Copy _reflectionTex to _reflectionPostTex using blit
+                    GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _reflectionFbo);
+                    GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _reflectionPostFbo);
+                    GL.BlitFramebuffer(
+                        0, 0, _reflectionW, _reflectionH,
+                        0, 0, _reflectionW, _reflectionH,
+                        ClearBufferMask.ColorBufferBit,
+                        BlitFramebufferFilter.Linear);
+                    return;
+                }
+
+                // Apply tonemapping to reflection texture
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, _reflectionPostFbo);
+                GL.Viewport(0, 0, _reflectionW, _reflectionH);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
+
+                // Create context for post-processing
+                var context = new Engine.Components.PostProcessContext(
+                    sourceTexture: (uint)_reflectionTex,
+                    targetFramebuffer: (uint)_reflectionPostFbo,
+                    width: _reflectionW,
+                    height: _reflectionH,
+                    deltaTime: Engine.Core.Time.DeltaTime,
+                    scene: _scene
+                );
+
+                // Render tonemapping effect
+                toneMappingRenderer.Render(toneMappingEffect, context);
+            }
+            catch (Exception ex)
+            {
+                LogManager.LogWarning($"ApplyPostProcessToReflection error: {ex.Message}", "ViewportRenderer");
+            }
         }
 
         // DEBUG: Frame counter (disabled)

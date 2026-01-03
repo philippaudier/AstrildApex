@@ -382,8 +382,31 @@ void main()
         float distortionScale = 0.075; // tweakable constant
         reflectionUV += tangentNormal.xy * u_RefractionStrength * distortionScale;
 
-        // Sample reflection texture directly (NO distortion for now)
-        reflectionColor = texture(u_PlanarReflectionTex, reflectionUV).rgb;
+        // Sample reflection texture with optional blur
+        if (u_ReflectionBlur > 0.001)
+        {
+            // Simple box blur for reflection
+            vec3 blurredColor = vec3(0.0);
+            float blurSize = u_ReflectionBlur * 0.01; // Scale blur amount to texel size
+            int samples = 0;
+
+            // 3x3 box blur
+            for (int x = -1; x <= 1; x++)
+            {
+                for (int y = -1; y <= 1; y++)
+                {
+                    vec2 offset = vec2(float(x), float(y)) * blurSize;
+                    blurredColor += texture(u_PlanarReflectionTex, reflectionUV + offset).rgb;
+                    samples++;
+                }
+            }
+            reflectionColor = blurredColor / float(samples);
+        }
+        else
+        {
+            // No blur - direct sample
+            reflectionColor = texture(u_PlanarReflectionTex, reflectionUV).rgb;
+        }
     }
 
     // === Combine all lighting ===

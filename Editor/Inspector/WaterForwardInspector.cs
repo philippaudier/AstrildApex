@@ -543,6 +543,15 @@ namespace Editor.Inspector
                     }
                     ImGui.TextDisabled("Flip reflection vertically");
 
+                    // Reflection Clip Plane Offset
+                    float clipPlaneOffset = water.ReflectionClipPlaneOffset;
+                    if (ImGui.SliderFloat("Clip Plane Offset", ref clipPlaneOffset, 0.0f, 0.5f))
+                    {
+                        water.ReflectionClipPlaneOffset = clipPlaneOffset;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Offset above water to clip geometry (prevents terrain bleeding through)");
+
                     ImGui.Spacing();
                     ImGui.TextColored(new Numerics.Vector4(0.4f, 1.0f, 0.4f, 1.0f), "✓ Planar reflections are now integrated with all water effects!");
                 }

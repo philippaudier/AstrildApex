@@ -11,6 +11,10 @@ uniform mat3 u_NormalMat;
 uniform vec2 u_TextureTiling;
 uniform vec2 u_TextureOffset;
 
+// Optional override uniforms for clipping (for debugging)
+uniform int u_ClipPlaneEnabled; // Override if present, otherwise use UBO
+uniform vec4 u_ClipPlane; // Override if present, otherwise use UBO
+
 // Snow displacement parameters
 uniform float u_SnowAccumulation;  // Accumulated snow (can exceed 1.0)
 uniform float u_SnowDisplacement;  // Max displacement height
@@ -62,8 +66,18 @@ void main(){
     gl_Position = uViewProj * wp;
 
     // Clipping plane support (for planar reflections)
-    if (uClipPlaneEnabled > 0.5) {
-        gl_ClipDistance[0] = dot(wp, uClipPlane);
+    // Try override uniform first, fallback to UBO
+    float clipEnabled = float(u_ClipPlaneEnabled);  // Will be 0 if not set
+    vec4 clipPlane = u_ClipPlane;  // Will be (0,0,0,0) if not set
+    
+    // If override not set, use UBO values
+    if (clipEnabled < 0.5 && uClipPlaneEnabled > 0.5) {
+        clipEnabled = uClipPlaneEnabled;
+        clipPlane = uClipPlane;
+    }
+    
+    if (clipEnabled > 0.5) {
+        gl_ClipDistance[0] = dot(wp, clipPlane);
     } else {
         gl_ClipDistance[0] = 1.0; // Always pass if clipping disabled
     }

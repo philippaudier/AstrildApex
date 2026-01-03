@@ -260,6 +260,7 @@ namespace Engine.Rendering
         public int WaterForwardReflectionResolution = 1024;
         public bool WaterForwardFlipReflectionX = false;
         public bool WaterForwardFlipReflectionY = false;
+        public float WaterForwardReflectionClipPlaneOffset = 0.05f;
 
         public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
         {
@@ -446,7 +447,7 @@ namespace Engine.Rendering
             // Load WaterForward properties if present
             try
             {
-                if (a?.WaterProperties != null && string.Equals(a?.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                if (a != null && a.WaterProperties != null && string.Equals(a.Shader, "WaterForward", StringComparison.OrdinalIgnoreCase))
                 {
                     try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Loading WaterForward properties for material {a.Name}"); } catch { }
                     var w = a.WaterProperties;
@@ -510,6 +511,7 @@ namespace Engine.Rendering
                     mr.WaterForwardReflectionResolution = w.ReflectionResolution;
                     mr.WaterForwardFlipReflectionX = w.FlipReflectionX;
                     mr.WaterForwardFlipReflectionY = w.FlipReflectionY;
+                    mr.WaterForwardReflectionClipPlaneOffset = w.ReflectionClipPlaneOffset;
 
                     // Force transparency mode for WaterForward shader
                     mr.TransparencyMode = 1;

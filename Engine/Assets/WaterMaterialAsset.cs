@@ -77,6 +77,7 @@ namespace Engine.Assets
         public int ReflectionResolution { get; set; } = 1024;   // Resolution of reflection texture (256, 512, 1024, 2048)
         public bool FlipReflectionX { get; set; } = false;      // Flip reflection horizontally
         public bool FlipReflectionY { get; set; } = false;      // Flip reflection vertically
+        public float ReflectionClipPlaneOffset { get; set; } = 0.05f; // Offset above water level for clipping plane (prevents terrain bleeding through)
 
         // Water presets
         public static WaterProperties CreateClearWater() => new WaterProperties

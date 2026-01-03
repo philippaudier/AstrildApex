@@ -175,6 +175,26 @@ namespace Engine.Rendering.Terrain
 
             _shader.Use();
 
+            // CRITICAL: Apply clipping uniforms for water reflections if caller has set them globally
+            // We check for a special marker in the environment to know if we're in reflection pass
+            // Alternative: always try to set from a static/global source
+            try
+            {
+                // Access the reflection clipping state from a global source
+                // The ViewportRenderer should have set this before calling RenderTerrain
+                if (Engine.Rendering.ReflectionClippingState.IsEnabled)
+                {
+                    _shader.SetInt("u_ClipPlaneEnabled", 1);
+                    var plane = Engine.Rendering.ReflectionClippingState.ClipPlane;
+                    _shader.SetVec4("u_ClipPlane", new OpenTK.Mathematics.Vector4(plane.X, plane.Y, plane.Z, plane.W));
+                }
+                else
+                {
+                    _shader.SetInt("u_ClipPlaneEnabled", 0);
+                }
+            }
+            catch { }
+
             // CRITICAL: Bind GlobalUBO to the shader's "Global" uniform block
             // This must be done AFTER shader.Use() to ensure the shader is active
             if (globalUBO > 0)
