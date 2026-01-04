@@ -752,6 +752,7 @@ public class ViewportPanel
         newEntity.Transform.Position = worldPos;
 
         scene.Entities.Add(newEntity);
+        scene.Cache?.Invalidate(); // Invalidate cache after entity addition
         Selection.SetSingle(newEntity.Id);
         UpdateGizmoPivot();
     }

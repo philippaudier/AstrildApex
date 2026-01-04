@@ -108,19 +108,32 @@ void main()
     // Scale by particle size
     rotatedPos *= aInstanceSize;
 
-    // Billboard towards camera using camera right/up vectors
-    vec3 billboardPos = uCameraRight * rotatedPos.x + uCameraUp * rotatedPos.y;
+    // Extract camera's right and up vectors from view matrix inverse
+    // The view matrix transforms world to camera space, so its inverse
+    // transforms camera space to world space. The first 3 columns of
+    // the inverse are the camera's right, up, and forward axes in world space.
+    
+    // Get view matrix inverse (we only need rotation part, so we transpose 3x3)
+    mat3 viewRot = mat3(uView);
+    mat3 viewRotInv = transpose(viewRot);
+    
+    // Extract camera right and up in world space
+    vec3 worldRight = viewRotInv[0];  // First column
+    vec3 worldUp = viewRotInv[1];     // Second column
+    
+    // Create billboard in WORLD SPACE using world-space camera axes
+    vec3 billboardOffset = worldRight * rotatedPos.x + worldUp * rotatedPos.y;
 
     // Apply 3D rotation if any rotation is set
     if (length(aInstanceRotation3D) > 0.01)
     {
         vec3 rotRad3D = radians(aInstanceRotation3D);
         mat3 rotation = rotateZ(rotRad3D.z) * rotateY(rotRad3D.y) * rotateX(rotRad3D.x);
-        billboardPos = rotation * billboardPos;
+        billboardOffset = rotation * billboardOffset;
     }
 
-    // Final world position
-    vec3 worldPos = aInstancePosition + billboardPos;
+    // Final world position: particle position + billboard offset
+    vec3 worldPos = aInstancePosition + billboardOffset;
 
     // Transform to clip space
     gl_Position = uProjection * uView * vec4(worldPos, 1.0);

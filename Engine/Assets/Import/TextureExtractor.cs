@@ -196,7 +196,7 @@ namespace Engine.Assets.Import
                 searchPaths.Add(Path.Combine(_modelDirectory, filename));
             }
 
-            // Strategy 3: Common texture subdirectories
+            // Strategy 3: Common texture subdirectories (relative to model directory)
             if (!string.IsNullOrEmpty(filename))
             {
                 searchPaths.Add(Path.Combine(_modelDirectory, "textures", filename));
@@ -204,6 +204,21 @@ namespace Engine.Assets.Import
                 searchPaths.Add(Path.Combine(_modelDirectory, "texture", filename));
                 searchPaths.Add(Path.Combine(_modelDirectory, "images", filename));
                 searchPaths.Add(Path.Combine(_modelDirectory, "Images", filename));
+            }
+
+            // Strategy 3.5: Texture directories in PARENT folder (common in many workflows)
+            // Example: Model in "Assets/Models/MyModel/model.fbx", textures in "Assets/Models/texture/"
+            if (!string.IsNullOrEmpty(filename))
+            {
+                var parentDir = Directory.GetParent(_modelDirectory)?.FullName;
+                if (parentDir != null)
+                {
+                    searchPaths.Add(Path.Combine(parentDir, "textures", filename));
+                    searchPaths.Add(Path.Combine(parentDir, "Textures", filename));
+                    searchPaths.Add(Path.Combine(parentDir, "texture", filename));
+                    searchPaths.Add(Path.Combine(parentDir, "images", filename));
+                    searchPaths.Add(Path.Combine(parentDir, "Images", filename));
+                }
             }
 
             // Strategy 4: Absolute path (if provided)

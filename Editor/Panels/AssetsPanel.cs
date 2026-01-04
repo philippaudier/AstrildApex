@@ -101,6 +101,10 @@ namespace Editor.Panels
         private static readonly Dictionary<Guid, System.Numerics.Vector4> _materialColorCache = new();
         private static bool _materialColorCacheEventsInit = false;
 
+        // PERFORMANCE: Cache texture handles to avoid TextureCache.GetOrLoad() calls every frame
+        private static readonly Dictionary<Guid, int> _textureHandleCache = new();
+        private static readonly HashSet<Guid> _textureLoadFailed = new(); // Track failed loads to avoid retry spam
+
         // PERFORMANCE: Cache icon texture handles to avoid IconManager lookups every frame
         private static readonly Dictionary<(string iconName, int size), nint> _iconTextureCache = new();
         private static int _lastIconSize = -1;
@@ -190,6 +194,19 @@ namespace Editor.Panels
             // PERFORMANCE: Skip content if window is collapsed/hidden
             if (!ImGui.Begin("Assets"))
             {
+                ImGui.End();
+                return;
+            }
+
+            // PERFORMANCE FIX: Only draw expensive content when window has focus
+            // This prevents texture loading and material parsing when panel is visible but not focused
+            bool hasFocus = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
+            
+            // Skip expensive draw operations if not focused (but still process input for docking)
+            // This fixes the FPS drop from 100+ to 40-60 when Assets panel is visible but not focused
+            if (!hasFocus)
+            {
+                ImGui.TextDisabled("(Panel not focused - click to activate)");
                 ImGui.End();
                 return;
             }
@@ -692,6 +709,14 @@ namespace Editor.Panels
 
             if (needRebuildAll)
             {
+                // PERFORMANCE: Clear texture/material caches when navigating folders
+                if (_lastCurrentDir != _currentDir)
+                {
+                    _textureHandleCache.Clear();
+                    _textureLoadFailed.Clear();
+                    // Note: _materialColorCache is persistent across folders (small memory footprint)
+                }
+                
                 // PERFORMANCE: Only rebuild when something actually changed
                 try
                 {
@@ -745,9 +770,12 @@ namespace Editor.Panels
                 ImGui.EndPopup();
             }
 
-            // Reset caches pour cette frame
-            _itemBounds.Clear();
-            _displayOrder.Clear();
+            // PERFORMANCE: Only reset caches when content actually changed (not every frame)
+            if (needRebuildAll || _itemBounds.Count == 0)
+            {
+                _itemBounds.Clear();
+                _displayOrder.Clear();
+            }
 
             if (_viewMode == ViewMode.Grid) DrawGrid(childDirs, filtered);
             else DrawList(childDirs, filtered);
@@ -997,13 +1025,28 @@ namespace Editor.Panels
 
             if (a.Type.Equals("Texture2D", StringComparison.OrdinalIgnoreCase))
             {
-                // PERFORMANCE FIX: Only load texture previews for visible items to avoid loading hundreds of textures
-                // This prevents the infinite TextureCache reload loop when opening folders with many textures
+                // PERFORMANCE FIX: Cache texture handles to avoid TextureCache.GetOrLoad() every frame
                 int handle = 0;
                 bool isVisible = IsRectVisible(tl, br);
-                if (isVisible || selected)
+                
+                // Check cache first
+                if (_textureHandleCache.TryGetValue(a.Guid, out var cachedHandle))
                 {
+                    handle = cachedHandle;
+                }
+                else if ((isVisible || selected) && !_textureLoadFailed.Contains(a.Guid))
+                {
+                    // Only load if visible/selected and not previously failed
                     handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                    
+                    if (handle != 0)
+                    {
+                        _textureHandleCache[a.Guid] = handle;
+                    }
+                    else
+                    {
+                        _textureLoadFailed.Add(a.Guid); // Mark as failed to avoid retry spam
+                    }
                 }
 
                 if (handle != 0)
@@ -1538,12 +1581,28 @@ namespace Editor.Panels
 
                 if (a.Type.Equals("Texture2D", StringComparison.OrdinalIgnoreCase))
                 {
-                    // PERFORMANCE FIX: Only load texture previews for visible items to avoid loading hundreds of textures
+                    // PERFORMANCE FIX: Cache texture handles to avoid TextureCache.GetOrLoad() every frame
                     int handle = 0;
                     bool isVisible = IsRectVisible(rowStart, rowEnd);
-                    if (isVisible || selected)
+                    
+                    // Check cache first
+                    if (_textureHandleCache.TryGetValue(a.Guid, out var cachedHandle))
                     {
+                        handle = cachedHandle;
+                    }
+                    else if ((isVisible || selected) && !_textureLoadFailed.Contains(a.Guid))
+                    {
+                        // Only load if visible/selected and not previously failed
                         handle = TextureCache.GetOrLoad(a.Guid, g => AssetDatabase.TryGet(g, out var rr) ? rr.Path : null);
+                        
+                        if (handle != 0)
+                        {
+                            _textureHandleCache[a.Guid] = handle;
+                        }
+                        else
+                        {
+                            _textureLoadFailed.Add(a.Guid);
+                        }
                     }
 
                     if (handle != 0)

@@ -384,6 +384,7 @@ namespace Editor.Panels
                             Name = "GameObject" 
                         };
                         scene.Entities.Add(entity);
+                        scene.Cache?.Invalidate();
                         Selection.SetSingle(entity.Id);
                         EditorUI.MainViewport.UpdateGizmoPivot();
                     }
@@ -395,6 +396,7 @@ namespace Editor.Panels
                             Name = "Camera" 
                         };
                         scene.Entities.Add(entity);
+                        scene.Cache?.Invalidate();
                         entity.AddComponent<Engine.Components.CameraComponent>();
                         Selection.SetSingle(entity.Id);
                         EditorUI.MainViewport.UpdateGizmoPivot();
@@ -447,6 +449,7 @@ namespace Editor.Panels
                                 Name = "Terrain"
                             };
                             scene.Entities.Add(entity);
+                            scene.Cache?.Invalidate();
                             entity.AddComponent<Engine.Components.Terrain>();
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
@@ -503,6 +506,7 @@ namespace Editor.Panels
                                 Name = "Particle System"
                             };
                             scene.Entities.Add(entity);
+                            scene.Cache?.Invalidate();
                             entity.AddComponent<Engine.Components.ParticleSystem>();
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
@@ -515,6 +519,7 @@ namespace Editor.Panels
                                 Name = "Global Effects"
                             };
                             scene.Entities.Add(entity);
+                            scene.Cache?.Invalidate();
                             entity.AddComponent<Engine.Components.GlobalEffects>();
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
@@ -812,6 +817,7 @@ namespace Editor.Panels
 
             if (e.Parent != null) e.Parent.Children.Remove(e);
             scene.Entities.Remove(e);
+            scene.Cache?.Invalidate(); // Invalidate cache after entity removal
         }
 
         private static bool Intersects((Vector2 min, Vector2 max) a, (Vector2 min, Vector2 max) b)
@@ -890,6 +896,7 @@ namespace Editor.Panels
                         Name = "GameObject"
                     };
                     scene.Entities.Add(child);
+                    scene.Cache?.Invalidate();
                     child.SetParent(e, keepWorld: false);
                     Selection.SetSingle(child.Id);
                     FinalizeSelection();
@@ -942,6 +949,7 @@ namespace Editor.Panels
                         Name = "Camera"
                     };
                     scene.Entities.Add(child);
+                    scene.Cache?.Invalidate();
                     child.AddComponent<Engine.Components.CameraComponent>();
                     child.SetParent(e, keepWorld: false);
                     Selection.SetSingle(child.Id);

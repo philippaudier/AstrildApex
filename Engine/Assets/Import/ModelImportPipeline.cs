@@ -218,6 +218,7 @@ namespace Engine.Assets.Import
         ///
         /// IMPORTANT NOTES:
         /// - glTF uses Y-up, right-handed coordinate system (same as OpenGL) - no conversion needed
+        /// - FBX uses Y-up, right-handed but needs conversion to OpenGL Z-forward convention
         /// - glTF UVs have origin at top-left, OpenGL expects bottom-left - but we handle this in shaders
         /// - DO NOT use FlipUVs for glTF files - it breaks texture mapping
         /// - PreTransformVertices bakes transforms which can cause mirroring issues
@@ -234,7 +235,19 @@ namespace Engine.Assets.Import
             steps |= PostProcessSteps.GenerateSmoothNormals;
 
             // Flatten hierarchy into vertex data
-            steps |= PostProcessSteps.PreTransformVertices;
+            // PreTransformVertices bakes all node transforms into vertex positions
+            // This ensures correct coordinate system conversion for FBX (Z-up -> Y-up)
+            // Skip only for glTF/GLB which already use correct OpenGL coordinates
+            if (extension == ".gltf" || extension == ".glb")
+            {
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Skipping PreTransformVertices for {extension} (already in OpenGL coordinates)");
+            }
+            else
+            {
+                // Apply for FBX, OBJ, DAE, etc. - ensures correct orientation
+                steps |= PostProcessSteps.PreTransformVertices;
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Applying PreTransformVertices for {extension}");
+            }
 
             // Validate and optimise raw geometry
             steps |= PostProcessSteps.ValidateDataStructure;
@@ -243,20 +256,18 @@ namespace Engine.Assets.Import
             steps |= PostProcessSteps.ImproveCacheLocality;
             steps |= PostProcessSteps.OptimizeMeshes;
 
-            Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Applying PreTransformVertices + mesh optimisations");
-
-            // UV handling - DO NOT flip UVs for glTF!
-            // glTF UVs are already in the correct format
-            // If texture appears upside down, it's a shader issue, not import issue
-            if (extension != ".gltf" && extension != ".glb")
+            // UV handling - Modern formats (glTF, FBX) generally have correct UV orientation
+            // FlipUVs should only be applied for very old legacy formats
+            // FBX from modern tools (Blender, Maya, Max) uses OpenGL UV convention (origin bottom-left)
+            if (extension == ".obj" || extension == ".dae")
             {
-                // Only flip UVs for legacy formats (FBX, OBJ, etc.)
+                // Only flip UVs for legacy formats that need it (OBJ, DAE)
                 steps |= PostProcessSteps.FlipUVs;
-                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Applying FlipUVs for {extension}");
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Applying FlipUVs for legacy format {extension}");
             }
             else
             {
-                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Skipping FlipUVs for glTF format");
+                Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Skipping FlipUVs for modern format {extension}");
             }
 
             Engine.Utils.DebugLogger.Log($"[ModelImportPipeline] Post-process flags: {steps}");

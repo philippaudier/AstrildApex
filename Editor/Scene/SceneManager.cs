@@ -442,6 +442,18 @@ namespace Editor.SceneManagement
                         LogManager.LogWarning($"Failed to reset IBL cache: {ex.Message}", "SceneManager");
                     }
 
+                    // CRITICAL: Refresh terrain subscriptions after scene load
+                    // This ensures terrains loaded from file are properly subscribed to vegetation events
+                    try
+                    {
+                        Console.WriteLine($"[SceneManager] Refreshing terrain subscriptions after scene load");
+                        EditorUI.MainViewport.Renderer?.RefreshTerrainSubscriptions();
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Failed to refresh terrain subscriptions: {ex.Message}", "SceneManager");
+                    }
+
                     // Save as last opened scene for auto-loading
                     var relativePath = Path.GetRelativePath(ProjectPaths.ProjectRoot, fullPath);
                     EditorSettings.LastOpenedScene = relativePath;

@@ -509,6 +509,9 @@ namespace Editor.Rendering
         {
             _scene = scene ?? throw new ArgumentNullException(nameof(scene));
 
+            // PERFORMANCE: Component cache is initialized lazily via getter
+            // No need to manually initialize - just access Cache property to trigger init
+
             // CRITICAL: Clear terrain subscriptions when changing scene
             // This prevents old terrains from the previous scene (e.g., playScene) from staying subscribed
             // which caused terrains to disappear when exiting Play Mode
@@ -519,7 +522,12 @@ namespace Editor.Rendering
             // This ensures weather parameters are available from the moment the scene loads
             try
             {
-                foreach (var entity in scene.Entities)
+                // Force cache rebuild to ensure we find all components during scene initialization
+                scene.Cache?.Invalidate();
+                
+                // Optimized: Use component cache for WeatherComponent initialization
+                var weatherEntities = scene.Cache != null ? scene.Cache.GetEntitiesWithComponent<Engine.Components.WeatherComponent>() : scene.Entities.ToList();
+                foreach (var entity in weatherEntities)
                 {
                     if (!entity.Active) continue;
                     var weather = entity.GetComponent<Engine.Components.WeatherComponent>();
@@ -544,11 +552,21 @@ namespace Editor.Rendering
             if (_vegetationRenderer != null)
             {
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Searching for terrains in {scene.Entities.Count} entities"); } catch { }
-                foreach (var entity in scene.Entities)
+                
+                // CRITICAL: Force cache rebuild to ensure we find all terrains for event subscription
+                // Without this, the cache might be stale or uninitialized, causing terrains to be missed
+                scene.Cache?.Invalidate();
+                
+                // Optimized: Use component cache for terrain subscription
+                var terrainSubscribeEntities = scene.Cache != null ? scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : scene.Entities.ToList();
+                Console.WriteLine($"[ViewportRenderer] 🔍 SetScene: Found {terrainSubscribeEntities.Count} potential terrain entities");
+                
+                foreach (var entity in terrainSubscribeEntities)
                 {
                     var terrain = entity.GetComponent<Engine.Components.Terrain>();
                     if (terrain != null && !_subscribedTerrains.Contains(terrain))
                     {
+                        Console.WriteLine($"[ViewportRenderer] ✅ SetScene: Subscribing to terrain '{entity.Name}', mode={terrain.Mode}");
                         try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] SetScene: Found terrain '{entity.Name}', mode={terrain.Mode}, subscribing to events"); } catch { }
 
                         
@@ -599,10 +617,51 @@ namespace Editor.Rendering
         }
 
         /// <summary>
+        /// Force refresh terrain subscriptions after scene load.
+        /// Call this after deserialization to ensure terrains loaded from file are properly subscribed.
+        /// </summary>
+        public void RefreshTerrainSubscriptions()
+        {
+            if (_vegetationRenderer == null || _scene == null) return;
+
+            Console.WriteLine($"[ViewportRenderer] 🔄 RefreshTerrainSubscriptions: Searching for terrains in {_scene.Entities.Count} entities...");
+            
+            // Force cache rebuild to pick up all components (including Terrain)
+            _scene.Cache?.Invalidate();
+            
+            // Use ComponentCache for terrain lookup (now works correctly with dynamic caching)
+            var terrainEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : _scene.Entities.ToList();
+            
+            Console.WriteLine($"[ViewportRenderer] 🔄 Found {terrainEntities.Count} terrain(s) via ComponentCache");
+            
+            foreach (var entity in terrainEntities)
+            {
+                var terrain = entity.GetComponent<Engine.Components.Terrain>();
+                if (terrain != null && !_subscribedTerrains.Contains(terrain))
+                {
+                    Console.WriteLine($"[ViewportRenderer] 🔄 Subscribing to terrain '{entity.Name}', mode={terrain.Mode}");
+                    
+                    // Subscribe to future regenerations
+                    terrain.VegetationRegenerated += () => OnTerrainVegetationRegenerated(terrain);
+                    _subscribedTerrains.Add(terrain);
+                    
+                    // Initialize batches if vegetation already exists
+                    if (terrain.VegetationInstances != null && terrain.VegetationInstances.Count > 0)
+                    {
+                        Console.WriteLine($"[ViewportRenderer] 🔄 Initializing existing vegetation batches for '{entity.Name}' ({terrain.VegetationInstances.Count} layers)");
+                        OnTerrainVegetationRegenerated(terrain);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Called when terrain vegetation is regenerated. Updates VegetationRenderer batches.
         /// </summary>
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
+            Console.WriteLine($"[ViewportRenderer] ⚡ OnTerrainVegetationRegenerated CALLED for terrain mode={terrain.Mode}");
+            
             // Clear auto-init flag when vegetation is manually regenerated
             // This allows re-initialization if batches were cleared
             _autoInitAttempted.Remove(terrain);
@@ -613,7 +672,9 @@ namespace Editor.Rendering
             {
                 if (_scene != null)
                 {
-                    foreach (var entity in _scene.Entities)
+                    // Optimized: Use component cache for weather update after vegetation regen
+                    var weatherRegenEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.WeatherComponent>() : _scene.Entities.ToList();
+                    foreach (var entity in weatherRegenEntities)
                     {
                         if (!entity.Active) continue;
                         var weather = entity.GetComponent<Engine.Components.WeatherComponent>();
@@ -915,6 +976,96 @@ namespace Editor.Rendering
 
             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] ❌ No ModelGuid or PrefabGuid found"); } catch { }
             return null;
+        }
+
+        /// <summary>
+        /// Handle terrain mode change: clear terrain/vegetation and regenerate for new mode.
+        /// Called from TerrainInspector when user switches between SingleTerrain and InfiniteStreaming.
+        /// </summary>
+        public void HandleTerrainModeChange(Engine.Components.Terrain terrain)
+        {
+            if (terrain == null)
+            {
+                Console.WriteLine($"[ViewportRenderer] HandleTerrainModeChange: terrain is null");
+                return;
+            }
+
+            Console.WriteLine($"");
+            Console.WriteLine($"[ViewportRenderer] ════════════════════════════════════════");
+            Console.WriteLine($"[ViewportRenderer] HANDLING TERRAIN MODE CHANGE");
+            Console.WriteLine($"[ViewportRenderer] New Mode: {terrain.Mode}");
+            Console.WriteLine($"[ViewportRenderer] ════════════════════════════════════════");
+
+            try
+            {
+                // Step 1: Clear vegetation batches
+                Console.WriteLine($"[ViewportRenderer] Step 1: Clearing vegetation batches...");
+                if (_vegetationRenderer != null)
+                {
+                    _vegetationRenderer.ClearBatches();
+                    Console.WriteLine($"[ViewportRenderer] ✓ Vegetation batches cleared");
+                }
+
+                // Step 2: Clear terrain based on mode
+                if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                {
+                    Console.WriteLine($"[ViewportRenderer] Step 2: Switching to InfiniteStreaming mode");
+                    
+                    // Clear single terrain mesh (if exists)
+                    Console.WriteLine($"[ViewportRenderer]   - Clearing single terrain mesh...");
+                    terrain.ClearTerrain();
+                    Console.WriteLine($"[ViewportRenderer]   ✓ Single terrain mesh cleared");
+                    
+                    // Initialize tile manager for streaming (will be populated on next render)
+                    Console.WriteLine($"[ViewportRenderer]   - Tile manager will be initialized on next render");
+                }
+                else // SingleTerrain mode
+                {
+                    Console.WriteLine($"[ViewportRenderer] Step 2: Switching to SingleTerrain mode");
+                    
+                    // Clear streaming tiles
+                    if (_terrainRenderer != null)
+                    {
+                        Console.WriteLine($"[ViewportRenderer]   - Clearing tile manager...");
+                        _terrainRenderer.ClearTileManager();
+                        Console.WriteLine($"[ViewportRenderer]   ✓ Tile manager cleared");
+                    }
+                    
+                    // Generate single terrain mesh
+                    Console.WriteLine($"[ViewportRenderer]   - Generating single terrain mesh...");
+                    terrain.GenerateTerrain();
+                    Console.WriteLine($"[ViewportRenderer]   ✓ Single terrain mesh generated");
+                }
+
+                // Step 3: Regenerate vegetation for new mode
+                Console.WriteLine($"[ViewportRenderer] Step 3: Regenerating vegetation...");
+                if (_scene != null)
+                {
+                    // Reset the VegetationCleared flag to allow regeneration
+                    terrain.VegetationCleared = false;
+                    
+                    terrain.GenerateVegetation(_scene);
+                    
+                    // Update vegetation batches in renderer
+                    OnTerrainVegetationRegenerated(terrain);
+                    
+                    Console.WriteLine($"[ViewportRenderer] ✓ Vegetation regenerated and batches updated");
+                }
+                else
+                {
+                    Console.WriteLine($"[ViewportRenderer] ✗ Cannot regenerate vegetation: _scene is null");
+                }
+
+                Console.WriteLine($"[ViewportRenderer] ════════════════════════════════════════");
+                Console.WriteLine($"[ViewportRenderer] MODE CHANGE COMPLETE: {terrain.Mode}");
+                Console.WriteLine($"[ViewportRenderer] ════════════════════════════════════════");
+                Console.WriteLine($"");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ViewportRenderer] ✗ ERROR during mode change: {ex.Message}");
+                Console.WriteLine($"[ViewportRenderer] Stack trace: {ex.StackTrace}");
+            }
         }
 
         /// <summary>
@@ -2670,15 +2821,33 @@ void main(){
                     _globalUniforms.ClipPlane.W
                 ));
 
-                // Disable shadows and SSAO for reflection (performance optimization)
+                // Disable SSAO for reflection (performance optimization)
                 _pbrShader.SetInt("u_SSAOEnabled", 0);
-                _pbrShader.SetInt("u_UseShadows", 0);
+                
+                // Enable shadows in reflection pass for realistic reflections
+                // Determine if shadows should be enabled
+                var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
+                var lighting = _scene != null ? Engine.Scene.Lighting.Build(_scene) : new Engine.Scene.LightingState();
+                bool shadowsEnabled = shadowSettings.Enabled && lighting.HasDirectional && lighting.DirCastShadows && _shadowManager != null;
+                
+                if (shadowsEnabled)
+                {
+                    SetShadowUniforms(_pbrShader, true);
+                }
+                else
+                {
+                    _pbrShader.SetInt("u_UseShadows", 0);
+                }
 
                 Guid lastBound = Guid.Empty;
                 Engine.Rendering.MaterialRuntime? mr = null;
                 int renderedCount = 0;
 
-                foreach (var entity in _scene.Entities)
+                if (_scene == null) return;
+
+                // Optimized: Use component cache for MeshRenderer lookup (reflection pass)
+                var meshEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.MeshRendererComponent>() : _scene.Entities.ToList();
+                foreach (var entity in meshEntities)
                 {
 
                     // Render terrain as well so environment reflects properly
@@ -2744,6 +2913,25 @@ void main(){
                             _pbrShader.Use();
                             float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
                             mr.Bind(_pbrShader, time);
+                            
+                            // Re-configure shadow uniforms after material binding (in case shader changed)
+                            if (shadowsEnabled)
+                            {
+                                SetShadowUniforms(_pbrShader, true);
+                            }
+                            else
+                            {
+                                _pbrShader.SetInt("u_UseShadows", 0);
+                            }
+                            
+                            // Re-configure clipping uniforms after material binding
+                            _pbrShader.SetInt("u_ClipPlaneEnabled", 1);
+                            _pbrShader.SetVec4("u_ClipPlane", new OpenTK.Mathematics.Vector4(
+                                _globalUniforms.ClipPlane.X,
+                                _globalUniforms.ClipPlane.Y,
+                                _globalUniforms.ClipPlane.Z,
+                                _globalUniforms.ClipPlane.W
+                            ));
                         }
 
                         lastBound = materialGuid;
@@ -2800,9 +2988,11 @@ void main(){
                 int terrainCount = 0;
                 if (_terrainRenderer != null)
                 {
-                    foreach (var entity in _scene.Entities)
+                    // Optimized: Use component cache for terrain reflection
+                    var reflectionTerrainEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : _scene.Entities.ToList();
+                    foreach (var entity in reflectionTerrainEntities)
                     {
-                        if (entity.HasComponent<Engine.Components.Terrain>())
+                        // Component already checked by cache
                         {
                             var terrain = entity.GetComponent<Engine.Components.Terrain>();
                             if (terrain != null)
@@ -2839,7 +3029,11 @@ void main(){
                                     var clipEnabled = _globalUniforms.ClipPlaneEnabled;
                                     var clipPlane = _globalUniforms.ClipPlane;
 
-                                    // Render terrain with MINIMAL quality for reflection (no shadows, no SSAO)
+                                    // Render terrain with SHADOWS enabled for realistic reflections
+                                    // Use same shadow state as main rendering
+                                    Matrix4 shadowMatrix = shadowsEnabled && _shadowManager != null ? _shadowManager.LightSpaceMatrix : Matrix4.Identity;
+                                    int shadowTexture = shadowsEnabled && _shadowManager != null ? _shadowManager.ShadowTexture : 0;
+                                    
                                     _terrainRenderer.RenderTerrain(
                                         terrain,
                                         viewMatrix,
@@ -2851,9 +3045,9 @@ void main(){
                                         ssaoTexture: 0,
                                         ssaoStrength: 0f,
                                         screenSize: new OpenTK.Mathematics.Vector2(_reflectionW, _reflectionH),
-                                        shadowsEnabled: false,
-                                        shadowTexture: 0,
-                                        shadowMatrix: Matrix4.Identity,
+                                        shadowsEnabled: shadowsEnabled,
+                                        shadowTexture: shadowTexture,
+                                        shadowMatrix: shadowMatrix,
                                         shadowBias: 0.1f,
                                         shadowMapSize: 1024f,
                                         shadowStrength: 0.7f,
@@ -2950,8 +3144,13 @@ void main(){
                 {
                     try
                     {
-                        // Get environment for skybox tint
-                        var env = _scene.Entities.FirstOrDefault(e => e.HasComponent<Engine.Components.EnvironmentSettings>())?.GetComponent<Engine.Components.EnvironmentSettings>();
+                        // PERFORMANCE: Use component cache instead of FirstOrDefault + LINQ
+                        Engine.Components.EnvironmentSettings? env = null;
+                        if (_scene.Cache != null)
+                        {
+                            var envEntities = _scene.Cache.GetEntitiesWithComponent<Engine.Components.EnvironmentSettings>();
+                            env = envEntities.Count > 0 ? envEntities[0].GetComponent<Engine.Components.EnvironmentSettings>() : null;
+                        }
                         var skyTint = env != null ? new OpenTK.Mathematics.Vector3(env.SkyboxTint[0], env.SkyboxTint[1], env.SkyboxTint[2]) : OpenTK.Mathematics.Vector3.One;
                         var skyExposure = env?.SkyboxExposure ?? 1.0f;
 
@@ -2988,7 +3187,9 @@ void main(){
                 return 0f;
             }
 
-            foreach (var entity in _scene.Entities)
+            // Optimized: Use component cache for water plane detection
+            var waterEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.MeshRendererComponent>() : _scene.Entities.ToList();
+            foreach (var entity in waterEntities)
             {
                 if (!entity.Active) continue;
 
@@ -3223,18 +3424,30 @@ void main(){
             _globalUniforms.ViewProjectionMatrix = savedViewProj;
             _globalUniforms.CameraPosition = savedCamPos;
             _globalUniforms.ClipPlaneEnabled = 0;
-            
+
             // CRITICAL: Disable global reflection clipping state
             Engine.Rendering.ReflectionClippingState.IsEnabled = false;
 
-            // Disable clip distance feature for normal rendering
-            GL.Disable(EnableCap.ClipDistance0);
+            // NOTE: Do NOT disable GL_CLIP_DISTANCE0 here - keep it enabled permanently
+            // Clipping is controlled via uClipPlaneEnabled in the shader (already set to 0 above)
+            // Toggling GL_CLIP_DISTANCE0 on/off each frame causes flickering artifacts
+            // GL.Disable(EnableCap.ClipDistance0);
 
             GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
             GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
             GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
                 System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
                 ref _globalUniforms);
+
+            // CRITICAL: Reset shader override uniforms to 0 so normal rendering doesn't clip
+            // The PBR shader was set to u_ClipPlaneEnabled=1 during reflection rendering
+            // and these uniforms persist on the shader, overriding the UBO values
+            if (_pbrShader != null)
+            {
+                _pbrShader.Use();
+                _pbrShader.SetInt("u_ClipPlaneEnabled", 0);
+                _pbrShader.SetVec4("u_ClipPlane", new OpenTK.Mathematics.Vector4(0f, 0f, 0f, 0f));
+            }
         }
 
         /// <summary>
@@ -3252,7 +3465,9 @@ void main(){
                 Engine.Rendering.ToneMappingEffect? toneMappingEffect = null;
                 Engine.Components.IPostProcessRenderer? toneMappingRenderer = null;
 
-                foreach (var entity in _scene.Entities)
+                // Optimized: Use component cache for GlobalEffects lookup
+                var effectEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.GlobalEffects>() : _scene.Entities.ToList();
+                foreach (var entity in effectEntities)
                 {
                     if (!entity.Active) continue;
                     var globalEffects = entity.GetComponent<Engine.Components.GlobalEffects>();
@@ -3560,7 +3775,9 @@ void main(){
                     // Ensure WeatherManager is synchronized with any WeatherComponent in the scene
                     try
                     {
-                        foreach (var e in Scene.Entities)
+                        // Optimized: Use component cache for weather sync before vegetation
+                        var vegWeatherEntities = Scene.Cache != null ? Scene.Cache.GetEntitiesWithComponent<Engine.Components.WeatherComponent>() : Scene.Entities.ToList();
+                        foreach (var e in vegWeatherEntities)
                         {
                             if (!e.Active) continue;
                             var w = e.GetComponent<Engine.Components.WeatherComponent>();
@@ -3591,8 +3808,11 @@ void main(){
 
                     if (Scene != null)
                     {
-                        foreach (var entity in Scene.Entities.Where(e => e.Active))
+                        // Optimized: Use component cache for LightComponent lookup (eliminated LINQ + active check)
+                        var lightEntities = Scene.Cache != null ? Scene.Cache.GetEntitiesWithComponent<Engine.Components.LightComponent>() : Scene.Entities.ToList();
+                        foreach (var entity in lightEntities)
                         {
+                            if (!entity.Active) continue;
                             var light = entity.GetComponent<Engine.Components.LightComponent>();
                             if (light != null && light.Enabled && light.Type == Engine.Components.LightType.Directional)
                             {
@@ -3625,7 +3845,9 @@ void main(){
                             int terrainCount = 0;
                             int totalLayers = 0;
                             int totalInstances = 0;
-                            foreach (var e in Scene.Entities)
+                            // Optimized: Use component cache for terrain diagnostic logging
+                            var diagTerrainEntities = Scene.Cache != null ? Scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : Scene.Entities.ToList();
+                            foreach (var e in diagTerrainEntities)
                             {
                                 var t = e.GetComponent<Engine.Components.Terrain>();
                                 if (t == null) continue;
@@ -3653,7 +3875,9 @@ void main(){
                         // This handles the case where the scene was loaded but vegetation batches weren't initialized.
                         if (_vegetationRenderer.BatchCount == 0 && _scene != null)
                         {
-                            foreach (var entity in _scene.Entities)
+                            // Optimized: Use component cache for terrain batch initialization check
+                            var batchInitTerrainEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : _scene.Entities.ToList();
+                            foreach (var entity in batchInitTerrainEntities)
                             {
                                 if (!entity.Active) continue;
                                 var terrain = entity.GetComponent<Engine.Components.Terrain>();
@@ -3750,7 +3974,9 @@ void main(){
                         {
                             _lastVegetationUpdateTime = Engine.Core.Time.TimeValue;
 
-                            foreach (var entity in _scene.Entities)
+                            // Optimized: Use component cache for streaming terrain updates
+                            var streamingTerrainEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : _scene.Entities.ToList();
+                            foreach (var entity in streamingTerrainEntities)
                             {
                                 if (!entity.Active) continue;
                                 var terrain = entity.GetComponent<Engine.Components.Terrain>();
@@ -3802,32 +4028,9 @@ void main(){
                     LogManager.LogWarning($"Vegetation rendering error: {ex.Message}", "ViewportRenderer");
             }
 
-            // === QUEUE 3500: PARTICLES (rendered after opaque, before post-process) ===
-            try
-            {
-                if (_particleRenderer != null && Scene != null)
-                {
-                    // Update particle systems in editor mode (with frame delta time)
-                    float dt = ImGui.GetIO().DeltaTime;
-                    foreach (var entity in Scene.Entities)
-                    {
-                        if (!entity.Active) continue;
-                        var ps = entity.GetComponent<Engine.Components.ParticleSystem>();
-                        if (ps != null && ps.Enabled && ps.IsPlaying)
-                        {
-                            ps.UpdateEditor(dt);
-                        }
-                    }
-
-                    var particleCamPos = CameraPosition();
-                    _particleRenderer.RenderParticleSystems(Scene, _viewGL, _projGL, particleCamPos);
-                }
-            }
-            catch (Exception ex)
-            {
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                    LogManager.LogWarning($"Particle rendering error: {ex.Message}", "ViewportRenderer");
-            }
+            // === PARTICLES MOVED AFTER TRANSPARENTS ===
+            // Atmospheric particles (snow, rain) must be rendered AFTER water/glass
+            // to ensure they appear on top. See line 4013+ for actual particle rendering.
 
             // === CAPTURE SCENE FOR GLASS REFRACTION ===
             // CRITICAL: Apply SSAO BEFORE transparent rendering (if enabled)
@@ -3868,6 +4071,42 @@ void main(){
             {
                 if (Engine.Utils.DebugLogger.EnableVerbose)
                     LogManager.LogWarning($"Transparent rendering error: {ex3.Message}", "ViewportRenderer");
+            }
+
+            // === QUEUE 3500: ATMOSPHERIC PARTICLES (rendered AFTER transparents, BEFORE post-process) ===
+            // CRITICAL: Particles must render after water/glass so they appear on top
+            // This is how Unity/Unreal handle atmospheric effects (snow, rain, fog)
+            try
+            {
+                if (_particleRenderer != null && Scene != null)
+                {
+                    // CRITICAL: Only update particle systems in EDIT MODE
+                    // In Play Mode, PlayMode.UpdateSimulation() handles particle updates
+                    if (!PlayMode.IsPlaying)
+                    {
+                        // Update particle systems in editor mode (with frame delta time)
+                        float dt = ImGui.GetIO().DeltaTime;
+                        // Optimized: Use component cache for particle system updates
+                        var particleEntities = Scene.Cache != null ? Scene.Cache.GetEntitiesWithComponent<Engine.Components.ParticleSystem>() : Scene.Entities.ToList();
+                        foreach (var entity in particleEntities)
+                        {
+                            if (!entity.Active) continue;
+                            var ps = entity.GetComponent<Engine.Components.ParticleSystem>();
+                            if (ps != null && ps.Enabled && ps.IsPlaying)
+                            {
+                                ps.UpdateEditor(dt);
+                            }
+                        }
+                    }
+
+                    var particleCamPos = CameraPosition();
+                    _particleRenderer.RenderParticleSystems(Scene, _viewGL, _projGL, particleCamPos);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    LogManager.LogWarning($"Particle rendering error: {ex.Message}", "ViewportRenderer");
             }
 
             // Grid overlay placeholder: actual draw happens after post-processing so it's not overwritten
@@ -3999,7 +4238,13 @@ void main(){
             var viewMat = _viewGL; // already LH->GL converted
             var projMat = _projGL;
 
-            var envEntity = _scene.Entities.FirstOrDefault(e => e.HasComponent<EnvironmentSettings>());
+            // PERFORMANCE: Use component cache instead of FirstOrDefault + LINQ
+            Engine.Scene.Entity? envEntity = null;
+            if (_scene.Cache != null)
+            {
+                var envEntities = _scene.Cache.GetEntitiesWithComponent<EnvironmentSettings>();
+                envEntity = envEntities.Count > 0 ? envEntities[0] : null;
+            }
             bool skyboxRendered = false;
 
             // Auto-create Environment entity if none exists
@@ -4014,6 +4259,7 @@ void main(){
                 };
                 envEntity.AddComponent<Engine.Components.EnvironmentSettings>();
                 _scene.Entities.Add(envEntity);
+                _scene.Cache?.Invalidate(); // Invalidate cache after adding environment entity
             }
 
             if (envEntity != null)
@@ -4298,9 +4544,11 @@ void main(){
                 return;
 
             // === Render Terrain ===
-            foreach (var entity in _scene.Entities)
+            // Optimized: Use component cache for Terrain lookup (shadow pass)
+            var terrainEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.Terrain>() : _scene.Entities.ToList();
+            foreach (var entity in terrainEntities)
             {
-                if (entity.HasComponent<Engine.Components.Terrain>())
+                // Component already checked by cache
                 {
                     try
                     {
@@ -4324,9 +4572,11 @@ void main(){
             }
 
             // === Render Regular Objects with Mesh Renderer ===
-            foreach (var entity in _scene.Entities)
+            // Optimized: Use component cache for shadow pass MeshRenderer
+            var shadowMeshEntities = _scene.Cache != null ? _scene.Cache.GetEntitiesWithComponent<Engine.Components.MeshRendererComponent>() : _scene.Entities.ToList();
+            foreach (var entity in shadowMeshEntities)
             {
-                if (entity.HasComponent<Engine.Components.MeshRendererComponent>())
+                // Component already checked by cache
                 {
                     try
                     {
@@ -5382,7 +5632,11 @@ void main(){
             _globalUniforms.ProjectionMatrix = _projGL;
             _globalUniforms.ViewProjectionMatrix = _viewGL * _projGL;
             _globalUniforms.CameraPosition = CameraPosition();
-            
+
+            // CRITICAL: Reset clipping plane to disabled by default
+            // Only RenderReflectionPass should enable it temporarily
+            _globalUniforms.ClipPlaneEnabled = 0;
+
             // Get lighting from scene
             var lighting = Engine.Scene.Lighting.Build(_scene);
 
@@ -6268,6 +6522,7 @@ void main(){
                         _pbrShader.SetFloat("u_SnowSlopeMax", snowSlopeMax);
                         _pbrShader.SetFloat("u_SnowSparkle", snowSparkle);
                         _pbrShader.SetFloat("u_SnowDisplacement", snowDisplacement);
+                        _pbrShader.SetFloat("u_DisableSnowDisplacement", 1.0f); // Disable displacement for ForwardBase (FPS arms, etc.)
 
                         // Load and bind snow material if assigned
                         if (weather.SnowMapMaterial.HasValue)

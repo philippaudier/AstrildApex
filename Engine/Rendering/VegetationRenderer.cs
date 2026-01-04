@@ -944,13 +944,6 @@ namespace Engine.Rendering
                 // Choose shader based on alpha clipping requirement
                 ShaderProgram shader = hasAlphaClipping ? _shadowDepthAlphaClipShader! : _shadowDepthShader!;
 
-                // DEBUG: Log which shader is being used
-                if (_renderCallCounter % 120 == 0) // Every 2 seconds
-                {
-                    string batchId = $"{batch.ModelGuid}_{batch.SubmeshIndex}";
-                    Console.WriteLine($"[VegetationRenderer] Shadow pass batch {batchId}: hasAlphaClipping={hasAlphaClipping}, instances={batch.InstanceCount}, mat={batch.MaterialGuid?.ToString() ?? "null"}");
-                }
-
                 shader.Use();
                 shader.SetMat4("u_LightSpaceMatrix", lightSpaceMatrix);
 

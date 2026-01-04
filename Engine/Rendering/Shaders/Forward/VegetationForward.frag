@@ -139,7 +139,7 @@ float calculateSnowPlacement(vec3 normal, float slopeMinDeg, float slopeMaxDeg)
     float angleRad = acos(clamp(dotProduct, -1.0, 1.0));
     float angleDeg = angleRad * 57.29577951;
 
-    float fadeWidth = 5.0;
+    float fadeWidth = 20.0;  // Increased for gradual accumulation/melting
 
     // CRITICAL FIX: Fade in from min slope ONLY if minDeg > 0
     // At minDeg = 0 (perfectly flat), we want full coverage, not fade in from nothing!

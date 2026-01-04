@@ -11,6 +11,7 @@ layout(location=1) out uint outId;
 
 in vec3 vWorldPos;
 in vec3 vNormal;
+in vec3 vObjectNormal;
 in vec2 vUV;
 
 // === BASE TEXTURES ===
@@ -120,10 +121,11 @@ float calculateSnowPlacement(vec3 normal, float slopeMinDeg, float slopeMaxDeg)
     // Convert to angle in degrees
     float angleFromVertical = degrees(acos(upDot));
 
-    // Fade in from slopeMin to slopeMin+10, fade out from slopeMax-10 to slopeMax
+    // Extended fade ranges for smoother accumulation/melting (20 degrees instead of 10)
+    // This creates a gradual transition where snow progressively accumulates/melts
     float fadeInStart = slopeMinDeg;
-    float fadeInEnd = slopeMinDeg + 10.0;
-    float fadeOutStart = slopeMaxDeg - 10.0;
+    float fadeInEnd = slopeMinDeg + 20.0;  // Larger range for gradual accumulation
+    float fadeOutStart = slopeMaxDeg - 20.0;  // Larger range for gradual melting
     float fadeOutEnd = slopeMaxDeg;
 
     float fadeIn = smoothstep(fadeInStart, fadeInEnd, angleFromVertical);
@@ -537,8 +539,25 @@ void main(){
     // === ENHANCED SNOW SYSTEM ===
     if (u_SnowAccumulation > 0.0)
     {
-        // Calculate snow placement based on surface angle using advanced slope controls
-        float snowPlacement = calculateSnowPlacement(material.normal, u_SnowSlopeMin, u_SnowSlopeMax);
+        // Calculate snow placement using OBJECT SPACE normal (vObjectNormal from vertex shader)
+        // This bases snow on the model's local geometry, not its world orientation
+        // Result: snow "sticks" to the same surface areas regardless of model rotation
+        // In object space, "up" is (0,1,0) relative to the model's local coordinates
+        vec3 objectNormal = normalize(vObjectNormal);
+        vec3 objectUp = vec3(0, 1, 0);
+        
+        float dotProduct = dot(objectNormal, objectUp);
+        float angleRad = acos(clamp(dotProduct, -1.0, 1.0));
+        float angleDeg = degrees(angleRad);
+        
+        // Calculate snow placement based on surface angle in object space
+        float slopeMin = u_SnowSlopeMin;
+        float slopeMax = u_SnowSlopeMax;
+        float fadeRange = 20.0; // 20° fade for smooth transitions
+        
+        float fadeIn = smoothstep(slopeMin, slopeMin + fadeRange, angleDeg);
+        float fadeOut = 1.0 - smoothstep(slopeMax - fadeRange, slopeMax, angleDeg);
+        float snowPlacement = clamp(fadeIn * fadeOut, 0.0, 1.0);
 
         // Final snow amount = accumulation * placement (NOT clamped - can exceed 1.0)
         float snowAmount = u_SnowAccumulation * snowPlacement;

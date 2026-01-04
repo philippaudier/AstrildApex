@@ -47,8 +47,8 @@ namespace Engine.Assets.Import
             BuildNodeToMeshMap(_scene.RootNode, nodeToMeshMap);
 
             // With PreTransformVertices enabled, Assimp already baked all transforms into vertices
-            // However, if the model has mirrored geometry (negative scales), we need to detect
-            // and flip the winding order manually since Assimp doesn't always handle this correctly
+            // This includes coordinate system conversion (e.g., Z-up to Y-up for FBX)
+            // We use identity transform and let Assimp handle everything correctly
             var rootTransform = System.Numerics.Matrix4x4.Identity;
             bool flipWindingOrder = false;
             bool convertToLeftHanded = false;
@@ -64,7 +64,7 @@ namespace Engine.Assets.Import
             }
             else
             {
-                Engine.Utils.DebugLogger.Log("[MeshConverter] Using pre-baked transforms from Assimp");
+                Engine.Utils.DebugLogger.Log("[MeshConverter] Using PreTransformVertices result (coordinate conversion handled by Assimp)");
             }
 
             var processedNodes = new HashSet<Node>();

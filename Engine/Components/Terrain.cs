@@ -1550,6 +1550,10 @@ namespace Engine.Components
                 // Clear the "intentionally cleared" flag since we just generated vegetation
                 VegetationCleared = false;
 
+                // CRITICAL: Invalidate component cache after adding/removing vegetation entities
+                // This ensures ComponentCache picks up the newly created vegetation entities
+                scene.Cache?.Invalidate();
+
                 // Notify listeners that vegetation has been regenerated
                 try { VegetationRegenerated?.Invoke(); } catch { }
             }
@@ -2049,7 +2053,8 @@ namespace Engine.Components
         /// Clear vegetation by regenerating with empty layers.
         /// This is safe and doesn't cause viewport corruption.
         /// </summary>
-        public void ClearVegetation(Engine.Scene.Scene scene)
+        /// <param name="setCleared">If true, sets VegetationCleared flag to prevent auto-regeneration</param>
+        public void ClearVegetation(Engine.Scene.Scene scene, bool setCleared = true)
         {
             if (scene == null || Entity == null) return;
 
@@ -2059,8 +2064,11 @@ namespace Engine.Components
             // empty = intentionally cleared (will NOT auto-generate)
             _vegetationInstances = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
 
-            // Mark as intentionally cleared so we don't auto-regenerate on scene load
-            VegetationCleared = true;
+            // Mark as intentionally cleared so we don't auto-regenerate on scene load (optional)
+            if (setCleared)
+            {
+                VegetationCleared = true;
+            }
 
             // Remove old vegetation entities using the same safe method as regeneration
             RemoveOldVegetationEntities(scene);

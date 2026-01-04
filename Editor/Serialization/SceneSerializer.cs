@@ -233,6 +233,10 @@ namespace Editor.Serialization
                 ApplySceneData(scene, sceneFile, result);
                 Editor.Utils.StartupProfiler.EndSection();
 
+                // CRITICAL: Invalidate component cache after loading scene entities
+                // Ensures ComponentCache picks up all deserialized entities
+                scene.Cache?.Invalidate();
+
                 result.Success = true;
                 result.LoadedEntityCount = sceneFile.Entities.Count;
                 result.SceneMetadata = sceneFile.Metadata;

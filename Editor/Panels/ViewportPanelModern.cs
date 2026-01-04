@@ -844,6 +844,7 @@ public class ViewportPanelModern
         newEntity.Transform.Position = worldPos;
         
         scene.Entities.Add(newEntity);
+        scene.Cache?.Invalidate();
         Selection.SetSingle(newEntity.Id);
         UpdateGizmoPivot();
     }
@@ -1043,6 +1044,7 @@ public class ViewportPanelModern
 
         // Add to scene first so child entities can reference the parent
         Renderer.Scene.Entities.Add(parentEntity);
+        Renderer.Scene.Cache?.Invalidate();
 
         // Decide whether this model was authored with per-node transforms (non-identity LocalTransform)
         // Check if any submesh has a LocalTransform with meaningful translation (not just at origin)
@@ -1156,6 +1158,7 @@ public class ViewportPanelModern
                 // NOTE: Must add to scene.Entities for rendering to work
                 // DeleteRecursive() handles proper cleanup
                 Renderer.Scene.Entities.Add(childEntity);
+                Renderer.Scene.Cache?.Invalidate();
             }
 
             LogManager.LogVerbose($"Created multi-submesh entity '{parentEntity.Name}' with {meshAsset.SubMeshes.Count} children at {worldPos}", "ViewportPanel");

@@ -1411,14 +1411,31 @@ namespace Engine.Rendering
     }
 
     /// <summary>
+    /// Quality presets for GTAO (like AAA games)
+    /// </summary>
+    public enum GTAOQuality
+    {
+        Low,      // Performance mode (mobile, low-end PC)
+        Medium,   // Balanced (console, mid-range PC)
+        High,     // Quality mode (high-end PC)
+        Ultra,    // Maximum quality (enthusiast)
+        Custom    // User-defined parameters
+    }
+
+    /// <summary>
     /// Effet GTAO (Ground Truth Ambient Occlusion) - version améliorée de SSAO
     /// </summary>
     public class GTAOEffect : PostProcessEffect
     {
         public override string EffectName => "GTAO";
 
+        // Main quality setting - simple dropdown like AAA games
+        [Engine.Serialization.SerializableAttribute("quality")]
+        public GTAOQuality Quality { get; set; } = GTAOQuality.High;
+
+        // Technical parameters (usually hidden, set by preset)
         [Engine.Serialization.SerializableAttribute("radius")]
-        public float Radius { get; set; } = 0.5f; // Rayon en unités de vue
+        public float Radius { get; set; } = 0.6f; // Rayon en unités de vue
 
         [Engine.Serialization.SerializableAttribute("thickness")]
         public float Thickness { get; set; } = 1.0f; // Épaisseur des surfaces
@@ -1427,16 +1444,16 @@ namespace Engine.Rendering
         public float FalloffRange { get; set; } = 0.615f; // Plage de falloff
 
         [Engine.Serialization.SerializableAttribute("samplecount")]
-        public int SampleCount { get; set; } = 3; // Nombre de slices (2-6)
+        public int SampleCount { get; set; } = 4; // Nombre de slices (2-6)
 
         [Engine.Serialization.SerializableAttribute("slicecount")]
-        public int SliceCount { get; set; } = 2; // Nombre de directions (1-4)
+        public int SliceCount { get; set; } = 3; // Nombre de directions (1-4)
 
         [Engine.Serialization.SerializableAttribute("blurradius")]
         public int BlurRadius { get; set; } = 3; // Spatial blur radius (1-5)
 
         [Engine.Serialization.SerializableAttribute("maxdistance")]
-        public float MaxDistance { get; set; } = 50.0f; // Max distance (fade out)
+        public float MaxDistance { get; set; } = 80.0f; // Max distance (fade out)
 
         // Temporal filtering parameters
         [Engine.Serialization.SerializableAttribute("enabletemporal")]
@@ -1481,6 +1498,95 @@ namespace Engine.Rendering
         public GTAOEffect()
         {
             Priority = 5; // Same priority as SSAO
+            ApplyPreset(Quality); // Apply initial preset
+        }
+
+        /// <summary>
+        /// Apply quality preset with optimized values (AAA game standards)
+        /// </summary>
+        public void ApplyPreset(GTAOQuality preset)
+        {
+            Quality = preset;
+
+            switch (preset)
+            {
+                case GTAOQuality.Low:
+                    // Performance mode - minimal quality, max FPS (mobile, low-end PC)
+                    Radius = 0.35f;
+                    Thickness = 0.8f;
+                    FalloffRange = 0.5f;
+                    SampleCount = 2;          // 2 samples per slice
+                    SliceCount = 2;           // 2 directions = 4 total samples
+                    BlurRadius = 2;
+                    MaxDistance = 40.0f;
+                    EnableTemporal = false;   // Temporal OFF for low-end
+                    MipLevels = 1;            // Single scale
+                    MipWeight0 = 1.0f;
+                    break;
+
+                case GTAOQuality.Medium:
+                    // Balanced mode - good quality/performance (console, mid-range PC)
+                    Radius = 0.5f;
+                    Thickness = 1.0f;
+                    FalloffRange = 0.615f;
+                    SampleCount = 3;          // 3 samples per slice
+                    SliceCount = 2;           // 2 directions = 6 total samples
+                    BlurRadius = 3;
+                    MaxDistance = 60.0f;
+                    EnableTemporal = true;
+                    TemporalBlendFactor = 0.85f;
+                    TemporalVarianceThreshold = 0.15f;
+                    MipLevels = 1;            // Single scale
+                    MipWeight0 = 1.0f;
+                    break;
+
+                case GTAOQuality.High:
+                    // Quality mode - prioritize visual quality (high-end PC default)
+                    Radius = 0.6f;
+                    Thickness = 1.0f;
+                    FalloffRange = 0.615f;
+                    SampleCount = 4;          // 4 samples per slice
+                    SliceCount = 3;           // 3 directions = 12 total samples
+                    BlurRadius = 3;
+                    MaxDistance = 80.0f;
+                    EnableTemporal = true;
+                    TemporalBlendFactor = 0.9f;
+                    TemporalVarianceThreshold = 0.12f;
+                    MipLevels = 2;            // Dual-scale (detail + large occlusion)
+                    MipWeight0 = 0.65f;
+                    MipWeight1 = 0.35f;
+                    MipWeight2 = 0.0f;
+                    MipWeight3 = 0.0f;
+                    MipRadius0 = 1.0f;
+                    MipRadius1 = 2.0f;
+                    break;
+
+                case GTAOQuality.Ultra:
+                    // Maximum quality - no compromises (enthusiast, screenshots)
+                    Radius = 0.7f;
+                    Thickness = 1.2f;
+                    FalloffRange = 0.65f;
+                    SampleCount = 5;          // 5 samples per slice
+                    SliceCount = 4;           // 4 directions = 20 total samples!
+                    BlurRadius = 4;
+                    MaxDistance = 100.0f;
+                    EnableTemporal = true;
+                    TemporalBlendFactor = 0.92f;
+                    TemporalVarianceThreshold = 0.1f;
+                    MipLevels = 3;            // Multi-scale (small + medium + large)
+                    MipWeight0 = 0.5f;
+                    MipWeight1 = 0.3f;
+                    MipWeight2 = 0.2f;
+                    MipWeight3 = 0.0f;
+                    MipRadius0 = 1.0f;
+                    MipRadius1 = 2.0f;
+                    MipRadius2 = 4.0f;
+                    break;
+
+                case GTAOQuality.Custom:
+                    // User controls all parameters manually - don't override
+                    break;
+            }
         }
 
         public override void Apply(PostProcessContext context)

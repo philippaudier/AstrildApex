@@ -74,7 +74,7 @@ namespace Editor.Inspector
                     terrain.Mode = newMode;
 
                     // Call the robust mode change handler
-                    //renderer.HandleTerrainModeChange(terrain);
+                    renderer.HandleTerrainModeChange(terrain);
 
                     LogManager.LogInfo($"✓ Mode changed to {newMode} - terrain and vegetation regenerated", "TerrainInspector");
                 }
@@ -269,7 +269,11 @@ namespace Editor.Inspector
                     var renderer = Editor.Panels.EditorUI.MainViewport?.Renderer;
                     if (renderer != null)
                     {
-                        //renderer.ClearAndRegenerateTiles(terrain);
+                        // Use HandleTerrainModeChange to properly clear and regenerate everything
+                        // This ensures tiles, terrain mesh, and vegetation are all properly reset
+                        Console.WriteLine("[TerrainInspector] User clicked 'Clear & Regenerate All Tiles' - forcing mode refresh");
+                        renderer.HandleTerrainModeChange(terrain);
+                        LogManager.LogInfo("All tiles cleared and regenerated", "TerrainInspector");
                     }
                     else
                     {

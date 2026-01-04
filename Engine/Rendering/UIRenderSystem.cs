@@ -182,12 +182,29 @@ namespace Engine.Rendering
         {
             var result = new List<(Entity entity, UIElementComponent elem)>();
 
-            foreach (var entity in scene.Entities)
+            // PERFORMANCE: Use component cache instead of iterating all entities
+            if (scene.Cache != null)
             {
-                var elem = entity.GetComponent<UIElementComponent>();
-                if (elem != null && elem.Type == UIElementComponent.ElementType.Canvas)
+                var uiEntities = scene.Cache.GetEntitiesWithComponent<UIElementComponent>();
+                foreach (var entity in uiEntities)
                 {
-                    result.Add((entity, elem));
+                    var elem = entity.GetComponent<UIElementComponent>();
+                    if (elem != null && elem.Type == UIElementComponent.ElementType.Canvas)
+                    {
+                        result.Add((entity, elem));
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: iterate all entities (old slow method)
+                foreach (var entity in scene.Entities)
+                {
+                    var elem = entity.GetComponent<UIElementComponent>();
+                    if (elem != null && elem.Type == UIElementComponent.ElementType.Canvas)
+                    {
+                        result.Add((entity, elem));
+                    }
                 }
             }
 

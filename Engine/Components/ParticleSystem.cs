@@ -434,16 +434,28 @@ namespace Engine.Components
 
             // Position based on shape
             Vector3 localPos = GetEmissionPosition();
-            
+
             // Store in world space if SimulationSpace is World
             if (Space == SimulationSpace.World)
             {
                 Vector3 worldPos = Entity?.Transform?.GetWorldPosition() ?? Vector3.Zero;
                 p.Position = localPos + worldPos;
+
+                // DEBUG: Log first particle position to diagnose screen-space bug
+                if (_aliveCount == 0)
+                {
+                    Console.WriteLine($"[ParticleSystem] EMIT World - EntityPos={worldPos}, LocalPos={localPos}, FinalPos={p.Position}");
+                }
             }
             else
             {
                 p.Position = localPos;
+
+                // DEBUG: Log first particle position
+                if (_aliveCount == 0)
+                {
+                    Console.WriteLine($"[ParticleSystem] EMIT Local - LocalPos={localPos}");
+                }
             }
 
             // Velocity based on shape and speed

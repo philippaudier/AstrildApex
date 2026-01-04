@@ -89,16 +89,23 @@ namespace Editor.Inspector
                     {
                         try
                         {
-                            Console.WriteLine("[TerrainVegetationUI] Clearing all vegetation layers");
+                            Console.WriteLine("[TerrainVegetationUI] Clearing all vegetation instances (keeping layers)");
 
-                            // Clear vegetation layers
-                            terrain.VegetationLayers = System.Array.Empty<Engine.Assets.VegetationLayer>();
-
-                            // Force regeneration (which will clear batches since layers are now empty)
-                            //renderer.ForceRegenerateVegetation(terrain);
-
-                            LogManager.LogInfo("All vegetation cleared", "TerrainVegetationUI");
-                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            // Get the current scene
+                            var scene = renderer.Scene;
+                            if (scene != null)
+                            {
+                                // Clear vegetation WITHOUT setting VegetationCleared flag
+                                // This allows regeneration to work afterwards
+                                terrain.ClearVegetation(scene, setCleared: false);
+                                
+                                LogManager.LogInfo("All vegetation instances cleared (layers preserved)", "TerrainVegetationUI");
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            else
+                            {
+                                LogManager.LogError("Cannot clear vegetation - Scene is null", "TerrainVegetationUI");
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -476,18 +483,32 @@ namespace Editor.Inspector
         {
             try
             {
-                var renderer = Editor.Panels.EditorUI.MainViewport.Renderer;
+                var renderer = Editor.Panels.EditorUI.MainViewport?.Renderer;
                 if (renderer == null)
                 {
                     LogManager.LogError("Cannot regenerate vegetation - ViewportRenderer not available", "TerrainVegetationUI");
                     return;
                 }
 
+                var scene = renderer.Scene;
+                if (scene == null)
+                {
+                    LogManager.LogError("Cannot regenerate vegetation - Scene is null", "TerrainVegetationUI");
+                    return;
+                }
+
                 // Inspector changes modify terrain layers directly in memory, so no need to save first
-                // Use the robust ForceRegenerateVegetation which handles both terrain modes
                 Console.WriteLine($"[TerrainVegetationUI] Regenerating vegetation for terrain: {terrain.Entity?.Name ?? "(unnamed)"}, Mode: {terrain.Mode}");
 
-                //renderer.ForceRegenerateVegetation(terrain);
+                // Clear and regenerate vegetation using the same pattern as HandleTerrainModeChange
+                // 1. Reset VegetationCleared flag to allow regeneration
+                terrain.VegetationCleared = false;
+
+                // 2. Clear old vegetation first
+                terrain.ClearVegetation(scene, setCleared: false);
+
+                // 3. Generate new vegetation
+                terrain.GenerateVegetation(scene);
 
                 // Mark scene as modified so user knows to save
                 Editor.SceneManagement.SceneManager.MarkSceneAsModified();

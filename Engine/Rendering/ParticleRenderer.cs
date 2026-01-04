@@ -161,18 +161,39 @@ namespace Engine.Rendering
         {
             if (_particleShader == null || scene == null) return;
 
-            // Gather all active particle systems
+            // PERFORMANCE OPTIMIZATION: Use component cache instead of iterating all entities
+            // BEFORE: O(N) foreach loop + GetComponent on every entity every frame
+            // AFTER: O(1) cached lookup - only rebuild when scene changes
             var particleSystems = new List<ParticleSystem>();
-            foreach (var entity in scene.Entities)
+            
+            if (scene.Cache != null)
             {
-                if (!entity.Active) continue;
-
-                var ps = entity.GetComponent<ParticleSystem>();
-                if (ps != null && ps.Enabled)
+                // Fast path: use cached component lookup
+                var entities = scene.Cache.GetEntitiesWithComponent<ParticleSystem>();
+                foreach (var entity in entities)
                 {
-                    if (ps.ParticleCount > 0)
+                    if (!entity.Active) continue;
+                    var ps = entity.GetComponent<ParticleSystem>();
+                    if (ps != null && ps.Enabled && ps.ParticleCount > 0)
                     {
                         particleSystems.Add(ps);
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: iterate all entities (old slow method)
+                foreach (var entity in scene.Entities)
+                {
+                    if (!entity.Active) continue;
+
+                    var ps = entity.GetComponent<ParticleSystem>();
+                    if (ps != null && ps.Enabled)
+                    {
+                        if (ps.ParticleCount > 0)
+                        {
+                            particleSystems.Add(ps);
+                        }
                     }
                 }
             }
@@ -185,11 +206,14 @@ namespace Engine.Rendering
             bool blendWasEnabled = GL.IsEnabled(EnableCap.Blend);
             bool cullWasEnabled = GL.IsEnabled(EnableCap.CullFace);
             GL.GetBoolean(GetPName.DepthWritemask, out bool depthWriteWasEnabled);
+            bool depthTestWasEnabled = GL.IsEnabled(EnableCap.DepthTest);
 
             // Setup GL state for particle rendering
             GL.Enable(EnableCap.Blend);
             GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-            GL.DepthMask(false); // Don't write to depth buffer
+            GL.DepthMask(false); // Don't write to depth buffer (particles are transparent)
+            GL.Enable(EnableCap.DepthTest); // Enable depth test so particles are culled behind geometry
+            GL.DepthFunc(DepthFunction.Less); // Only render if particle is in front of existing depth
             GL.Disable(EnableCap.CullFace);
 
             // Bind shader and set uniforms
@@ -197,8 +221,15 @@ namespace Engine.Rendering
             _particleShader.SetMat4("uView", viewMatrix);
             _particleShader.SetMat4("uProjection", projectionMatrix);
             _particleShader.SetVec3("uCameraPos", cameraPosition);
-            _particleShader.SetVec3("uCameraRight", new Vector3(viewMatrix.M11, viewMatrix.M21, viewMatrix.M31));
-            _particleShader.SetVec3("uCameraUp", new Vector3(viewMatrix.M12, viewMatrix.M22, viewMatrix.M32));
+            
+            // Extract camera Right/Up from the INVERSE view matrix (world space)
+            // This ensures particles billboard correctly without following camera movement
+            var invView = viewMatrix.Inverted();
+            Vector3 cameraRight = new Vector3(invView.M11, invView.M21, invView.M31).Normalized();
+            Vector3 cameraUp = new Vector3(invView.M12, invView.M22, invView.M32).Normalized();
+            
+            _particleShader.SetVec3("uCameraRight", cameraRight);
+            _particleShader.SetVec3("uCameraUp", cameraUp);
             _particleShader.SetInt("uHasTexture", 0);
 
             GL.BindVertexArray(_vao);
@@ -217,9 +248,12 @@ namespace Engine.Rendering
             // Restore GL state
             if (!cullWasEnabled) GL.Disable(EnableCap.CullFace);
             else GL.Enable(EnableCap.CullFace);
-            
+
             GL.DepthMask(depthWriteWasEnabled);
-            
+
+            if (depthTestWasEnabled) GL.Enable(EnableCap.DepthTest);
+            else GL.Disable(EnableCap.DepthTest);
+
             if (!blendWasEnabled) GL.Disable(EnableCap.Blend);
         }
 
