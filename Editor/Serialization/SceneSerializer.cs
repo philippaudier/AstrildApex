@@ -597,7 +597,28 @@ namespace Editor.Serialization
 
         private static void ApplySceneData(Scene scene, SceneFileV4 sceneFile, LoadResult result)
         {
+            // CRITICAL: Properly destroy all existing entities before clearing
+            // This ensures components (especially colliders) are properly unregistered
+            foreach (var entity in scene.Entities.ToList()) // ToList to avoid modification during iteration
+            {
+                // Detach all components to trigger OnDetached (unregister colliders, etc.)
+                foreach (var component in entity.GetComponents())
+                {
+                    component.OnDetached();
+                }
+
+                // Mark entity as detached from scene so PhysicsManager cleanup can detect it
+                // Using reflection since Scene property is internal
+                var sceneProperty = typeof(Engine.Scene.Entity).GetProperty("Scene",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                sceneProperty?.SetValue(entity, null);
+            }
+
             scene.Entities.Clear();
+
+            // Force immediate cleanup of orphaned colliders
+            Engine.Physics.PhysicsManager.Instance.CleanupInvalidColliders();
+
             var guidToEntity = new Dictionary<Guid, Entity>();
             var parentRelationships = new List<(Entity child, Guid parentGuid)>();
 

@@ -101,8 +101,14 @@ namespace Engine.Physics
         }
 
         /// <summary>
-        /// Clean up invalid colliders (null entities, destroyed entities, etc.)
+        /// Clean up invalid colliders (null entities, destroyed entities, orphaned from scenes, etc.)
         /// This fixes the "ghost collision" bug where old colliders remain after moving/deleting objects.
+        ///
+        /// Removes colliders that are:
+        /// - Null
+        /// - Have null entities
+        /// - Entities detached from any scene (Entity.Scene == null)
+        ///
         /// Call this manually if you notice phantom collisions, or it runs automatically every 60 frames.
         /// </summary>
         public void CleanupInvalidColliders()
@@ -110,9 +116,19 @@ namespace Engine.Physics
             lock (_colliderLock)
             {
                 int beforeCount = _allColliders.Count;
-                // Only remove colliders with null entities (orphaned), not inactive ones
-                // Inactive entities should keep their colliders registered for when they're reactivated
-                _allColliders.RemoveAll(c => c == null || c.Entity == null);
+
+                // Remove colliders that are invalid:
+                // 1. Collider itself is null
+                // 2. Entity is null (destroyed)
+                // 3. Entity.Scene is null (entity was removed from scene via Entities.Clear() or similar)
+                //
+                // We DON'T remove colliders with inactive entities - they should stay registered
+                _allColliders.RemoveAll(c =>
+                    c == null ||
+                    c.Entity == null ||
+                    c.Entity.Scene == null
+                );
+
                 int removedCount = beforeCount - _allColliders.Count;
 
                 if (removedCount > 0)
