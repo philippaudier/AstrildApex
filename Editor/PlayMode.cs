@@ -206,9 +206,8 @@ namespace Editor
             _originalScene = null;
             _cachedComponentsByEntity.Clear();
 
-            // Physics system removed
-            // Engine.Physics.PhysicsManager.Instance.Reset();
-            // Engine.Physics.PhysicsManager.Instance.SetActiveScene(null);
+            // Reset physics system to clear Play Mode colliders
+            Engine.Physics.PhysicsManager.Instance.Reset();
 
             _state = PlayState.Edit;
             Engine.Utils.DebugLogger.Log("[PlayMode] Returned to Edit Mode");

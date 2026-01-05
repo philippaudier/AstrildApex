@@ -37,6 +37,9 @@ namespace Engine.Physics
         public UpdatePhase Phase => UpdatePhase.FixedUpdate;
         public int Priority => 0;
 
+        private int _cleanupFrameCounter = 0;
+        private const int CleanupInterval = 60; // Clean every 60 frames
+
         private PhysicsManager()
         {
             // Auto-register with update pipeline
@@ -46,9 +49,13 @@ namespace Engine.Physics
 
         public void Update(float deltaTime)
         {
-            // Physics manager doesn't need per-frame updates currently
-            // Colliders are queried on-demand via Raycast/SphereCast/etc.
-            // Future: Add continuous collision detection, trigger events, etc.
+            // Periodically clean up invalid colliders (orphaned, null entities, etc.)
+            _cleanupFrameCounter++;
+            if (_cleanupFrameCounter >= CleanupInterval)
+            {
+                CleanupInvalidColliders();
+                _cleanupFrameCounter = 0;
+            }
         }
 
         // ===== COLLIDER MANAGEMENT =====
@@ -90,6 +97,28 @@ namespace Engine.Physics
             lock (_colliderLock)
             {
                 return _allColliders.ToList().AsReadOnly();
+            }
+        }
+
+        /// <summary>
+        /// Clean up invalid colliders (null entities, destroyed entities, etc.)
+        /// This fixes the "ghost collision" bug where old colliders remain after moving/deleting objects.
+        /// Call this manually if you notice phantom collisions, or it runs automatically every 60 frames.
+        /// </summary>
+        public void CleanupInvalidColliders()
+        {
+            lock (_colliderLock)
+            {
+                int beforeCount = _allColliders.Count;
+                // Only remove colliders with null entities (orphaned), not inactive ones
+                // Inactive entities should keep their colliders registered for when they're reactivated
+                _allColliders.RemoveAll(c => c == null || c.Entity == null);
+                int removedCount = beforeCount - _allColliders.Count;
+
+                if (removedCount > 0)
+                {
+                    Log.Debug($"[PhysicsManager] Cleaned up {removedCount} orphaned colliders ({beforeCount} -> {_allColliders.Count})");
+                }
             }
         }
 
