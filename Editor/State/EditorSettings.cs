@@ -23,7 +23,7 @@ namespace Editor.State
             public bool ShowGrid { get; set; } = true;
 
             // Camera clipping planes for the editor viewport
-            public float CameraNear { get; set; } = 0.1f;
+            public float CameraNear { get; set; } = 1.0f;  // Increased from 0.1f to reduce z-fighting (better depth precision)
             public float CameraFar { get; set; } = 5000f;
 
             // Persisted camera projection mode & ortho/FOV

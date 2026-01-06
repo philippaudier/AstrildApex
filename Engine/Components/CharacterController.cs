@@ -341,7 +341,7 @@ namespace Engine.Components
                 }
             }
 
-            // MOVEMENT: Use terrain-specific movement when on terrain, standard Move() otherwise
+            // MOVEMENT: Use surface-following movement when grounded, standard Move() when in air
             if (Velocity.LengthSquared > MinMoveDistance * MinMoveDistance)
             {
                 if (IsGrounded && _isGroundedOnTerrain && FindTerrain() != null)
@@ -349,9 +349,14 @@ namespace Engine.Components
                     // On terrain - use terrain-specific movement for smooth slope following
                     MoveOnTerrain(Velocity * deltaTime);
                 }
+                else if (IsGrounded && !_isGroundedOnTerrain)
+                {
+                    // On physics collider - use collider surface following for smooth slope climbing
+                    MoveOnCollider(Velocity * deltaTime);
+                }
                 else
                 {
-                    // In air or on physics collider - use standard movement
+                    // In air - use standard movement
                     Move(Velocity * deltaTime);
                 }
             }
@@ -394,8 +399,8 @@ namespace Engine.Components
             if (motion.LengthSquared < MinMoveDistance * MinMoveDistance) return;
 
             // Standard 3D movement with collision resolution
-            // Used when: in air, on physics colliders, or jumping
-            // NOT used when grounded on terrain (uses MoveOnTerrain instead)
+            // Used when: in air or jumping
+            // NOT used when grounded (uses MoveOnTerrain or MoveOnCollider instead)
 
             Vector3 finalPosition = Entity.Transform.Position;
             Vector3 remainingMotion = motion;
@@ -754,8 +759,23 @@ namespace Engine.Components
                     // Check if hit is below us (standing on it) vs in front (hitting a slope)
                     Vector3 bottomPos = currentPos + Center - Vector3.UnitY * ((Height - 2f * Radius) * 0.5f);
                     const float groundIgnoreEpsilon = 0.02f;
-                    // Only ignore when the contact point is essentially at or below the bottom sphere center
-                    if (hit.Point.Y <= bottomPos.Y + groundIgnoreEpsilon)
+
+                    // Check both vertical AND horizontal position
+                    bool isBelow = hit.Point.Y <= bottomPos.Y + groundIgnoreEpsilon;
+
+                    // Check if hit is in front of us horizontally
+                    Vector3 toHit = new Vector3(hit.Point.X - bottomPos.X, 0, hit.Point.Z - bottomPos.Z);
+                    Vector3 horizontalMotion = new Vector3(motion.X, 0, motion.Z);
+                    bool isInFront = false;
+
+                    if (toHit.LengthSquared > 0.0001f && horizontalMotion.LengthSquared > 0.0001f)
+                    {
+                        float dotProduct = Vector3.Dot(Vector3.Normalize(toHit), Vector3.Normalize(horizontalMotion));
+                        isInFront = dotProduct > 0.5f; // Hit is in front if > 60 degrees alignment
+                    }
+
+                    // Only ignore when the contact point is at or below us AND not in front
+                    if (isBelow && !isInFront)
                     {
                         // Ignore this ground collision - we're jumping away from the ground under us
                         return false; // No collision - proceed with full movement
@@ -796,8 +816,8 @@ namespace Engine.Components
 
         /// <summary>
         /// Cast the character's capsule shape along a direction.
-        /// Uses swept sphere casts with REDUCED radius to avoid detecting surfaces we're already touching.
-        /// This is the key to natural movement - we only detect obstacles IN FRONT, not surfaces we're already against.
+        /// Uses swept sphere casts at 3 points (bottom, middle, top) to approximate capsule.
+        /// Now uses FULL radius for accurate collision detection.
         /// </summary>
         private bool CapsuleCast(Vector3 origin, Vector3 direction, float distance, out RaycastHit hit)
         {
@@ -810,52 +830,61 @@ namespace Engine.Components
             Vector3 middle = capsuleCenter;
             Vector3 top = capsuleCenter + Vector3.UnitY * halfCylinderHeight;
 
-            // Use a sweep radius slightly smaller than the real radius so we don't
-            // continuously detect surfaces we're already exactly touching, but
-            // keep it large enough to reliably detect walls/ceilings.
-            float sweepRadius = Radius * 0.95f; // Increased from 0.9f for better detection
-            float radiusCompensation = Radius - sweepRadius;
+            // Use FULL radius for accurate detection
+            float sweepRadius = Radius;
 
             RaycastHit? closestHit = null;
             float closestDistance = float.MaxValue;
 
-            // BOTTOM sphere - detect all obstacles including those we're close to
-            if (PhysicsManager.Instance.SphereCast(bottom, sweepRadius, direction, out RaycastHit bottomHit, distance + radiusCompensation, CollisionMask))
+            // BOTTOM sphere
+            if (PhysicsManager.Instance.SphereCast(bottom, sweepRadius, direction, out RaycastHit bottomHit, distance, CollisionMask))
             {
-                // Compensate for reduced radius
-                float actualDistance = bottomHit.Distance - radiusCompensation;
+                // Filter out ground under feet when moving horizontally (to allow jumping)
+                bool shouldIgnore = false;
+                bool isHorizontalMove = MathF.Abs(direction.Y) < 0.3f;
+                bool isGroundHit = bottomHit.Normal.Y > 0.7f;
 
-                // Only skip ground when moving horizontally and already grounded
-                bool isHorizontal = MathF.Abs(direction.Y) < 0.3f;
-                bool isGround = bottomHit.Normal.Y > 0.7f;
-                if (!(isHorizontal && isGround && IsGrounded && actualDistance < SkinWidth * 2f))
+                if (isHorizontalMove && isGroundHit && IsGrounded && bottomHit.Distance < SkinWidth * 2f)
                 {
-                    if (actualDistance < closestDistance)
+                    // Only ignore if hit is UNDER us, not IN FRONT
+                    Vector3 toHit = bottomHit.Point - bottom;
+                    Vector3 horizontalToHit = new Vector3(toHit.X, 0, toHit.Z);
+                    Vector3 horizontalDirection = new Vector3(direction.X, 0, direction.Z);
+
+                    if (horizontalToHit.LengthSquared > 0.0001f && horizontalDirection.LengthSquared > 0.0001f)
                     {
-                        closestDistance = actualDistance;
-                        closestHit = bottomHit;
+                        float dotProduct = Vector3.Dot(Vector3.Normalize(horizontalToHit), Vector3.Normalize(horizontalDirection));
+                        shouldIgnore = dotProduct < 0.5f; // Ignore if not in front (< 60 degrees)
                     }
+                    else
+                    {
+                        shouldIgnore = true; // Hit is directly below
+                    }
+                }
+
+                if (!shouldIgnore && bottomHit.Distance < closestDistance)
+                {
+                    closestDistance = bottomHit.Distance;
+                    closestHit = bottomHit;
                 }
             }
 
-            // MIDDLE sphere - detect all obstacles
-            if (PhysicsManager.Instance.SphereCast(middle, sweepRadius, direction, out RaycastHit middleHit, distance + radiusCompensation, CollisionMask))
+            // MIDDLE sphere
+            if (PhysicsManager.Instance.SphereCast(middle, sweepRadius, direction, out RaycastHit middleHit, distance, CollisionMask))
             {
-                float actualDistance = middleHit.Distance - radiusCompensation;
-                if (actualDistance < closestDistance)
+                if (middleHit.Distance < closestDistance)
                 {
-                    closestDistance = actualDistance;
+                    closestDistance = middleHit.Distance;
                     closestHit = middleHit;
                 }
             }
 
-            // TOP sphere - detect all obstacles
-            if (PhysicsManager.Instance.SphereCast(top, sweepRadius, direction, out RaycastHit topHit, distance + radiusCompensation, CollisionMask))
+            // TOP sphere
+            if (PhysicsManager.Instance.SphereCast(top, sweepRadius, direction, out RaycastHit topHit, distance, CollisionMask))
             {
-                float actualDistance = topHit.Distance - radiusCompensation;
-                if (actualDistance < closestDistance)
+                if (topHit.Distance < closestDistance)
                 {
-                    closestDistance = actualDistance;
+                    closestDistance = topHit.Distance;
                     closestHit = topHit;
                 }
             }
@@ -908,13 +937,16 @@ namespace Engine.Components
             Vector3 physicsGroundNormal = Vector3.UnitY;
             float physicsSlopeAngle = 0f;
 
-            // Check physics colliders (use slightly smaller radius to match CapsuleCast)
-            if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.95f, -Vector3.UnitY, out RaycastHit hit, checkDistance, CollisionMask))
+            // Check physics colliders - use FULL radius for accurate detection
+            if (PhysicsManager.Instance.SphereCast(origin, Radius, -Vector3.UnitY, out RaycastHit hit, checkDistance, CollisionMask))
             {
                 physicsSlopeAngle = Vector3.CalculateAngle(Vector3.UnitY, hit.Normal) * (180f / MathF.PI);
 
                 // Accept ground even if slope is too steep (we'll slide on it instead of falling through)
                 hasPhysicsGround = true;
+                // The hit.Distance is from origin to contact point
+                // Since origin is the bottom sphere center (already at Radius above ground when grounded),
+                // the actual distance from the bottom of the capsule is hit.Distance
                 physicsGroundDistance = hit.Distance;
                 physicsGroundNormal = hit.Normal;
             }
@@ -1118,8 +1150,8 @@ namespace Engine.Components
             Vector3 origin = GetTopPosition();
             float checkDistance = Radius + SkinWidth * 2f;
 
-            // Check for colliders above using sphere cast
-            if (PhysicsManager.Instance.SphereCast(origin, Radius * 0.9f, Vector3.UnitY, out RaycastHit hit, checkDistance, CollisionMask))
+            // Check for colliders above using sphere cast with FULL radius for accurate detection
+            if (PhysicsManager.Instance.SphereCast(origin, Radius, Vector3.UnitY, out RaycastHit hit, checkDistance, CollisionMask))
             {
                 // Check if the hit normal is pointing downward (ceiling surface)
                 if (hit.Normal.Y < -0.1f)
@@ -1144,7 +1176,7 @@ namespace Engine.Components
         /// Depenetrate from overlapping colliders.
         /// This prevents the character from getting stuck inside colliders.
         /// Uses 3 sample points (bottom, middle, top) for efficiency.
-        /// Avoids pushing against the direction we're trying to move.
+        /// Improved: Prevents pushing downward when grounded.
         /// </summary>
         private void Depenetrate()
         {
@@ -1154,18 +1186,11 @@ namespace Engine.Components
             const float maxDepenetrationPerFrame = 0.3f;
 
             float halfCylinderHeight = (Height - 2f * Radius) * 0.5f;
-            Vector3 capsuleCenter = Entity.Transform.Position + Center;
-
-            // Get horizontal velocity direction (ignore vertical)
-            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
-            Vector3 movementDirection = horizontalVelocity.LengthSquared > 0.01f
-                ? Vector3.Normalize(horizontalVelocity)
-                : Vector3.Zero;
 
             for (int iteration = 0; iteration < maxIterations; iteration++)
             {
                 // Recalculate positions each iteration
-                capsuleCenter = Entity.Transform.Position + Center;
+                Vector3 capsuleCenter = Entity.Transform.Position + Center;
                 Vector3 bottom = capsuleCenter - Vector3.UnitY * halfCylinderHeight;
                 Vector3 middle = capsuleCenter;
                 Vector3 top = capsuleCenter + Vector3.UnitY * halfCylinderHeight;
@@ -1197,8 +1222,6 @@ namespace Engine.Components
                             Vector3 pushDirection = Vector3.Normalize(penetrationVector);
                             float pushAmount = Radius - penetrationDepth + SkinWidth;
 
-                            // ALWAYS push out of overlapping geometry, regardless of movement direction
-                            // This prevents getting stuck in walls
                             totalDepenetration += pushDirection * pushAmount;
                             overlapCount++;
                         }
@@ -1210,13 +1233,23 @@ namespace Engine.Components
                 {
                     Vector3 avgDepenetration = totalDepenetration / overlapCount;
 
+                    // IMPROVED: When grounded, prevent pushing downward (keep CC on ground)
+                    if (IsGrounded && avgDepenetration.Y < 0)
+                    {
+                        avgDepenetration.Y = 0;
+                    }
+
                     // Clamp to max per frame to prevent teleporting
                     if (avgDepenetration.Length > maxDepenetrationPerFrame)
                     {
                         avgDepenetration = Vector3.Normalize(avgDepenetration) * maxDepenetrationPerFrame;
                     }
 
-                    Entity.Transform.Position += avgDepenetration;
+                    // Only apply if significant
+                    if (avgDepenetration.LengthSquared > 0.00001f)
+                    {
+                        Entity.Transform.Position += avgDepenetration;
+                    }
                 }
                 else
                 {
@@ -1227,12 +1260,146 @@ namespace Engine.Components
         }
 
         /// <summary>
-        /// Move on physics collider - just use standard Move() for now.
-        /// The CapsuleCast improvements handle ground detection properly.
+        /// Move on physics collider with surface following (like MoveOnTerrain but for colliders).
+        /// Follows the surface of box/sphere/capsule colliders smoothly.
+        /// SIMPLIFIED: Uses SphereCast for consistent detection and minimal smoothing.
         /// </summary>
         private void MoveOnCollider(Vector3 motion)
         {
-            Move(motion);
+            if (Entity == null) return;
+
+            Vector3 currentPos = Entity.Transform.Position;
+
+            // SAFETY: Prevent micro-movements
+            const float minSignificantMotion = 0.001f;
+            if (motion.LengthSquared < minSignificantMotion * minSignificantMotion)
+                return;
+
+            // STEP 1: Calculate target XZ position (horizontal movement with collisions)
+            Vector3 horizontalMotion = new Vector3(motion.X, 0f, motion.Z);
+            Vector3 targetXZ = currentPos;
+
+            if (horizontalMotion.LengthSquared >= MinMoveDistance * MinMoveDistance)
+            {
+                // Check horizontal collisions
+                Vector3 origin = currentPos + Center;
+                Vector3 direction = Vector3.Normalize(horizontalMotion);
+                float distance = horizontalMotion.Length;
+
+                if (PhysicsManager.Instance.SphereCast(origin, Radius, direction, out RaycastHit hit, distance, CollisionMask))
+                {
+                    // Hit something - move safely and slide
+                    float safeDistance = MathF.Max(0, hit.Distance - SkinWidth);
+                    Vector3 slideMotion = ProjectVectorOntoPlane(horizontalMotion, hit.Normal);
+                    targetXZ = currentPos + Vector3.Normalize(horizontalMotion) * safeDistance + slideMotion * 0.5f;
+                }
+                else
+                {
+                    // No collision - move full distance
+                    targetXZ = currentPos + horizontalMotion;
+                }
+            }
+
+            // STEP 2: Find ground height at new XZ position
+            // CRITICAL: Cast from FRONT EDGE of bottom hemisphere to detect ground naturally at edges
+            float halfCylinderHeight = (Height - 2f * Radius) * 0.5f;
+            Vector3 bottomCenter = new Vector3(targetXZ.X, currentPos.Y, targetXZ.Z) + Center - Vector3.UnitY * halfCylinderHeight;
+
+            // Determine cast origin based on movement direction
+            Vector3 castOrigin = bottomCenter;
+            if (horizontalMotion.LengthSquared > 0.0001f)
+            {
+                // Moving - cast from front edge of hemisphere
+                Vector3 moveDir = Vector3.Normalize(horizontalMotion);
+                castOrigin = bottomCenter + new Vector3(moveDir.X * Radius * 0.7f, 0, moveDir.Z * Radius * 0.7f);
+            }
+
+            // Cast downward from above to detect ground
+            Vector3 rayStart = castOrigin + Vector3.UnitY * (Height + 1f);
+            float rayDistance = Height + GroundCheckDistance + 10f;
+            bool foundGround = false;
+            float targetY = currentPos.Y;
+
+            if (PhysicsManager.Instance.Raycast(rayStart, -Vector3.UnitY, out RaycastHit groundHit, rayDistance, CollisionMask))
+            {
+                // Validate upward-facing normal (ground, not wall)
+                if (groundHit.Normal.Y > 0.7f)
+                {
+                    float groundY = groundHit.Point.Y;
+                    
+                    // Validate reasonable distance to prevent detecting adjacent colliders
+                    float verticalDistance = MathF.Abs(groundY - (bottomCenter.Y - Radius));
+                    if (verticalDistance < 1.5f) // Only accept nearby ground
+                    {
+                        // Calculate target entity Y position
+                        targetY = groundY + Radius - Center.Y + halfCylinderHeight;
+                        foundGround = true;
+                    }
+                }
+            }
+
+            // STEP 3: Calculate vertical movement with adaptive smoothing
+            float currentY = currentPos.Y;
+            float heightDiff = targetY - currentY;
+            float verticalMotion = 0f;
+
+            if (foundGround)
+            {
+                bool isGoingDown = heightDiff < 0f;
+                bool isMovingFast = horizontalMotion.Length > 0.1f;
+                
+                if (isGoingDown)
+                {
+                    // DESCENDING: Aggressive smoothing to stick to ground
+                    if (isMovingFast && MathF.Abs(heightDiff) > 0.01f)
+                    {
+                        // Fast descent - very responsive
+                        const float descentSmoothSpeed = 100f;
+                        float smoothFactor = 1f - MathF.Exp(-descentSmoothSpeed * Engine.Core.Time.DeltaTime);
+                        verticalMotion = heightDiff * smoothFactor;
+                    }
+                    else
+                    {
+                        // Slow descent - moderate smoothing
+                        const float descentSmoothSpeed = 50f;
+                        float smoothFactor = 1f - MathF.Exp(-descentSmoothSpeed * Engine.Core.Time.DeltaTime);
+                        verticalMotion = heightDiff * smoothFactor;
+                    }
+                }
+                else
+                {
+                    // ASCENDING: Gentler smoothing for smooth uphill
+                    const float ascentSmoothSpeed = 30f;
+                    float smoothFactor = 1f - MathF.Exp(-ascentSmoothSpeed * Engine.Core.Time.DeltaTime);
+                    verticalMotion = heightDiff * smoothFactor;
+                }
+                
+                // SNAP when very close to eliminate micro-oscillations
+                if (MathF.Abs(heightDiff) < 0.002f)
+                {
+                    verticalMotion = heightDiff;
+                }
+            }
+            else
+            {
+                // No ground - don't move vertically (gravity handles falling)
+                verticalMotion = 0f;
+            }
+
+            // STEP 4: Apply motion
+            Vector3 fullMotion = new Vector3(
+                targetXZ.X - currentPos.X,
+                verticalMotion,
+                targetXZ.Z - currentPos.Z
+            );
+
+            if (fullMotion.LengthSquared > 0.00001f)
+            {
+                Entity.Transform.Position = currentPos + fullMotion;
+
+                // Depenetrate to prevent getting stuck
+                Depenetrate();
+            }
         }
 
         /// <summary>

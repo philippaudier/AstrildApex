@@ -452,7 +452,7 @@ namespace Editor.Rendering
             get => _nearClip;
             set
             {
-                _nearClip = MathF.Max(0.0001f, value);
+                _nearClip = MathF.Max(0.1f, value);  // Changed from 0.0001f - prevent extreme depth precision loss
                 // persist
                 try { Editor.State.EditorSettings.CameraNear = _nearClip; } catch { }
             }
@@ -1183,9 +1183,9 @@ namespace Editor.Rendering
         private Matrix4 _viewGL, _projGL;
         private Matrix4 _projGLNoJitter; // Projection matrix without TAA jitter (for reprojection)
     private float _fovY = MathHelper.DegreesToRadians(60f);
-    // Camera near/far planes - INCREASED near from 0.1f to 0.5f to reduce Z-fighting
-    // A larger near clip improves depth buffer precision (ratio near:far = 1:10000 instead of 1:50000)
-    private float _nearClip = 0.5f;
+    // Camera near/far planes - INCREASED near from 0.1f to 1.0f to reduce Z-fighting
+    // A larger near clip improves depth buffer precision (ratio near:far = 1:5000 instead of 1:50000)
+    private float _nearClip = 1.0f;
     private float _farClip = 5000f;
 
     // Projection mode: 0=Perspective, 1=Orthographic, 2=2D
@@ -4664,14 +4664,14 @@ void main(){
             {
                 shader.SetInt("u_UseShadows", 0);
                 shader.SetInt("u_CascadeCount", 1); // Default to avoid shader errors
-                
+
                 // Initialize default cascade data to avoid uninitialized uniforms
                 for (int i = 0; i < 4; i++)
                 {
                     Matrix4 identity = Matrix4.Identity;
                     int locMat = GL.GetUniformLocation(shader.Handle, $"u_CascadeMatrices[{i}]");
                     if (locMat >= 0) GL.UniformMatrix4(locMat, false, ref identity);
-                    
+
                     shader.SetFloat($"u_CascadeSplits[{i}]", 1000.0f);
                     shader.SetVec4($"u_AtlasTransforms[{i}]", new Vector4(1, 1, 0, 0));
                 }

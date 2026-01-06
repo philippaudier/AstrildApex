@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using ImGuiNET;
 using Engine.Components;
 using OpenTK.Mathematics;
@@ -13,6 +14,9 @@ namespace Editor.Inspector
     public static class LightInspector
     {
         private static UITheme UI => ThemeManager.UI;
+
+        // Note: Shadow transition texture is now a global setting in RenderingSettingsPanel
+
         public static void Draw(LightComponent light)
         {
             if (light?.Entity == null) return;
@@ -122,7 +126,14 @@ namespace Editor.Inspector
                 light.CastShadows = castShadows;
 
                 if (!light.CastShadows)
+                {
                     InspectorWidgets.InfoBox("Shadows disabled. This light will not cast shadows.");
+                }
+                else
+                {
+                    // Note: Shadow transition texture settings are now in Rendering Settings panel (global setting)
+                    InspectorWidgets.InfoBox("Shadow transition textures are configured globally in Rendering Settings panel.");
+                }
 
                 InspectorWidgets.EndSection();
             }

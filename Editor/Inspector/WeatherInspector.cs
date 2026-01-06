@@ -471,6 +471,8 @@ namespace Editor.Inspector
                 if (ImGui.Checkbox("Enabled", ref fogEnabled))
                 {
                     weather.FogEnabled = fogEnabled;
+                    UpdateWeatherManager(weather);
+                    Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                 }
 
                 if (weather.FogEnabled)
@@ -481,6 +483,8 @@ namespace Editor.Inspector
                     if (ImGui.SliderFloat("Density", ref fogDensity, 0.0f, 0.5f, "%.3f"))
                     {
                         weather.FogDensity = Math.Clamp(fogDensity, 0.0f, 0.5f);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Exponential fog density");
@@ -491,6 +495,8 @@ namespace Editor.Inspector
                     if (ImGui.DragFloat("Start Distance", ref fogStart, 0.1f, 0.0f, weather.FogEnd - 0.1f))
                     {
                         weather.FogStart = Math.Max(0.0f, fogStart);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Distance where fog starts (linear fog)");
@@ -500,6 +506,8 @@ namespace Editor.Inspector
                     if (ImGui.DragFloat("End Distance", ref fogEnd, 0.1f, weather.FogStart + 0.1f, 1000.0f))
                     {
                         weather.FogEnd = Math.Max(weather.FogStart + 0.1f, fogEnd);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Distance where fog reaches maximum (linear fog)");
@@ -511,6 +519,8 @@ namespace Editor.Inspector
                     if (ImGui.ColorEdit3("Color", ref color, ImGuiColorEditFlags.NoAlpha))
                     {
                         weather.FogColor = new System.Numerics.Vector3(color.X, color.Y, color.Z);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
                 }
             }

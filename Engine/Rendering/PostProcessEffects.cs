@@ -1242,17 +1242,12 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2D, context.DepthTexture);
             _ssaoShader.SetInt("u_DepthTexture", 0);
 
-            GL.ActiveTexture(TextureUnit.Texture1);
-            GL.BindTexture(TextureTarget.Texture2D, _noiseTexture);
-            _ssaoShader.SetInt("u_NoiseTexture", 1);
-
             // Paramètres SSAO
             _ssaoShader.SetFloat("u_Radius", ssao.Radius);
             _ssaoShader.SetFloat("u_Bias", ssao.Bias);
             _ssaoShader.SetFloat("u_Power", ssao.Power);
             _ssaoShader.SetFloat("u_MaxDistance", ssao.MaxDistance);
             _ssaoShader.SetInt("u_SampleCount", Math.Min(ssao.SampleCount, 64));
-            _ssaoShader.SetVec2("u_NoiseScale", new Vector2(_width / 4.0f, _height / 4.0f));
 
             // Envoyer le kernel d'échantillonnage
             for (int i = 0; i < Math.Min(ssao.SampleCount, 64); i++)
@@ -2301,8 +2296,9 @@ namespace Engine.Rendering
 
             _historyDepthTexture = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, _historyDepthTexture);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.DepthComponent32f, gtaoWidth, gtaoHeight, 0, 
-                         PixelFormat.DepthComponent, PixelType.Float, IntPtr.Zero);
+            // CRITICAL FIX: Use R32F (red channel float) not DepthComponent, because shader reads it as sampler2D!
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f, gtaoWidth, gtaoHeight, 0, 
+                         PixelFormat.Red, PixelType.Float, IntPtr.Zero);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
@@ -2599,8 +2595,32 @@ namespace Engine.Rendering
             
             GL.DeleteFramebuffer(tempFBO);
             
-            // Copy depth buffer (downsampled)
-            // TODO: Proper depth downsample, for now just copy
+            // CRITICAL: Copy depth buffer to history (for reprojection validation)
+            // Create temporary FBO for depth copy
+            int depthFBO = GL.GenFramebuffer();
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, depthFBO);
+            GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                                   TextureTarget.Texture2D, _historyDepthTexture, 0);
+            
+            // Copy full-res depth to downsampled history depth
+            if (context.DepthTexture != 0)
+            {
+                // Use glBlitFramebuffer to downsample depth
+                int fullDepthFBO = GL.GenFramebuffer();
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, fullDepthFBO);
+                GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0,
+                                       TextureTarget.Texture2D, context.DepthTexture, 0);
+                
+                GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, fullDepthFBO);
+                GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, depthFBO);
+                GL.BlitFramebuffer(0, 0, context.Width, context.Height, 
+                                  0, 0, width, height,
+                                  ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Linear);
+                
+                GL.DeleteFramebuffer(fullDepthFBO);
+            }
+            
+            GL.DeleteFramebuffer(depthFBO);
             
             // Store matrices for next frame
             if (context.ProjectionMatrix.HasValue)

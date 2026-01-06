@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using ImGuiNET;
 using Engine.Components;
@@ -12,7 +13,7 @@ namespace Editor.Inspector
     public static class GlobalEffectsInspector
     {
         private static UITheme UI => ThemeManager.UI;
-        
+
         public static void DrawInspector(GlobalEffects globalEffects)
         {
             if (globalEffects == null) return;
@@ -455,6 +456,14 @@ namespace Editor.Inspector
                 if (ImGui.IsItemHovered())
                 {
                     ImGui.SetTooltip("Spatial denoising blur\n1-2 = sharp, 3-5 = smooth");
+                }
+
+                float oldMaxDistance = gtao.MaxDistance;
+                gtao.MaxDistance = ImGuiHelper.SliderFloat($"Max Distance##{index}", gtao.MaxDistance, 20.0f, 200.0f);
+                if (gtao.MaxDistance != oldMaxDistance && gtao.Quality != GTAOQuality.Custom) switchedToCustom = true;
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Maximum render distance for GTAO\nFade out beyond this distance\nLower = better performance");
                 }
 
                 ImGui.Spacing();

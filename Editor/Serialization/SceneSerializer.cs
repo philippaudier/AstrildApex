@@ -602,7 +602,7 @@ namespace Editor.Serialization
             foreach (var entity in scene.Entities.ToList()) // ToList to avoid modification during iteration
             {
                 // Detach all components to trigger OnDetached (unregister colliders, etc.)
-                foreach (var component in entity.GetComponents())
+                foreach (var component in entity.GetAllComponents())
                 {
                     component.OnDetached();
                 }

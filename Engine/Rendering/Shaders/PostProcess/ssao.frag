@@ -6,7 +6,6 @@ in vec2 vTexCoord;
 
 // Textures
 uniform sampler2D u_DepthTexture;
-uniform sampler2D u_NoiseTexture;
 
 // SSAO Parameters
 uniform float u_Radius;
@@ -14,7 +13,6 @@ uniform float u_Bias;
 uniform float u_Power;
 uniform float u_MaxDistance;
 uniform int u_SampleCount;
-uniform vec2 u_NoiseScale;
 
 // Sampling kernel
 uniform vec3 u_Samples[64];
@@ -22,6 +20,17 @@ uniform vec3 u_Samples[64];
 // Projection matrices
 uniform mat4 u_Projection;
 uniform mat4 u_InvProjection;
+
+// =============================================================================
+// NOISE FUNCTION - Interleaved Gradient Noise (IGN)
+// =============================================================================
+
+// Interleaved gradient noise - procedural noise function
+float interleavedGradientNoise(vec2 uv)
+{
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(uv, magic.xy)));
+}
 
 void main()
 {
@@ -64,13 +73,30 @@ void main()
     vec3 tangentY = posTop - position;
     vec3 normal = normalize(cross(tangentX, tangentY));
 
-    // Sample noise vector for rotation
-    vec3 randomVec = normalize(texture(u_NoiseTexture, vTexCoord * u_NoiseScale).xyz * 2.0 - 1.0);
+    // Get rotation using procedural noise
+    vec2 pixelCoord = vTexCoord * texSize;
+    float noise = interleavedGradientNoise(pixelCoord);
 
-    // Create TBN basis (Tangent, Bitangent, Normal)
-    vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
-    vec3 bitangent = cross(normal, tangent);
-    mat3 TBN = mat3(tangent, bitangent, normal);
+    // Convert noise [0,1] to rotation angle [0, 2π]
+    float rotationAngle = noise * 6.28318530718; // 2 * PI
+
+    // Create rotation in tangent plane (more efficient than full 3D rotation)
+    float cosAngle = cos(rotationAngle);
+    float sinAngle = sin(rotationAngle);
+
+    // Create TBN basis (Tangent, Bitangent, Normal) with rotation
+    vec3 tangent = vec3(1.0, 0.0, 0.0);
+    vec3 bitangent = vec3(0.0, 1.0, 0.0);
+
+    // Gram-Schmidt to make tangent perpendicular to normal
+    tangent = normalize(tangent - normal * dot(tangent, normal));
+    bitangent = cross(normal, tangent);
+
+    // Apply rotation in tangent space
+    vec3 rotatedTangent = tangent * cosAngle + bitangent * sinAngle;
+    vec3 rotatedBitangent = -tangent * sinAngle + bitangent * cosAngle;
+
+    mat3 TBN = mat3(rotatedTangent, rotatedBitangent, normal);
 
     // Accumulate occlusion
     float occlusion = 0.0;
@@ -99,23 +125,35 @@ void main()
         vec4 samplePosView = u_InvProjection * samplePosClip;
         vec3 samplePosition = samplePosView.xyz / samplePosView.w;
 
-        // Depth test with range check
-        float rangeCheck = smoothstep(0.0, 1.0, u_Radius / abs(position.z - samplePosition.z));
+        // IMPROVED: Depth test with better range check (avoid over-darkening at edges)
+        float depthDiff = samplePosition.z - samplePos.z;
 
-        // If sample is in front of geometry, there is occlusion
-        float occluded = (samplePosition.z <= samplePos.z - u_Bias) ? 1.0 : 0.0;
-        occlusion += occluded * rangeCheck;
+        // Range check: fade out contribution for samples far from surface
+        float rangeCheck = smoothstep(0.0, 1.0, u_Radius / (abs(depthDiff) + 0.001));
+
+        // Occlusion test: sample is occluder if it's in front (closer to camera)
+        // Use smooth falloff instead of hard threshold for better quality
+        float occluded = step(u_Bias, -depthDiff);
+
+        // Alchemy AO improvement: weight by distance (closer samples = more influence)
+        float distanceWeight = 1.0 - smoothstep(u_Radius * 0.5, u_Radius, length(samplePos - position));
+
+        occlusion += occluded * rangeCheck * distanceWeight;
     }
 
     // Normalize and invert (1.0 = no occlusion, 0.0 = full occlusion)
     occlusion = 1.0 - (occlusion / float(u_SampleCount));
 
-    // Apply power to adjust contrast
-    occlusion = pow(occlusion, u_Power);
+    // Apply power to adjust contrast (non-linear response)
+    occlusion = pow(clamp(occlusion, 0.0, 1.0), u_Power);
 
     // Distance fade: gradually fade out SSAO based on distance from camera
     float distanceFade = 1.0 - smoothstep(u_MaxDistance * 0.7, u_MaxDistance, abs(position.z));
     occlusion = mix(1.0, occlusion, distanceFade);
+
+    // Add dithering to break quantization banding
+    float dither = (noise - 0.5) / 255.0; // Scale for 8-bit output
+    occlusion = clamp(occlusion + dither, 0.0, 1.0);
 
     FragColor = occlusion;
 }

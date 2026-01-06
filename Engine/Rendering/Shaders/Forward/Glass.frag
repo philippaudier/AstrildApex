@@ -148,7 +148,7 @@ void main() {
 
     // Calculate alpha based on opacity, thickness, and Fresnel
     // Glass is more opaque at grazing angles (Fresnel effect) AND with thickness
-    // Thick glass absorbs more light → more opaque
+    // Thick glass absorbs more light -> more opaque
     float thicknessOpacity = 1.0 - absorption; // More absorption = more opaque
     float baseAlpha = mix(u_Opacity, u_Opacity + thicknessOpacity * 0.5, effectiveThickness);
     float alpha = mix(baseAlpha, 1.0, fresnel);

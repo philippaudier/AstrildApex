@@ -72,29 +72,38 @@ vec4 sampleCatmullRom(sampler2D tex, vec2 uv, vec2 texSize)
 }
 
 // Compute variance in 3x3 neighborhood (for AO channel only)
+// Improved version: uses cross pattern for better performance + quality
 float computeVariance(sampler2D tex, vec2 uv, vec2 texelSize, out float minVal, out float maxVal)
 {
-    float sum = 0.0;
-    float sumSq = 0.0;
-    minVal = 1.0;
-    maxVal = 0.0;
-    
-    for (int y = -1; y <= 1; y++)
+    // Center sample
+    float center = texture(tex, uv).a;
+
+    float sum = center;
+    float sumSq = center * center;
+    minVal = center;
+    maxVal = center;
+    int count = 1;
+
+    // Cross pattern (+ shape) - faster and better than full 3x3 for variance
+    const ivec2 offsets[4] = ivec2[4](
+        ivec2(-1, 0), ivec2(1, 0),  // Horizontal
+        ivec2(0, -1), ivec2(0, 1)   // Vertical
+    );
+
+    for (int i = 0; i < 4; i++)
     {
-        for (int x = -1; x <= 1; x++)
-        {
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            float sample = texture(tex, uv + offset).a; // AO is in alpha channel
-            
-            sum += sample;
-            sumSq += sample * sample;
-            minVal = min(minVal, sample);
-            maxVal = max(maxVal, sample);
-        }
+        vec2 offset = vec2(offsets[i]) * texelSize;
+        float sample = texture(tex, uv + offset).a;
+
+        sum += sample;
+        sumSq += sample * sample;
+        minVal = min(minVal, sample);
+        maxVal = max(maxVal, sample);
+        count++;
     }
-    
-    float mean = sum / 9.0;
-    float variance = (sumSq / 9.0) - (mean * mean);
+
+    float mean = sum / float(count);
+    float variance = (sumSq / float(count)) - (mean * mean);
     return sqrt(max(variance, 0.0));
 }
 

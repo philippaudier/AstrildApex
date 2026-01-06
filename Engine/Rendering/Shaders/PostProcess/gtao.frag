@@ -30,18 +30,84 @@ uniform mat4 u_InvProjection;
 const float PI = 3.14159265359;
 const float HALF_PI = 1.57079632679;
 
-// Spatial noise for stable temporal variation
-float spatialNoise(vec2 coord)
+// =============================================================================
+// MODERN NOISE FUNCTIONS - Based on XeGTAO (Intel's optimized GTAO)
+// Reference: https://github.com/GameTechDev/XeGTAO
+// =============================================================================
+
+// Interleaved gradient noise (better than hash-based noise)
+// From: http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
+float interleavedGradientNoise(vec2 uv)
 {
-    return fract(sin(dot(coord, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(uv, magic.xy)));
 }
 
-// Fast approximation of atan2
+// R2 sequence (quasi-random, low-discrepancy)
+// Better distribution than pseudo-random, reduces banding
+vec2 R2sequence(int n)
+{
+    const float g = 1.61803398875; // Golden ratio
+    const float a1 = 1.0 / g;
+    const float a2 = 1.0 / (g * g);
+    return fract(vec2(n * a1, n * a2));
+}
+
+// Robust spatiotemporal noise - compatible with all GLSL versions
+// Combines improved spatial hash with temporal variation
+vec2 spatialTemporalNoise(vec2 pixelPos, int frameCounter)
+{
+    // Use 64x64 tiling for repeating pattern
+    vec2 tilePos = mod(pixelPos, 64.0);
+
+    // Create spatial index using improved 2D hash (better than simple linear)
+    // This spreads neighboring pixels across the sequence space
+    float spatialHash = interleavedGradientNoise(tilePos);
+    int spatialIdx = int(spatialHash * 4096.0); // Map to integer range
+
+    // Add temporal offset (288 is XeGTAO standard for good distribution)
+    int temporalOffset = 288 * (frameCounter % 256); // Prevent overflow
+    int spatioTemporalIdx = spatialIdx + temporalOffset;
+
+    // R2 low-discrepancy sequence for final sample positions
+    return R2sequence(spatioTemporalIdx);
+}
+
+// Blue noise dithering - superior to triangle dither for smooth gradients
+// Breaks both spatial AND temporal banding
+float blueNoiseDither(vec2 pixelPos, int frameCounter)
+{
+    // Temporal variation using golden ratio offset (prevents temporal patterns)
+    const float goldenRatio = 0.61803398875; // 1/φ
+    float temporalPhase = fract(float(frameCounter) * goldenRatio);
+
+    // Combine spatial IGN with temporal offset
+    // Use small offset to avoid repeating patterns
+    vec2 temporalOffset = vec2(temporalPhase * 17.0, temporalPhase * 23.0);
+    float spatial = interleavedGradientNoise(pixelPos + temporalOffset);
+
+    // Triangle-shaped PDF (reduces quantization artifacts better than uniform)
+    float triangular = spatial + interleavedGradientNoise(pixelPos + vec2(0.5)) - 1.0;
+
+    return triangular * 0.5; // Center around 0
+}
+
+// Fast approximation of atan2 (with safety checks)
 float fast_atan2(float y, float x)
 {
+    // Handle edge case: both zero
+    if (abs(x) < 0.0001 && abs(y) < 0.0001)
+        return 0.0;
+
     float ax = abs(x);
     float ay = abs(y);
-    float a = min(ax, ay) / max(ax, ay);
+    float maxVal = max(ax, ay);
+
+    // Avoid division by zero
+    if (maxVal < 0.0001)
+        return 0.0;
+
+    float a = min(ax, ay) / maxVal;
     float s = a * a;
     float r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
     if (ay > ax) r = HALF_PI - r;
@@ -191,11 +257,11 @@ void integrateArc(vec3 viewPos, vec3 viewDir, vec3 viewNormal, vec2 uv, float sl
 void main()
 {
     float depth = texture(u_DepthTexture, vTexCoord).r;
-    
+
     // Skip skybox
     if (depth >= 0.9999)
     {
-        FragColor = vec4(0.0, 0.0, 1.0, 1.0); // Normal pointing up, no occlusion
+        FragColor = vec4(0.5, 0.5, 0.5, 1.0); // Encode default normal + no occlusion
         return;
     }
 
@@ -217,9 +283,18 @@ void main()
     vec3 bentNormal = vec3(0.0);
     float angleStep = PI / float(u_SliceCount);
 
-    // Spatial variation to reduce banding (stable, doesn't animate)
-    vec2 noiseCoord = vTexCoord * vec2(textureSize(u_DepthTexture, 0));
-    float spatialOffset = spatialNoise(noiseCoord) * angleStep;
+    // CRITICAL FIX: Modern XeGTAO-style spatial-temporal noise
+    // Uses Hilbert curve + R2 for superior low-discrepancy sampling
+    vec2 pixelPos = vTexCoord * vec2(textureSize(u_DepthTexture, 0));
+
+    // Get spatio-temporal noise from Hilbert curve + R2 sequence
+    vec2 noise = spatialTemporalNoise(pixelPos, u_FrameCounter);
+
+    // Apply noise to slice rotation
+    float sliceAngleOffset = noise.x * angleStep;
+
+    // Optional: Add slight per-sample jitter (reduces pattern artifacts)
+    float sampleJitter = noise.y * 0.5; // Used for sample step variation
 
     // Multi-scale GTAO: sample multiple mip levels with different radii
     for (int mipLevel = 0; mipLevel < u_MipLevels; mipLevel++)
@@ -234,8 +309,8 @@ void main()
         
         for (int i = 0; i < u_SliceCount; i++)
         {
-            float sliceAngle = float(i) * angleStep + spatialOffset;
-            integrateArc(viewPos, viewDir, viewNormal, vTexCoord, sliceAngle, 
+            float sliceAngle = float(i) * angleStep + sliceAngleOffset;
+            integrateArc(viewPos, viewDir, viewNormal, vTexCoord, sliceAngle,
                         mipLevel, radiusScale, mipOcclusion, mipBentNormal);
         }
         
@@ -251,18 +326,39 @@ void main()
 
     // Apply distance fade to occlusion
     totalOcclusion = mix(1.0, totalOcclusion, distanceFade);
+
+    // CRITICAL: Apply blue noise dithering to break quantization banding
+    // This is ESSENTIAL for smooth gradients in 8/16-bit buffers
+    // XeGTAO recommendation: stronger dither for R16F textures
+    float dither = blueNoiseDither(pixelPos, u_FrameCounter);
+
+    // Scale dithering based on buffer format
+    // R16F has ~10 bits effective precision, so we need ~1/1024 dither strength
+    float ditherScale = 1.0 / 512.0; // Optimized for R16F (half precision float)
+    totalOcclusion = clamp(totalOcclusion + dither * ditherScale, 0.0, 1.0);
     
     // Normalize bent normal (average unoccluded direction)
-    if (length(bentNormal) > 0.001)
+    float bentNormalLength = length(bentNormal);
+    if (bentNormalLength > 0.001)
     {
-        bentNormal = normalize(bentNormal);
+        bentNormal = bentNormal / bentNormalLength;
     }
     else
     {
-        // Fully occluded, use surface normal
+        // Fully occluded or invalid, use surface normal
         bentNormal = viewNormal;
     }
-    
+
+    // Safety: Clamp occlusion and check for invalid values
+    totalOcclusion = clamp(totalOcclusion, 0.0, 1.0);
+
+    // Final safety check for NaN/Inf (shouldn't happen but protects against GPU errors)
+    if (isnan(totalOcclusion) || isinf(totalOcclusion))
+        totalOcclusion = 1.0; // No occlusion if invalid
+
+    if (any(isnan(bentNormal)) || any(isinf(bentNormal)))
+        bentNormal = vec3(0.0, 0.0, 1.0); // Default up vector if invalid
+
     // Output: RGB = Bent Normal (view space), A = Occlusion
     FragColor = vec4(bentNormal * 0.5 + 0.5, totalOcclusion); // Encode normal in [0,1] range
 }

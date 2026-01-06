@@ -20,6 +20,7 @@ uniform float u_ShadowStrength;    // Shadow darkness (0.0 = no shadows, 1.0 = f
 uniform float u_LightSize;         // Light source size for PCSS (default: 0.05)
 uniform int u_PCFSamples;          // Number of PCF samples (9, 16, 25, etc.)
 
+
 // ============================================================================
 // Poisson Disk sampling pattern (32 samples, optimized distribution)
 // ============================================================================
@@ -296,3 +297,4 @@ float calculateShadowWithNL(vec3 worldPos, vec3 viewPos, vec3 N, vec3 L)
 {
     return CalculateShadow(worldPos, N, L);
 }
+

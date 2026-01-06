@@ -205,3 +205,4 @@ vec3 calculateAmbientLightingWithSSAO(MaterialProperties material, vec3 worldPos
 
     return ambient;
 }
+
