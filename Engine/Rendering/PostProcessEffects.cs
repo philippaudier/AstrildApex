@@ -25,13 +25,13 @@ namespace Engine.Rendering
 
         [Engine.Serialization.SerializableAttribute("mode")]
         public ToneMappingMode Mode { get; set; } = ToneMappingMode.Filmic;
-        
+
         [Engine.Serialization.SerializableAttribute("exposure")]
         public float Exposure { get; set; } = 1.0f;
-        
+
         [Engine.Serialization.SerializableAttribute("whitepoint")]
         public float WhitePoint { get; set; } = 1.0f; // Pour Reinhard Extended
-        
+
         [Engine.Serialization.SerializableAttribute("gamma")]
         public float Gamma { get; set; } = 2.2f;
 
@@ -54,6 +54,38 @@ namespace Engine.Rendering
         [Engine.Serialization.SerializableAttribute("exposurecompensation")]
         public float ExposureCompensation { get; set; } = 0.0f; // Bias manuel en EV (-2 = plus sombre, +2 = plus lumineux)
 
+        // Time of day settings
+        [Engine.Serialization.SerializableAttribute("useTimeOfDayExposure")]
+        public bool UseTimeOfDayExposure { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("nightExposure")]
+        public float NightExposure { get; set; } = 0.3f; // Exposure at midnight (low light)
+
+        [Engine.Serialization.SerializableAttribute("dayExposure")]
+        public float DayExposure { get; set; } = 1.2f; // Exposure at noon (bright)
+
+        [Engine.Serialization.SerializableAttribute("sunriseExposure")]
+        public float SunriseExposure { get; set; } = 0.8f; // Exposure at sunrise (golden hour)
+
+        [Engine.Serialization.SerializableAttribute("sunsetExposure")]
+        public float SunsetExposure { get; set; } = 0.7f; // Exposure at sunset (golden hour)
+
+        [Engine.Serialization.SerializableAttribute("nightTargetBrightness")]
+        public float NightTargetBrightness { get; set; } = 0.3f; // Target brightness at night (for auto-exposure)
+
+        [Engine.Serialization.SerializableAttribute("dayTargetBrightness")]
+        public float DayTargetBrightness { get; set; } = 0.5f; // Target brightness at day (for auto-exposure)
+
+        [Engine.Serialization.SerializableAttribute("exposureSmoothSpeed")]
+        public float ExposureSmoothSpeed { get; set; } = 2.0f; // How fast exposure adapts to time changes
+
+        // Runtime state (not serialized)
+        [NonSerialized]
+        private float _currentTimeBasedExposure = 1.0f;
+
+        [NonSerialized]
+        private float _currentTimeBasedTargetBrightness = 0.5f;
+
         public ToneMappingEffect()
         {
             Priority = 10; // Après bloom, avant chromatic aberration
@@ -62,6 +94,138 @@ namespace Engine.Rendering
         public override void Apply(PostProcessContext context)
         {
             // L'application sera gérée par ToneMappingRenderer
+        }
+
+        /// <summary>
+        /// Update exposure based on time of day. Called by TimeComponent.
+        /// </summary>
+        public void UpdateForTimeOfDay(float timeOfDay)
+        {
+            if (!UseTimeOfDayExposure) return;
+
+            float targetExposure = CalculateExposureForTime(timeOfDay);
+            float targetBrightness = CalculateTargetBrightnessForTime(timeOfDay);
+
+            // Smooth transition (exponential interpolation)
+            float smoothFactor = 1.0f - (float)Math.Exp(-ExposureSmoothSpeed * 0.016f); // Assume ~60 FPS
+            _currentTimeBasedExposure = MathHelper.Lerp(_currentTimeBasedExposure, targetExposure, smoothFactor);
+            _currentTimeBasedTargetBrightness = MathHelper.Lerp(_currentTimeBasedTargetBrightness, targetBrightness, smoothFactor);
+        }
+
+        /// <summary>
+        /// Get the effective exposure value to use for rendering.
+        /// Takes into account: base exposure, time-of-day, and auto-exposure mode.
+        /// </summary>
+        public float GetEffectiveExposure()
+        {
+            if (UseTimeOfDayExposure)
+            {
+                // If auto-exposure is enabled, time-of-day affects target brightness instead of direct exposure
+                if (AutoExposure)
+                {
+                    // Return base exposure, but target brightness will be adjusted by GetEffectiveTargetBrightness()
+                    return Exposure;
+                }
+                else
+                {
+                    // Direct exposure control: multiply base exposure with time-based exposure
+                    return Exposure * _currentTimeBasedExposure;
+                }
+            }
+
+            return Exposure;
+        }
+
+        /// <summary>
+        /// Get the effective target brightness for auto-exposure.
+        /// Takes into account: base target brightness and time-of-day adjustments.
+        /// </summary>
+        public float GetEffectiveTargetBrightness()
+        {
+            if (UseTimeOfDayExposure && AutoExposure)
+            {
+                // When auto-exposure is active, time-of-day modulates the target brightness
+                // This allows the auto-exposure algorithm to aim for different brightness levels
+                // at different times of day (darker at night, brighter during day)
+                return _currentTimeBasedTargetBrightness;
+            }
+
+            return TargetBrightness;
+        }
+
+        /// <summary>
+        /// Calculate exposure multiplier for a given time of day.
+        /// Used when auto-exposure is disabled.
+        /// </summary>
+        private float CalculateExposureForTime(float timeOfDay)
+        {
+            // Time periods:
+            // Midnight (0/24): NightExposure
+            // Sunrise (6): SunriseExposure
+            // Noon (12): DayExposure
+            // Sunset (18): SunsetExposure
+            // Night (18-6): NightExposure
+
+            if (timeOfDay >= 5.0f && timeOfDay < 7.0f)
+            {
+                // Sunrise transition (5-7am)
+                float t = (timeOfDay - 5.0f) / 2.0f;
+                return MathHelper.Lerp(NightExposure, SunriseExposure, SmoothStep(t));
+            }
+            else if (timeOfDay >= 7.0f && timeOfDay < 12.0f)
+            {
+                // Morning to noon (7am-12pm)
+                float t = (timeOfDay - 7.0f) / 5.0f;
+                return MathHelper.Lerp(SunriseExposure, DayExposure, SmoothStep(t));
+            }
+            else if (timeOfDay >= 12.0f && timeOfDay < 17.0f)
+            {
+                // Afternoon (12pm-5pm)
+                float t = (timeOfDay - 12.0f) / 5.0f;
+                return MathHelper.Lerp(DayExposure, SunsetExposure, SmoothStep(t));
+            }
+            else if (timeOfDay >= 17.0f && timeOfDay < 19.0f)
+            {
+                // Sunset transition (5-7pm)
+                float t = (timeOfDay - 17.0f) / 2.0f;
+                return MathHelper.Lerp(SunsetExposure, NightExposure, SmoothStep(t));
+            }
+            else
+            {
+                // Night (7pm-5am)
+                return NightExposure;
+            }
+        }
+
+        /// <summary>
+        /// Calculate target brightness for auto-exposure at a given time of day.
+        /// Used when auto-exposure is enabled.
+        /// </summary>
+        private float CalculateTargetBrightnessForTime(float timeOfDay)
+        {
+            // Blend between night and day target brightness based on sun position
+            // Night: lower target (darker scenes acceptable)
+            // Day: higher target (aim for brighter result)
+
+            if (timeOfDay >= 6.0f && timeOfDay <= 18.0f)
+            {
+                // Daytime - use day target brightness
+                float dayProgress = (timeOfDay - 6.0f) / 12.0f;
+                // Peak at noon, taper at sunrise/sunset
+                float curve = (float)Math.Sin(dayProgress * Math.PI);
+                return MathHelper.Lerp(NightTargetBrightness, DayTargetBrightness, curve);
+            }
+            else
+            {
+                // Night - use night target brightness
+                return NightTargetBrightness;
+            }
+        }
+
+        private float SmoothStep(float t)
+        {
+            t = MathHelper.Clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
         }
     }
 
@@ -110,10 +274,10 @@ namespace Engine.Rendering
 
         [Engine.Serialization.SerializableAttribute("strength")]
         public float Strength { get; set; } = 0.5f;
-        
+
         [Engine.Serialization.SerializableAttribute("usespectrallut")]
         public bool UseSpectralLut { get; set; } = false;
-        
+
         [Engine.Serialization.SerializableAttribute("focallength")]
         public float FocalLength { get; set; } = 50.0f; // Distance focale en mm pour le réalisme
 
@@ -129,6 +293,411 @@ namespace Engine.Rendering
     }
 
     /// <summary>
+    /// Color Grading effect - adjusts color, saturation, contrast, brightness, etc.
+    /// Can be driven by time of day for automatic atmospheric changes.
+    /// </summary>
+    public class ColorGradingEffect : PostProcessEffect
+    {
+        public override string EffectName => "Color Grading";
+
+        // Source mode
+        public enum ColorGradingSource
+        {
+            Manual,      // Use manual parameters only
+            TimeOfDay,   // Blend between time-based presets
+            Blend        // Blend manual and time-of-day
+        }
+
+        [Engine.Serialization.SerializableAttribute("source")]
+        public ColorGradingSource Source { get; set; } = ColorGradingSource.Manual;
+
+        [Engine.Serialization.SerializableAttribute("blendFactor")]
+        public float BlendFactor { get; set; } = 1.0f; // When Source=Blend, mix between manual (0) and time-of-day (1)
+
+        // === MANUAL COLOR GRADING PARAMETERS ===
+
+        [Engine.Serialization.SerializableAttribute("saturation")]
+        public float Saturation { get; set; } = 1.0f; // 0 = grayscale, 1 = normal, 2 = vibrant
+
+        [Engine.Serialization.SerializableAttribute("contrast")]
+        public float Contrast { get; set; } = 1.0f; // 0 = flat, 1 = normal, 2 = high contrast
+
+        [Engine.Serialization.SerializableAttribute("brightness")]
+        public float Brightness { get; set; } = 0.0f; // -1 = darker, 0 = normal, +1 = brighter
+
+        [Engine.Serialization.SerializableAttribute("colorFilter")]
+        public Vector3 ColorFilter { get; set; } = Vector3.One; // RGB multiplier (tint)
+
+        [Engine.Serialization.SerializableAttribute("temperature")]
+        public float Temperature { get; set; } = 0.0f; // -1 = cool (blue), 0 = neutral, +1 = warm (orange)
+
+        [Engine.Serialization.SerializableAttribute("tint")]
+        public float Tint { get; set; } = 0.0f; // -1 = green, 0 = neutral, +1 = magenta
+
+        [Engine.Serialization.SerializableAttribute("hueShift")]
+        public float HueShift { get; set; } = 0.0f; // 0-360 degrees hue rotation
+
+        [Engine.Serialization.SerializableAttribute("vibrance")]
+        public float Vibrance { get; set; } = 0.0f; // Selective saturation boost for dull colors
+
+        // === TIME OF DAY PRESETS ===
+
+        [Engine.Serialization.SerializableAttribute("nightSaturation")]
+        public float NightSaturation { get; set; } = 0.6f; // Desaturated at night
+
+        [Engine.Serialization.SerializableAttribute("nightContrast")]
+        public float NightContrast { get; set; } = 0.9f; // Lower contrast at night
+
+        [Engine.Serialization.SerializableAttribute("nightTemperature")]
+        public float NightTemperature { get; set; } = -0.3f; // Cool blue tint
+
+        [Engine.Serialization.SerializableAttribute("daySaturation")]
+        public float DaySaturation { get; set; } = 1.1f; // Slightly vibrant during day
+
+        [Engine.Serialization.SerializableAttribute("dayContrast")]
+        public float DayContrast { get; set; } = 1.05f; // Slightly higher contrast
+
+        [Engine.Serialization.SerializableAttribute("dayTemperature")]
+        public float DayTemperature { get; set; } = 0.05f; // Slightly warm
+
+        [Engine.Serialization.SerializableAttribute("sunriseSaturation")]
+        public float SunriseSaturation { get; set; } = 1.2f; // Vibrant at sunrise
+
+        [Engine.Serialization.SerializableAttribute("sunriseContrast")]
+        public float SunriseContrast { get; set; } = 1.1f; // Higher contrast for dramatic effect
+
+        [Engine.Serialization.SerializableAttribute("sunriseTemperature")]
+        public float SunriseTemperature { get; set; } = 0.4f; // Warm orange tint
+
+        [Engine.Serialization.SerializableAttribute("sunsetSaturation")]
+        public float SunsetSaturation { get; set; } = 1.3f; // Very vibrant at sunset
+
+        [Engine.Serialization.SerializableAttribute("sunsetContrast")]
+        public float SunsetContrast { get; set; } = 1.15f; // High contrast
+
+        [Engine.Serialization.SerializableAttribute("sunsetTemperature")]
+        public float SunsetTemperature { get; set; } = 0.5f; // Deep warm tint
+
+        [Engine.Serialization.SerializableAttribute("transitionSpeed")]
+        public float TransitionSpeed { get; set; } = 2.0f; // How fast to blend between presets
+
+        // Runtime state (not serialized)
+        [NonSerialized]
+        private float _currentSaturation = 1.0f;
+
+        [NonSerialized]
+        private float _currentContrast = 1.0f;
+
+        [NonSerialized]
+        private float _currentBrightness = 0.0f;
+
+        [NonSerialized]
+        private float _currentTemperature = 0.0f;
+
+        [NonSerialized]
+        private float _currentTint = 0.0f;
+
+        public ColorGradingEffect()
+        {
+            Priority = 12; // After tone mapping (10), before FXAA (15)
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // L'application sera gérée par ColorGradingRenderer
+        }
+
+        /// <summary>
+        /// Update color grading based on time of day. Called by TimeComponent.
+        /// </summary>
+        public void UpdateForTimeOfDay(float timeOfDay)
+        {
+            if (Source == ColorGradingSource.Manual) return;
+
+            // Calculate target values based on time
+            float targetSaturation = CalculateSaturationForTime(timeOfDay);
+            float targetContrast = CalculateContrastForTime(timeOfDay);
+            float targetBrightness = CalculateBrightnessForTime(timeOfDay);
+            float targetTemperature = CalculateTemperatureForTime(timeOfDay);
+            float targetTint = 0.0f; // Tint is usually manual, not time-based
+
+            // Smooth transition
+            float smoothFactor = 1.0f - (float)Math.Exp(-TransitionSpeed * 0.016f); // Assume ~60 FPS
+            _currentSaturation = MathHelper.Lerp(_currentSaturation, targetSaturation, smoothFactor);
+            _currentContrast = MathHelper.Lerp(_currentContrast, targetContrast, smoothFactor);
+            _currentBrightness = MathHelper.Lerp(_currentBrightness, targetBrightness, smoothFactor);
+            _currentTemperature = MathHelper.Lerp(_currentTemperature, targetTemperature, smoothFactor);
+            _currentTint = MathHelper.Lerp(_currentTint, targetTint, smoothFactor);
+        }
+
+        /// <summary>
+        /// Get effective saturation value (considers manual, time-of-day, and blend mode)
+        /// </summary>
+        public float GetEffectiveSaturation()
+        {
+            if (Source == ColorGradingSource.Manual) return Saturation;
+            if (Source == ColorGradingSource.TimeOfDay) return _currentSaturation;
+            return MathHelper.Lerp(Saturation, _currentSaturation, BlendFactor);
+        }
+
+        public float GetEffectiveContrast()
+        {
+            if (Source == ColorGradingSource.Manual) return Contrast;
+            if (Source == ColorGradingSource.TimeOfDay) return _currentContrast;
+            return MathHelper.Lerp(Contrast, _currentContrast, BlendFactor);
+        }
+
+        public float GetEffectiveBrightness()
+        {
+            if (Source == ColorGradingSource.Manual) return Brightness;
+            if (Source == ColorGradingSource.TimeOfDay) return _currentBrightness;
+            return MathHelper.Lerp(Brightness, _currentBrightness, BlendFactor);
+        }
+
+        public float GetEffectiveTemperature()
+        {
+            if (Source == ColorGradingSource.Manual) return Temperature;
+            if (Source == ColorGradingSource.TimeOfDay) return _currentTemperature;
+            return MathHelper.Lerp(Temperature, _currentTemperature, BlendFactor);
+        }
+
+        public float GetEffectiveTint()
+        {
+            if (Source == ColorGradingSource.Manual) return Tint;
+            if (Source == ColorGradingSource.TimeOfDay) return _currentTint;
+            return MathHelper.Lerp(Tint, _currentTint, BlendFactor);
+        }
+
+        // === PRIVATE HELPERS ===
+
+        private float CalculateSaturationForTime(float timeOfDay)
+        {
+            if (timeOfDay >= 5.0f && timeOfDay < 7.0f)
+            {
+                // Sunrise (5-7am)
+                float t = (timeOfDay - 5.0f) / 2.0f;
+                return MathHelper.Lerp(NightSaturation, SunriseSaturation, SmoothStep(t));
+            }
+            else if (timeOfDay >= 7.0f && timeOfDay < 12.0f)
+            {
+                // Morning (7am-12pm)
+                float t = (timeOfDay - 7.0f) / 5.0f;
+                return MathHelper.Lerp(SunriseSaturation, DaySaturation, SmoothStep(t));
+            }
+            else if (timeOfDay >= 12.0f && timeOfDay < 17.0f)
+            {
+                // Afternoon (12pm-5pm)
+                return DaySaturation;
+            }
+            else if (timeOfDay >= 17.0f && timeOfDay < 19.0f)
+            {
+                // Sunset (5-7pm)
+                float t = (timeOfDay - 17.0f) / 2.0f;
+                return MathHelper.Lerp(DaySaturation, SunsetSaturation, SmoothStep(t));
+            }
+            else if (timeOfDay >= 19.0f || timeOfDay < 5.0f)
+            {
+                // Night (7pm-5am)
+                return NightSaturation;
+            }
+
+            return DaySaturation;
+        }
+
+        private float CalculateContrastForTime(float timeOfDay)
+        {
+            if (timeOfDay >= 5.0f && timeOfDay < 7.0f)
+            {
+                float t = (timeOfDay - 5.0f) / 2.0f;
+                return MathHelper.Lerp(NightContrast, SunriseContrast, SmoothStep(t));
+            }
+            else if (timeOfDay >= 7.0f && timeOfDay < 12.0f)
+            {
+                float t = (timeOfDay - 7.0f) / 5.0f;
+                return MathHelper.Lerp(SunriseContrast, DayContrast, SmoothStep(t));
+            }
+            else if (timeOfDay >= 12.0f && timeOfDay < 17.0f)
+            {
+                return DayContrast;
+            }
+            else if (timeOfDay >= 17.0f && timeOfDay < 19.0f)
+            {
+                float t = (timeOfDay - 17.0f) / 2.0f;
+                return MathHelper.Lerp(DayContrast, SunsetContrast, SmoothStep(t));
+            }
+            else if (timeOfDay >= 19.0f || timeOfDay < 5.0f)
+            {
+                return NightContrast;
+            }
+
+            return DayContrast;
+        }
+
+        private float CalculateBrightnessForTime(float timeOfDay)
+        {
+            // Brightness adjustment is usually handled by exposure/tonemapping
+            // This is just for fine-tuning if needed
+            return 0.0f;
+        }
+
+        private float CalculateTemperatureForTime(float timeOfDay)
+        {
+            if (timeOfDay >= 5.0f && timeOfDay < 7.0f)
+            {
+                // Sunrise - warm
+                float t = (timeOfDay - 5.0f) / 2.0f;
+                return MathHelper.Lerp(NightTemperature, SunriseTemperature, SmoothStep(t));
+            }
+            else if (timeOfDay >= 7.0f && timeOfDay < 12.0f)
+            {
+                // Morning - transition to neutral
+                float t = (timeOfDay - 7.0f) / 5.0f;
+                return MathHelper.Lerp(SunriseTemperature, DayTemperature, SmoothStep(t));
+            }
+            else if (timeOfDay >= 12.0f && timeOfDay < 17.0f)
+            {
+                // Afternoon - neutral/slightly warm
+                return DayTemperature;
+            }
+            else if (timeOfDay >= 17.0f && timeOfDay < 19.0f)
+            {
+                // Sunset - very warm
+                float t = (timeOfDay - 17.0f) / 2.0f;
+                return MathHelper.Lerp(DayTemperature, SunsetTemperature, SmoothStep(t));
+            }
+            else if (timeOfDay >= 19.0f || timeOfDay < 5.0f)
+            {
+                // Night - cool
+                return NightTemperature;
+            }
+
+            return DayTemperature;
+        }
+
+        private float SmoothStep(float t)
+        {
+            t = MathHelper.Clamp(t, 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+    }
+
+    /// <summary>
+    /// Volumetric Fog effect - depth-based and height-based post-process fog.
+    /// More advanced than forward rendering fog with height falloff and better control.
+    /// </summary>
+    public class VolumetricFogEffect : PostProcessEffect
+    {
+        public override string EffectName => "Volumetric Fog";
+
+        // Source mode
+        public enum FogSource
+        {
+            Local,       // Use local parameters only
+            Global,      // Use WeatherComponent fog parameters
+            Blend        // Blend between local and global
+        }
+
+        [Engine.Serialization.SerializableAttribute("source")]
+        public FogSource Source { get; set; } = FogSource.Global;
+
+        [Engine.Serialization.SerializableAttribute("blendFactor")]
+        public float BlendFactor { get; set; } = 1.0f; // 0 = local, 1 = global
+
+        // === LOCAL FOG PARAMETERS ===
+
+        [Engine.Serialization.SerializableAttribute("fogColor")]
+        public Vector3 FogColor { get; set; } = new Vector3(0.7f, 0.7f, 0.8f);
+
+        [Engine.Serialization.SerializableAttribute("density")]
+        public float Density { get; set; } = 0.01f; // Exponential fog density
+
+        [Engine.Serialization.SerializableAttribute("depthStart")]
+        public float DepthStart { get; set; } = 0.0f; // Distance where fog starts
+
+        [Engine.Serialization.SerializableAttribute("depthEnd")]
+        public float DepthEnd { get; set; } = 1000.0f; // Distance where fog is maximum
+
+        [Engine.Serialization.SerializableAttribute("useExponential")]
+        public bool UseExponential { get; set; } = true; // Exponential (true) vs Linear (false)
+
+        // === HEIGHT-BASED FOG ===
+
+        [Engine.Serialization.SerializableAttribute("useHeightFog")]
+        public bool UseHeightFog { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("heightFalloff")]
+        public float HeightFalloff { get; set; } = 0.1f; // How quickly fog density decreases with height
+
+        [Engine.Serialization.SerializableAttribute("baseHeight")]
+        public float BaseHeight { get; set; } = 0.0f; // World height where fog is thickest
+
+        [Engine.Serialization.SerializableAttribute("maxHeight")]
+        public float MaxHeight { get; set; } = 100.0f; // World height where fog is thinnest
+
+        // === SCATTERING & ATMOSPHERE ===
+
+        [Engine.Serialization.SerializableAttribute("scatteringIntensity")]
+        public float ScatteringIntensity { get; set; } = 0.5f; // How much fog scatters light
+
+        [Engine.Serialization.SerializableAttribute("extinctionFactor")]
+        public float ExtinctionFactor { get; set; } = 1.0f; // Light absorption through fog
+
+        [Engine.Serialization.SerializableAttribute("sunScatteringColor")]
+        public Vector3 SunScatteringColor { get; set; } = new Vector3(1.0f, 0.9f, 0.7f); // Color of sun scattered through fog
+
+        [Engine.Serialization.SerializableAttribute("useSunScattering")]
+        public bool UseSunScattering { get; set; } = false; // Enable directional light scattering
+
+        // === NOISE/DETAIL ===
+
+        [Engine.Serialization.SerializableAttribute("useNoise")]
+        public bool UseNoise { get; set; } = false; // Add animated noise to fog
+
+        [Engine.Serialization.SerializableAttribute("noiseScale")]
+        public float NoiseScale { get; set; } = 0.1f; // Noise texture scale
+
+        [Engine.Serialization.SerializableAttribute("noiseSpeed")]
+        public float NoiseSpeed { get; set; } = 0.1f; // Noise animation speed
+
+        [Engine.Serialization.SerializableAttribute("noiseStrength")]
+        public float NoiseStrength { get; set; } = 0.2f; // How much noise affects fog density
+
+        public VolumetricFogEffect()
+        {
+            Priority = 11; // After tone mapping (10), before color grading (12)
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // L'application sera gérée par VolumetricFogRenderer
+        }
+
+        /// <summary>
+        /// Get effective fog parameters considering source mode and global weather
+        /// </summary>
+        public (Vector3 color, float density, float start, float end) GetEffectiveFogParameters(WeatherComponent? weather)
+        {
+            if (Source == FogSource.Local || weather == null)
+            {
+                return (FogColor, Density, DepthStart, DepthEnd);
+            }
+
+            if (Source == FogSource.Global)
+            {
+                return (weather.FogColor, weather.FogDensity, weather.FogStart, weather.FogEnd);
+            }
+
+            // Blend mode
+            Vector3 color = Vector3.Lerp(FogColor, weather.FogColor, BlendFactor);
+            float density = MathHelper.Lerp(Density, weather.FogDensity, BlendFactor);
+            float start = MathHelper.Lerp(DepthStart, weather.FogStart, BlendFactor);
+            float end = MathHelper.Lerp(DepthEnd, weather.FogEnd, BlendFactor);
+
+            return (color, density, start, end);
+        }
+    }
+
+    /// <summary>
     /// FXAA post-process effect (fast approximate anti-aliasing, triple-A variant)
     /// </summary>
     public class FXAAEffect : PostProcessEffect
@@ -139,7 +708,7 @@ namespace Engine.Rendering
         [Engine.Serialization.SerializableAttribute("quality")]
         public float Quality { get; set; } = 1.0f;
 
-        
+
 
         public FXAAEffect()
         {

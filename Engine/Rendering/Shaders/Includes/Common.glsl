@@ -8,33 +8,75 @@
 // IMPORTANT: binding=0 ensures this UBO is bound to binding point 0
 // NOTE: binding qualifier requires GLSL 4.20+ or GL_ARB_shading_language_420pack
 layout(std140, binding=0) uniform Global {
+    // === CAMERA & TRANSFORMS ===
     mat4 uView; mat4 uProj; mat4 uViewProj;
     vec3 uCameraPos; float _pad1;
 
+    // === DIRECTIONAL LIGHT (Sun/Moon) ===
     vec3 uDirLightDirection; float _pad2;
     vec3 uDirLightColor; float uDirLightIntensity;
 
-
+    // === POINT LIGHTS ===
     int uPointLightCount; float _pad3; float _pad4; float _pad5;
     vec4 uPointLightPos0; vec4 uPointLightColor0;
     vec4 uPointLightPos1; vec4 uPointLightColor1;
     vec4 uPointLightPos2; vec4 uPointLightColor2;
     vec4 uPointLightPos3; vec4 uPointLightColor3;
 
-
+    // === SPOT LIGHTS ===
     int uSpotLightCount; float _pad6; float _pad7; float _pad8;
     vec4 uSpotLightPos0; vec4 uSpotLightDir0; vec4 uSpotLightColor0; float uSpotLightAngle0; float uSpotLightInnerAngle0; float _pad9; float _pad10;
     vec4 uSpotLightPos1; vec4 uSpotLightDir1; vec4 uSpotLightColor1; float uSpotLightAngle1; float uSpotLightInnerAngle1; float _pad11; float _pad12;
 
+    // === AMBIENT & SKYBOX ===
     vec3 uAmbientColor; float uAmbientIntensity;
     vec3 uSkyboxTint; float uSkyboxExposure;
 
-    int uFogEnabled; float _pad13; float _pad14; float _pad15;
+    // === FOG (from WeatherComponent) ===
+    int uFogEnabled; float uFogDensity; float _pad13; float _pad14;
     vec3 uFogColor; float uFogStart;
-    float uFogEnd; vec3 _pad16;
+    float uFogEnd; vec3 _pad15;
 
-    float uClipPlaneEnabled; float _pad17; float _pad18; float _pad19;
+    // === CLIP PLANE ===
+    float uClipPlaneEnabled; float _pad16; float _pad17; float _pad18;
     vec4 uClipPlane; // plane equation: normal.xyz, d
+
+    // === TIME & WEATHER SYSTEM ===
+
+    // Time
+    float uTime;            // Game time for animations (seconds since start)
+    float uTimeOfDay;       // 0-24 hours (12.0 = noon)
+    float uDayNightBlend;   // 0 = night, 1 = day (for convenience)
+    float uGoldenHourBlend; // 0 = no golden hour, 1 = peak golden hour
+
+    // Wind parameters (for vegetation, water, particles)
+    vec2 uWindDirection;    // XZ normalized direction
+    float uWindStrength;    // 0-1 overall intensity
+    float uWindSpeed;       // Animation speed multiplier
+    float uWindGustiness;   // 0-1 turbulence factor
+    float _pad19; float _pad20; float _pad21; // Padding to align next vec4
+
+    // Advanced wind (vegetation specific)
+    float uBranchAmplitude; // Branch sway amplitude
+    float uBranchSpeed;     // Branch oscillation speed
+    float uBranchTurbulence;// Branch noise intensity
+    float uTrunkStiffness;  // Trunk rigidity (0=flexible, 1=rigid)
+    float uTrunkBendAmount; // How much trunk bends
+    float uLeafFlutter;     // Leaf flutter intensity
+    float uLeafFlutterSpeed;// Leaf flutter speed
+    float _pad22;           // Padding
+
+    // Precipitation
+    float uRainIntensity;   // 0-1 rain intensity
+    float uSnowAccumulation;// 0+ accumulated snow depth
+    float uSnowIntensity;   // 0-1 snowfall rate
+    float uWetness;         // 0-1 surface wetness
+
+    // Snow parameters
+    float uSnowSlopeMin;    // Min slope for snow (degrees)
+    float uSnowSlopeMax;    // Max slope for snow (degrees)
+    float uSnowSparkle;     // Snow sparkle/glitter intensity
+    float uSnowDisplacement;// Snow height displacement (world units)
 };
 
 // Runtime debug: flip normal Y component for imported normal maps / conventions
