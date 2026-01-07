@@ -86,6 +86,9 @@ namespace Engine.Assets
         // Water-specific properties (used when Shader == "WaterForward")
         public WaterProperties? WaterProperties { get; set; }
 
+        // Vegetation-specific properties (used when Shader == "VegetationForward")
+        public VegetationProperties? VegetationProperties { get; set; }
+
         public static MaterialAsset Load(string file)
         {
             var mat = JsonSerializer.Deserialize<MaterialAsset>(File.ReadAllText(file))!;

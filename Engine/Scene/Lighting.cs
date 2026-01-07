@@ -154,15 +154,18 @@ namespace Engine.Scene
                         L.DirColor = activeLight.Color;
                         L.DirIntensity = activeLight.Intensity;
                         L.DirCastShadows = activeLight.CastShadows;
-                        
-                        // If we have both sun and moon, blend them
+
+                        // NOTE: Sun/Moon blending is now handled by EnvironmentSettings.UpdateCelestialBodies()
+                        // The MainDirectionalLight already contains the blended sun/moon state
+                        /*
+                        // OLD: If we have both sun and moon, blend them
                         if (envSettings.SunLight != null && envSettings.MoonLight != null)
                         {
                             var sunEntity = envSettings.SunLight;
                             var moonEntity = envSettings.MoonLight;
                             var sunLight = sunEntity?.GetComponent<LightComponent>();
                             var moonLight = moonEntity?.GetComponent<LightComponent>();
-                            
+
                             if (sunLight != null && moonLight != null && sunLight.Enabled && moonLight.Enabled)
                             {
                                 // Blend colors and intensities
@@ -180,6 +183,7 @@ namespace Engine.Scene
                                 }
                             }
                         }
+                        */
                     }
                 }
             }

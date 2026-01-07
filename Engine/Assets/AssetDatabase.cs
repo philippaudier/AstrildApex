@@ -1229,6 +1229,7 @@ namespace Engine.Assets
                 ,UsePlanarReflection = disk.UsePlanarReflection
                 ,WaterReflectionStrength = disk.WaterReflectionStrength
                 ,WaterProperties = disk.WaterProperties
+                ,VegetationProperties = disk.VegetationProperties
             };
 
             // Overwrite simple fields when incoming differs from disk
@@ -1289,6 +1290,12 @@ namespace Engine.Assets
             if (incoming.WaterProperties != disk.WaterProperties)
             {
                 merged.WaterProperties = incoming.WaterProperties;
+            }
+
+            // Merge VegetationProperties (important for VegetationForward wind animation)
+            if (incoming.VegetationProperties != disk.VegetationProperties)
+            {
+                merged.VegetationProperties = incoming.VegetationProperties;
             }
 
             // Water / planar reflection fields

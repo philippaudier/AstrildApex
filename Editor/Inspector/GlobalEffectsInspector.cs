@@ -87,6 +87,18 @@ namespace Editor.Inspector
                     ImGui.CloseCurrentPopup();
                 }
 
+                if (ImGui.MenuItem("Volumetric Fog") && !globalEffects.HasEffect<VolumetricFogEffect>())
+                {
+                    globalEffects.AddEffect<VolumetricFogEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
+                if (ImGui.MenuItem("Color Grading") && !globalEffects.HasEffect<ColorGradingEffect>())
+                {
+                    globalEffects.AddEffect<ColorGradingEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
                 ImGui.EndPopup();
             }
 
@@ -131,6 +143,10 @@ namespace Editor.Inspector
                     globalEffects.RemoveEffect<MotionBlurEffect>();
                 else if (effect is ImageSharpeningEffect)
                     globalEffects.RemoveEffect<ImageSharpeningEffect>();
+                else if (effect is VolumetricFogEffect)
+                    globalEffects.RemoveEffect<VolumetricFogEffect>();
+                else if (effect is ColorGradingEffect)
+                    globalEffects.RemoveEffect<ColorGradingEffect>();
             }
 
             if (nodeOpen)
@@ -179,6 +195,14 @@ namespace Editor.Inspector
                 else if (effect is ImageSharpeningEffect sharpening)
                 {
                     DrawImageSharpeningInspector(sharpening, index);
+                }
+                else if (effect is VolumetricFogEffect volumetricFog)
+                {
+                    DrawVolumetricFogInspector(volumetricFog, index);
+                }
+                else if (effect is ColorGradingEffect colorGrading)
+                {
+                    DrawColorGradingInspector(colorGrading, index);
                 }
 
                 ImGui.TreePop();
@@ -891,6 +915,275 @@ namespace Editor.Inspector
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("Strong sharpening\nVery crisp image, use carefully");
+            }
+        }
+
+        private static void DrawVolumetricFogInspector(VolumetricFogEffect fog, int index)
+        {
+            ImGui.Text("Volumetric Fog Settings");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Source mode
+            var sources = Enum.GetNames(typeof(VolumetricFogEffect.FogSource));
+            int currentSource = (int)fog.Source;
+            if (ImGui.Combo($"Source##{index}", ref currentSource, sources, sources.Length))
+            {
+                fog.Source = (VolumetricFogEffect.FogSource)currentSource;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Local = manual parameters\nGlobal = WeatherComponent fog\nBlend = mix between both");
+            }
+
+            // Blend factor (only for Blend mode)
+            if (fog.Source == VolumetricFogEffect.FogSource.Blend)
+            {
+                fog.BlendFactor = ImGuiHelper.SliderFloat($"Blend Factor##{index}", fog.BlendFactor, 0.0f, 1.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0 = Local parameters, 1 = Global (Weather)");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Fog Parameters");
+            ImGui.Spacing();
+
+            // Color
+            var fogColor = new System.Numerics.Vector3(fog.FogColor.X, fog.FogColor.Y, fog.FogColor.Z);
+            if (ImGui.ColorEdit3($"Color##{index}", ref fogColor))
+            {
+                fog.FogColor = new OpenTK.Mathematics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
+            }
+
+            // Density
+            fog.Density = ImGuiHelper.SliderFloat($"Density##{index}", fog.Density, 0.0f, 0.1f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Fog density\n0 = no fog, 0.01 = light fog, 0.05 = heavy fog");
+            }
+
+            // Depth range
+            fog.DepthStart = ImGuiHelper.SliderFloat($"Start Distance##{index}", fog.DepthStart, 0.0f, 500.0f);
+            fog.DepthEnd = ImGuiHelper.SliderFloat($"End Distance##{index}", fog.DepthEnd, 10.0f, 2000.0f);
+
+            // Exponential vs Linear
+            bool useExp = fog.UseExponential;
+            if (ImGui.Checkbox($"Exponential (vs Linear)##{index}", ref useExp))
+                fog.UseExponential = useExp;
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Height-Based Fog");
+            ImGui.Spacing();
+
+            bool useHeight = fog.UseHeightFog;
+            if (ImGui.Checkbox($"Enable Height Fog##{index}", ref useHeight))
+                fog.UseHeightFog = useHeight;
+
+            if (fog.UseHeightFog)
+            {
+                ImGui.Indent();
+                fog.HeightFalloff = ImGuiHelper.SliderFloat($"Falloff##{index}", fog.HeightFalloff, 0.0f, 1.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("How quickly fog density decreases with height");
+                }
+                fog.BaseHeight = ImGuiHelper.SliderFloat($"Base Height##{index}", fog.BaseHeight, -100.0f, 100.0f);
+                fog.MaxHeight = ImGuiHelper.SliderFloat($"Max Height##{index}", fog.MaxHeight, fog.BaseHeight + 10.0f, 500.0f);
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Scattering & Atmosphere");
+            ImGui.Spacing();
+
+            fog.ScatteringIntensity = ImGuiHelper.SliderFloat($"Scattering##{index}", fog.ScatteringIntensity, 0.0f, 2.0f);
+            fog.ExtinctionFactor = ImGuiHelper.SliderFloat($"Extinction##{index}", fog.ExtinctionFactor, 0.0f, 2.0f);
+
+            bool useSunScatter = fog.UseSunScattering;
+            if (ImGui.Checkbox($"Sun Scattering##{index}", ref useSunScatter))
+                fog.UseSunScattering = useSunScatter;
+
+            if (fog.UseSunScattering)
+            {
+                ImGui.Indent();
+                var sunColor = new System.Numerics.Vector3(fog.SunScatteringColor.X, fog.SunScatteringColor.Y, fog.SunScatteringColor.Z);
+                if (ImGui.ColorEdit3($"Sun Scatter Color##{index}", ref sunColor))
+                {
+                    fog.SunScatteringColor = new OpenTK.Mathematics.Vector3(sunColor.X, sunColor.Y, sunColor.Z);
+                }
+                ImGui.Unindent();
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Noise Detail");
+            ImGui.Spacing();
+
+            bool useNoise = fog.UseNoise;
+            if (ImGui.Checkbox($"Enable Noise##{index}", ref useNoise))
+                fog.UseNoise = useNoise;
+
+            if (fog.UseNoise)
+            {
+                ImGui.Indent();
+                fog.NoiseScale = ImGuiHelper.SliderFloat($"Scale##{index}", fog.NoiseScale, 0.01f, 1.0f);
+                fog.NoiseSpeed = ImGuiHelper.SliderFloat($"Speed##{index}", fog.NoiseSpeed, 0.0f, 1.0f);
+                fog.NoiseStrength = ImGuiHelper.SliderFloat($"Strength##{index}", fog.NoiseStrength, 0.0f, 1.0f);
+                ImGui.Unindent();
+            }
+        }
+
+        private static void DrawColorGradingInspector(ColorGradingEffect colorGrading, int index)
+        {
+            ImGui.Text("Color Grading Settings");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            // Source mode
+            var sources = Enum.GetNames(typeof(ColorGradingEffect.ColorGradingSource));
+            int currentSource = (int)colorGrading.Source;
+            if (ImGui.Combo($"Source##{index}", ref currentSource, sources, sources.Length))
+            {
+                colorGrading.Source = (ColorGradingEffect.ColorGradingSource)currentSource;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Manual = fixed parameters\nTimeOfDay = automatic time-based color grading\nBlend = mix between both");
+            }
+
+            // Blend factor (only for Blend mode)
+            if (colorGrading.Source == ColorGradingEffect.ColorGradingSource.Blend)
+            {
+                colorGrading.BlendFactor = ImGuiHelper.SliderFloat($"Blend Factor##{index}", colorGrading.BlendFactor, 0.0f, 1.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("0 = Manual parameters, 1 = Time of Day");
+                }
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Basic Adjustments");
+            ImGui.Spacing();
+
+            // Basic parameters
+            colorGrading.Saturation = ImGuiHelper.SliderFloat($"Saturation##{index}", colorGrading.Saturation, 0.0f, 2.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("0 = grayscale, 1 = normal, 2 = vibrant");
+            }
+
+            colorGrading.Contrast = ImGuiHelper.SliderFloat($"Contrast##{index}", colorGrading.Contrast, 0.0f, 2.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("0 = flat, 1 = normal, 2 = high contrast");
+            }
+
+            colorGrading.Brightness = ImGuiHelper.SliderFloat($"Brightness##{index}", colorGrading.Brightness, -1.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("-1 = darker, 0 = normal, +1 = brighter");
+            }
+
+            colorGrading.Vibrance = ImGuiHelper.SliderFloat($"Vibrance##{index}", colorGrading.Vibrance, -1.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Selective saturation boost for dull colors");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("White Balance");
+            ImGui.Spacing();
+
+            colorGrading.Temperature = ImGuiHelper.SliderFloat($"Temperature##{index}", colorGrading.Temperature, -1.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("-1 = cool (blue), 0 = neutral, +1 = warm (orange)");
+            }
+
+            colorGrading.Tint = ImGuiHelper.SliderFloat($"Tint##{index}", colorGrading.Tint, -1.0f, 1.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("-1 = green, 0 = neutral, +1 = magenta");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Text("Advanced");
+            ImGui.Spacing();
+
+            colorGrading.HueShift = ImGuiHelper.SliderFloat($"Hue Shift##{index}", colorGrading.HueShift, 0.0f, 360.0f);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Rotate hue by degrees (0-360)");
+            }
+
+            var colorFilter = new System.Numerics.Vector3(colorGrading.ColorFilter.X, colorGrading.ColorFilter.Y, colorGrading.ColorFilter.Z);
+            if (ImGui.ColorEdit3($"Color Filter##{index}", ref colorFilter))
+            {
+                colorGrading.ColorFilter = new OpenTK.Mathematics.Vector3(colorFilter.X, colorFilter.Y, colorFilter.Z);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("RGB multiplier (tint)");
+            }
+
+            // Show time-of-day settings if relevant
+            if (colorGrading.Source != ColorGradingEffect.ColorGradingSource.Manual)
+            {
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Text("Time of Day Presets");
+                ImGui.Spacing();
+
+                if (ImGui.CollapsingHeader($"Night##{index}"))
+                {
+                    ImGui.Indent();
+                    colorGrading.NightSaturation = ImGuiHelper.SliderFloat($"Saturation##{index}_night", colorGrading.NightSaturation, 0.0f, 2.0f);
+                    colorGrading.NightContrast = ImGuiHelper.SliderFloat($"Contrast##{index}_night", colorGrading.NightContrast, 0.0f, 2.0f);
+                    colorGrading.NightTemperature = ImGuiHelper.SliderFloat($"Temperature##{index}_night", colorGrading.NightTemperature, -1.0f, 1.0f);
+                    ImGui.Unindent();
+                }
+
+                if (ImGui.CollapsingHeader($"Day##{index}"))
+                {
+                    ImGui.Indent();
+                    colorGrading.DaySaturation = ImGuiHelper.SliderFloat($"Saturation##{index}_day", colorGrading.DaySaturation, 0.0f, 2.0f);
+                    colorGrading.DayContrast = ImGuiHelper.SliderFloat($"Contrast##{index}_day", colorGrading.DayContrast, 0.0f, 2.0f);
+                    colorGrading.DayTemperature = ImGuiHelper.SliderFloat($"Temperature##{index}_day", colorGrading.DayTemperature, -1.0f, 1.0f);
+                    ImGui.Unindent();
+                }
+
+                if (ImGui.CollapsingHeader($"Sunrise##{index}"))
+                {
+                    ImGui.Indent();
+                    colorGrading.SunriseSaturation = ImGuiHelper.SliderFloat($"Saturation##{index}_sunrise", colorGrading.SunriseSaturation, 0.0f, 2.0f);
+                    colorGrading.SunriseContrast = ImGuiHelper.SliderFloat($"Contrast##{index}_sunrise", colorGrading.SunriseContrast, 0.0f, 2.0f);
+                    colorGrading.SunriseTemperature = ImGuiHelper.SliderFloat($"Temperature##{index}_sunrise", colorGrading.SunriseTemperature, -1.0f, 1.0f);
+                    ImGui.Unindent();
+                }
+
+                if (ImGui.CollapsingHeader($"Sunset##{index}"))
+                {
+                    ImGui.Indent();
+                    colorGrading.SunsetSaturation = ImGuiHelper.SliderFloat($"Saturation##{index}_sunset", colorGrading.SunsetSaturation, 0.0f, 2.0f);
+                    colorGrading.SunsetContrast = ImGuiHelper.SliderFloat($"Contrast##{index}_sunset", colorGrading.SunsetContrast, 0.0f, 2.0f);
+                    colorGrading.SunsetTemperature = ImGuiHelper.SliderFloat($"Temperature##{index}_sunset", colorGrading.SunsetTemperature, -1.0f, 1.0f);
+                    ImGui.Unindent();
+                }
+
+                ImGui.Spacing();
+                colorGrading.TransitionSpeed = ImGuiHelper.SliderFloat($"Transition Speed##{index}", colorGrading.TransitionSpeed, 0.1f, 10.0f);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("How fast to blend between time-of-day presets");
+                }
             }
         }
     }

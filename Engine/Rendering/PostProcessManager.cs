@@ -35,6 +35,8 @@ namespace Engine.Rendering
             RegisterRenderer<DepthOfFieldEffect>(new DepthOfFieldRenderer());
             RegisterRenderer<MotionBlurEffect>(new MotionBlurRenderer());
             RegisterRenderer<ImageSharpeningEffect>(new ImageSharpeningRenderer());
+            RegisterRenderer<VolumetricFogEffect>(new VolumetricFogRenderer());
+            RegisterRenderer<ColorGradingEffect>(new ColorGradingRenderer());
 
 
             // Initialiser tous les renderers

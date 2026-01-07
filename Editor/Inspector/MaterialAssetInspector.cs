@@ -90,6 +90,9 @@ namespace Editor.Inspector
                 WaveHeight = m.WaterProperties.WaveHeight,
                 WaveFrequency = m.WaterProperties.WaveFrequency,
                 WaveDirection = m.WaterProperties.WaveDirection != null ? (float[])m.WaterProperties.WaveDirection.Clone() : new float[] { 1.0f, 0.0f },
+                // Global/Local/Blend System
+                WaveMode = m.WaterProperties.WaveMode,
+                WaveBlendFactor = m.WaterProperties.WaveBlendFactor,
                 // Phase 2: Normal Mapping
                 NormalStrength = m.WaterProperties.NormalStrength,
                 NormalStrength2 = m.WaterProperties.NormalStrength2,
@@ -121,6 +124,27 @@ namespace Editor.Inspector
                 FoamCutoff = m.WaterProperties.FoamCutoff,
                 FoamColor = m.WaterProperties.FoamColor != null ? (float[])m.WaterProperties.FoamColor.Clone() : new float[] { 1.0f, 1.0f, 1.0f, 1.0f },
                 EdgeFadeDistance = m.WaterProperties.EdgeFadeDistance
+            } : null
+            ,VegetationProperties = m.VegetationProperties != null ? new Engine.Assets.VegetationProperties
+            {
+                // Global/Local/Blend System
+                WindMode = m.VegetationProperties.WindMode,
+                WindBlendFactor = m.VegetationProperties.WindBlendFactor,
+                // Wind parameters
+                WindStrength = m.VegetationProperties.WindStrength,
+                WindDirection = m.VegetationProperties.WindDirection != null ? (float[])m.VegetationProperties.WindDirection.Clone() : new float[] { 1.0f, 0.0f },
+                WindSpeed = m.VegetationProperties.WindSpeed,
+                WindGustiness = m.VegetationProperties.WindGustiness,
+                // Branch parameters
+                BranchAmplitude = m.VegetationProperties.BranchAmplitude,
+                BranchSpeed = m.VegetationProperties.BranchSpeed,
+                BranchTurbulence = m.VegetationProperties.BranchTurbulence,
+                // Trunk parameters
+                TrunkStiffness = m.VegetationProperties.TrunkStiffness,
+                TrunkBendAmount = m.VegetationProperties.TrunkBendAmount,
+                // Leaf parameters
+                LeafFlutter = m.VegetationProperties.LeafFlutter,
+                LeafFlutterSpeed = m.VegetationProperties.LeafFlutterSpeed
             } : null
         };
 
@@ -287,8 +311,53 @@ namespace Editor.Inspector
                     mat.CullingMode = 2;
                     SaveAndApplyImmediate(guid, mat, "Fix Water Culling");
                 }
+
+                // Draw wave mode controls (Global/Local/Blend)
+                bool waterChanged = WaterMaterialInspector.Draw(mat);
+                if (waterChanged)
+                {
+                    SaveAndApplyImmediate(guid, mat, "Update Water Wave Parameters");
+                }
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Draw water visual properties
                 WaterForwardInspector.DrawWaterForwardProperties(mat);
                 return;
+            }
+
+            // If VegetationForward shader, show vegetation wind controls
+            if (string.Equals(mat.Shader, "VegetationForward", StringComparison.OrdinalIgnoreCase))
+            {
+                // Initialize VegetationProperties in memory if null
+                if (mat.VegetationProperties == null)
+                {
+                    mat.VegetationProperties = new Engine.Assets.VegetationProperties();
+                    // Save immediately so it persists across reloads, but DON'T call ApplyLiveUpdate
+                    // to avoid infinite loop (ApplyLiveUpdate -> OnTerrainVegetationRegenerated -> reload -> loop)
+                    try
+                    {
+                        Engine.Assets.AssetDatabase.SaveMaterial(mat);
+                        Console.WriteLine($"[MaterialAssetInspector] VegetationProperties initialized and saved for {mat.Name}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[MaterialAssetInspector] Failed to save VegetationProperties: {ex.Message}");
+                    }
+                }
+
+                // Draw wind mode controls (Global/Local/Blend)
+                if (VegetationMaterialInspector.Draw(mat))
+                {
+                    // Properties changed, trigger immediate save
+                    SaveAndApplyImmediate(guid, mat, "Update Vegetation Properties");
+                }
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+
+                // Then draw standard PBR properties below
             }
 
             // NOTE: Legacy Water shader support retained but planar reflection controls

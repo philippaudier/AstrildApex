@@ -224,7 +224,25 @@ namespace Editor
         {
             if (_state != PlayState.Playing || _playScene == null) return;
 
-            // === STEP 0: Update weather system (global environment) ===
+            // === STEP 0: Update TimeComponent FIRST (drives TimeOfDay for all systems) ===
+            try
+            {
+                foreach (var entity in _playScene.Entities)
+                {
+                    var timeComp = entity.GetComponent<Engine.Components.TimeComponent>();
+                    if (timeComp != null && entity.Active)
+                    {
+                        timeComp.Update(deltaTime);
+                        break; // Only one TimeComponent per scene
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Engine.Utils.DebugLogger.Log($"[PlayMode] Time component error: {ex.Message}");
+            }
+
+            // === STEP 1: Update weather system (depends on time) ===
             try
             {
                 _weatherSystem.Update(_playScene, deltaTime);
@@ -234,7 +252,7 @@ namespace Editor
                 Engine.Utils.DebugLogger.Log($"[PlayMode] Weather system error: {ex.Message}");
             }
 
-            // === STEP 1: Update components (variable timestep) ===
+            // === STEP 2: Update other components (variable timestep) ===
             UpdateComponents(deltaTime);
 
             // Physics system removed

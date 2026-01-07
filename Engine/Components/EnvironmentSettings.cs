@@ -248,7 +248,7 @@ namespace Engine.Components
 
             // Apply axial tilt (simulates seasons)
             float tiltRad = MathHelper.DegreesToRadians(SunOrbitTilt);
-            Matrix3 tiltMatrix = Matrix3.CreateRotationX(tiltRad);
+            Matrix4 tiltMatrix = Matrix4.CreateRotationX(tiltRad);
             direction = Vector3.TransformNormal(direction, tiltMatrix);
 
             // Rotate to align with sunrise direction
@@ -259,10 +259,11 @@ namespace Engine.Components
                 Vector3 north = Vector3.Cross(up, east);
 
                 // Create rotation matrix from east/north basis
-                Matrix3 basisMatrix = new Matrix3(
-                    east.X, up.X, north.X,
-                    east.Y, up.Y, north.Y,
-                    east.Z, up.Z, north.Z
+                Matrix4 basisMatrix = new Matrix4(
+                    new Vector4(east.X, east.Y, east.Z, 0),
+                    new Vector4(up.X, up.Y, up.Z, 0),
+                    new Vector4(north.X, north.Y, north.Z, 0),
+                    new Vector4(0, 0, 0, 1)
                 );
 
                 direction = Vector3.TransformNormal(direction, basisMatrix);
@@ -291,14 +292,14 @@ namespace Engine.Components
             Vector3 right = Vector3.Normalize(Vector3.Cross(up, forward));
             up = Vector3.Cross(forward, right);
 
-            // Create rotation matrix
+            // Create rotation matrix (Matrix3 for quaternion conversion)
             Matrix3 rotationMatrix = new Matrix3(
                 right.X, right.Y, right.Z,
                 up.X, up.Y, up.Z,
                 forward.X, forward.Y, forward.Z
             );
 
-            return Quaternion.FromMatrix(new Matrix4(rotationMatrix));
+            return Quaternion.FromMatrix(rotationMatrix);
         }
 
         private float SmoothStep(float edge0, float edge1, float x)

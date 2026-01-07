@@ -22,7 +22,7 @@ uniform vec4  u_WaterColor;          // Base color of water (shallow)
 uniform vec4  u_DeepWaterColor;      // Deep water color
 uniform float u_Transparency;        // Overall transparency (0 = opaque, 1 = fully transparent)
 uniform uint  u_ObjectId;            // For selection/picking
-uniform float u_Time;                // Game time for animation (caustics, etc.)
+// Note: Game time for animation comes from Global UBO as uTime
 
 // === PHASE 2: Normal Maps (Two-Layer) ===
 uniform sampler2D u_NormalTex;       // First normal map layer
@@ -301,7 +301,7 @@ void main()
         vec2 causticsUV = vWorldPos.xz;
         vec3 causticsPattern = generateCausticsFromNormals(
             causticsUV,
-            u_Time * u_CausticsSpeed,
+            uTime * u_CausticsSpeed,
             u_CausticsDistortion,
             u_CausticsSplit
         );

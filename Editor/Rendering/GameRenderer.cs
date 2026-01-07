@@ -67,39 +67,77 @@ namespace Editor.Rendering
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
         private struct GlobalUniforms
         {
+            // === CAMERA & TRANSFORMS ===
             public Matrix4 ViewMatrix;
             public Matrix4 ProjectionMatrix;
             public Matrix4 ViewProjectionMatrix;
             public Vector3 CameraPosition; public float _pad1;
-            
-            // Directional Light
+
+            // === DIRECTIONAL LIGHT (Sun/Moon) ===
             public Vector3 DirLightDirection; public float _pad2;
             public Vector3 DirLightColor; public float DirLightIntensity;
-            
-            // Point Lights (max 4)
+
+            // === POINT LIGHTS (max 4) ===
             public int PointLightCount; public float _pad3; public float _pad4; public float _pad5;
             public Vector4 PointLightPos0; public Vector4 PointLightColor0;
             public Vector4 PointLightPos1; public Vector4 PointLightColor1;
             public Vector4 PointLightPos2; public Vector4 PointLightColor2;
             public Vector4 PointLightPos3; public Vector4 PointLightColor3;
-            
-            // Spot Lights (max 2)
+
+            // === SPOT LIGHTS (max 2) ===
             public int SpotLightCount; public float _pad6; public float _pad7; public float _pad8;
             public Vector4 SpotLightPos0; public Vector4 SpotLightDir0; public Vector4 SpotLightColor0; public float SpotLightAngle0; public float SpotLightInnerAngle0; public float _pad9; public float _pad10;
             public Vector4 SpotLightPos1; public Vector4 SpotLightDir1; public Vector4 SpotLightColor1; public float SpotLightAngle1; public float SpotLightInnerAngle1; public float _pad11; public float _pad12;
-            
-            // Ambient
+
+            // === AMBIENT & SKYBOX ===
             public Vector3 AmbientColor; public float AmbientIntensity;
             public Vector3 SkyboxTint; public float SkyboxExposure;
-            
-            // Fog
-            public int FogEnabled; public float _pad13; public float _pad14; public float _pad15;
+
+            // === FOG (from WeatherComponent) ===
+            public int FogEnabled; public float FogDensity; public float _pad13; public float _pad14;
             public Vector3 FogColor; public float FogStart;
-            public float FogEnd; public Vector3 _pad16;
-            
-            // Clip plane
-            public float ClipPlaneEnabled; public float _pad17; public float _pad18; public float _pad19;
+            public float FogEnd; public Vector3 _pad15;
+
+            // === CLIP PLANE ===
+            public float ClipPlaneEnabled; public float _pad16; public float _pad17; public float _pad18;
             public Vector4 ClipPlane;
+
+            // === TIME & WEATHER SYSTEM ===
+
+            // Time
+            public float Time;              // Game time for animations (seconds)
+            public float TimeOfDay;         // 0-24 hours
+            public float DayNightBlend;     // 0 = night, 1 = day
+            public float GoldenHourBlend;   // 0 = no golden hour, 1 = peak
+
+            // Wind parameters
+            public Vector2 WindDirection;   // XZ normalized
+            public float WindStrength;      // 0-1
+            public float WindSpeed;         // Animation speed
+            public float WindGustiness;     // 0-1
+            public float _pad19; public float _pad20; public float _pad21;
+
+            // Advanced wind (vegetation)
+            public float BranchAmplitude;
+            public float BranchSpeed;
+            public float BranchTurbulence;
+            public float TrunkStiffness;
+            public float TrunkBendAmount;
+            public float LeafFlutter;
+            public float LeafFlutterSpeed;
+            public float _pad22;
+
+            // Precipitation
+            public float RainIntensity;
+            public float SnowAccumulation;
+            public float SnowIntensity;
+            public float Wetness;
+
+            // Snow parameters
+            public float SnowSlopeMin;
+            public float SnowSlopeMax;
+            public float SnowSparkle;
+            public float SnowDisplacement;
         }
 
         public GameRenderer()
@@ -699,11 +737,30 @@ void main()
         {
             if (_scene == null || _camera == null) return;
 
-            // Update weather system (editor-time weather updates)
+            // Update time system FIRST (drives TimeOfDay)
+            float deltaTime = (float)_weatherDeltaStopwatch.Elapsed.TotalSeconds;
+            _weatherDeltaStopwatch.Restart();
+
             try
             {
-                float deltaTime = (float)_weatherDeltaStopwatch.Elapsed.TotalSeconds;
-                _weatherDeltaStopwatch.Restart();
+                foreach (var entity in _scene.Entities)
+                {
+                    var timeComp = entity.GetComponent<Engine.Components.TimeComponent>();
+                    if (timeComp != null && entity.Active)
+                    {
+                        timeComp.Update(deltaTime);
+                        break; // Only one TimeComponent per scene
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GameRenderer] Time component error: {ex.Message}");
+            }
+
+            // Update weather system (depends on time)
+            try
+            {
                 _weatherSystem.Update(_scene, deltaTime);
             }
             catch (Exception ex)
@@ -802,6 +859,24 @@ void main()
                 proj = _camera.ProjectionMatrix(aspect);
             }
             
+            // Get TimeComponent and WeatherComponent for global parameters
+            TimeComponent? timeComponent = null;
+            WeatherComponent? weatherComponent = null;
+            EnvironmentSettings? envSettings = null;
+
+            foreach (var entity in _scene.Entities.Where(e => e.Active))
+            {
+                if (timeComponent == null)
+                    timeComponent = entity.GetComponent<TimeComponent>();
+                if (weatherComponent == null)
+                    weatherComponent = entity.GetComponent<WeatherComponent>();
+                if (envSettings == null)
+                    envSettings = entity.GetComponent<EnvironmentSettings>();
+
+                if (timeComponent != null && weatherComponent != null && envSettings != null)
+                    break; // Found all, stop searching
+            }
+
             // Update Global UBO for shaders
             var globalUniforms = new GlobalUniforms
             {
@@ -817,8 +892,108 @@ void main()
                 AmbientColor = new Vector3(0.3f, 0.3f, 0.3f),
                 AmbientIntensity = 1.0f,
                 FogEnabled = 0,
-                ClipPlaneEnabled = 0
+                FogDensity = 0.0f,
+                FogColor = new Vector3(0.7f, 0.7f, 0.8f),
+                FogStart = 0.0f,
+                FogEnd = 300.0f,
+                ClipPlaneEnabled = 0,
+
+                // Time & Weather (defaults)
+                Time = (float)_timeStopwatch.Elapsed.TotalSeconds,
+                TimeOfDay = 12.0f,
+                DayNightBlend = 1.0f,
+                GoldenHourBlend = 0.0f,
+                WindDirection = new Vector2(1, 0),
+                WindStrength = 0.0f,
+                WindSpeed = 1.0f,
+                WindGustiness = 0.0f,
+                BranchAmplitude = 2.5f,
+                BranchSpeed = 4.0f,
+                BranchTurbulence = 0.8f,
+                TrunkStiffness = 0.85f,
+                TrunkBendAmount = 0.3f,
+                LeafFlutter = 0.6f,
+                LeafFlutterSpeed = 8.0f,
+                RainIntensity = 0.0f,
+                SnowAccumulation = 0.0f,
+                SnowIntensity = 0.0f,
+                Wetness = 0.0f,
+                SnowSlopeMin = 0.0f,
+                SnowSlopeMax = 45.0f,
+                SnowSparkle = 0.5f,
+                SnowDisplacement = 0.5f
             };
+
+            // Override with TimeComponent data if present
+            if (timeComponent != null)
+            {
+                globalUniforms.TimeOfDay = timeComponent.TimeOfDay;
+                globalUniforms.DayNightBlend = timeComponent.GetDayNightBlend();
+                globalUniforms.GoldenHourBlend = timeComponent.GetGoldenHourBlend();
+            }
+
+            // Override with WeatherComponent data if present
+            if (weatherComponent != null)
+            {
+                // Wind
+                var windDir = weatherComponent.GetWindDirection();
+                globalUniforms.WindDirection = new Vector2(windDir.X, windDir.Y);
+                globalUniforms.WindStrength = weatherComponent.WindStrength;
+                globalUniforms.WindSpeed = weatherComponent.WindSpeed;
+                globalUniforms.WindGustiness = weatherComponent.WindGustiness;
+
+                // Advanced wind
+                globalUniforms.BranchAmplitude = weatherComponent.BranchAmplitude;
+                globalUniforms.BranchSpeed = weatherComponent.BranchSpeed;
+                globalUniforms.BranchTurbulence = weatherComponent.BranchTurbulence;
+                globalUniforms.TrunkStiffness = weatherComponent.TrunkStiffness;
+                globalUniforms.TrunkBendAmount = weatherComponent.TrunkBendAmount;
+                globalUniforms.LeafFlutter = weatherComponent.LeafFlutter;
+                globalUniforms.LeafFlutterSpeed = weatherComponent.LeafFlutterSpeed;
+
+                // Precipitation
+                globalUniforms.RainIntensity = weatherComponent.RainIntensity;
+                globalUniforms.SnowAccumulation = weatherComponent.SnowAccumulation;
+                globalUniforms.SnowIntensity = weatherComponent.SnowIntensity;
+                globalUniforms.Wetness = weatherComponent.Wetness;
+
+                // Snow parameters
+                globalUniforms.SnowSlopeMin = weatherComponent.SnowSlopeMin;
+                globalUniforms.SnowSlopeMax = weatherComponent.SnowSlopeMax;
+                globalUniforms.SnowSparkle = weatherComponent.SnowSparkle;
+                globalUniforms.SnowDisplacement = weatherComponent.SnowDisplacement;
+
+                // Fog
+                if (weatherComponent.FogEnabled)
+                {
+                    globalUniforms.FogEnabled = 1;
+                    globalUniforms.FogDensity = weatherComponent.FogDensity;
+                    globalUniforms.FogColor = new Vector3(
+                        weatherComponent.FogColor.X,
+                        weatherComponent.FogColor.Y,
+                        weatherComponent.FogColor.Z
+                    );
+                    globalUniforms.FogStart = weatherComponent.FogStart;
+                    globalUniforms.FogEnd = weatherComponent.FogEnd;
+                }
+            }
+
+            // Override with EnvironmentSettings for ambient/skybox (if present)
+            if (envSettings != null)
+            {
+                globalUniforms.AmbientColor = new Vector3(
+                    envSettings.AmbientColor.X,
+                    envSettings.AmbientColor.Y,
+                    envSettings.AmbientColor.Z
+                );
+                globalUniforms.AmbientIntensity = envSettings.AmbientIntensity;
+                globalUniforms.SkyboxTint = new Vector3(
+                    envSettings.SkyboxTint.X,
+                    envSettings.SkyboxTint.Y,
+                    envSettings.SkyboxTint.Z
+                );
+                globalUniforms.SkyboxExposure = envSettings.SkyboxExposure;
+            }
             
             // Get lighting from scene if available
             foreach (var entity in _scene.Entities.Where(e => e.Active))

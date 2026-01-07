@@ -684,11 +684,14 @@ namespace Engine.Rendering
 
             if (Source == FogSource.Global)
             {
-                return (weather.FogColor, weather.FogDensity, weather.FogStart, weather.FogEnd);
+                // Convert System.Numerics.Vector3 to OpenTK.Mathematics.Vector3
+                var weatherColor = new Vector3(weather.FogColor.X, weather.FogColor.Y, weather.FogColor.Z);
+                return (weatherColor, weather.FogDensity, weather.FogStart, weather.FogEnd);
             }
 
             // Blend mode
-            Vector3 color = Vector3.Lerp(FogColor, weather.FogColor, BlendFactor);
+            var weatherColorBlend = new Vector3(weather.FogColor.X, weather.FogColor.Y, weather.FogColor.Z);
+            Vector3 color = Vector3.Lerp(FogColor, weatherColorBlend, BlendFactor);
             float density = MathHelper.Lerp(Density, weather.FogDensity, BlendFactor);
             float start = MathHelper.Lerp(DepthStart, weather.FogStart, BlendFactor);
             float end = MathHelper.Lerp(DepthEnd, weather.FogEnd, BlendFactor);

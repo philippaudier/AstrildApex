@@ -643,33 +643,56 @@ namespace Engine.Rendering
                     try { shToUse.SetInt("u_AlbedoTex", 0); } catch { }
                 }
 
-                // CRITICAL: Re-apply wind/weather and animation uniforms AFTER material binding.
-                // Some material bind implementations may set common uniforms like u_Time; ensure
-                // vegetation-specific uniforms are final before draw.
+                // CRITICAL FIX: DON'T set individual uniforms for weather/time!
+                // The shader reads uTime, uWindStrength, etc. from the Global UBO (binding=0).
+                // Setting individual u_Time/u_WindStrength uniforms CONFLICTS with the UBO!
+                // The Global UBO is already updated in UpdateGlobalUniforms() and bound at binding point 0.
+                
+                // HOWEVER: We MUST set u_WindMode and local wind parameters so the shader knows
+                // whether to use Global UBO or material-specific parameters!
                 try
                 {
-                    shToUse.SetFloat("u_Time", time);
-
-                    // Primary wind parameters
-                    shToUse.SetFloat("u_WindStrength", windStrength);
-                    shToUse.SetVec2("u_WindDirection", windDirection);
-                    shToUse.SetFloat("u_WindSpeed", windSpeed);
-                    shToUse.SetFloat("u_WindGustiness", windGustiness);
-
-                    // Advanced wind parameters (from weather component)
-                    shToUse.SetFloat("u_BranchAmplitude", branchAmplitude);
-                    shToUse.SetFloat("u_BranchSpeed", branchSpeed);
-                    shToUse.SetFloat("u_BranchTurbulence", branchTurbulence);
-                    shToUse.SetFloat("u_TrunkStiffness", trunkStiffness);
-                    shToUse.SetFloat("u_TrunkBendAmount", trunkBendAmount);
-                    shToUse.SetFloat("u_LeafFlutter", leafFlutter);
-                    shToUse.SetFloat("u_LeafFlutterSpeed", leafFlutterSpeed);
-
-                    shToUse.SetFloat("u_RainIntensity", rainIntensity);
-                    shToUse.SetFloat("u_SnowAccumulation", snowAccumulation);
-                    shToUse.SetFloat("u_SnowIntensity", snowIntensity);
-                    shToUse.SetFloat("u_Wetness", wetness);
-
+                    if (matAsset?.VegetationProperties != null)
+                    {
+                        var veg = matAsset.VegetationProperties;
+                        
+                        // Set wind mode (0=Global, 1=Local, 2=Blend)
+                        shToUse.SetInt("u_WindMode", veg.WindMode);
+                        
+                        // Set blend factor (only used when WindMode=2)
+                        shToUse.SetFloat("u_WindBlendFactor", veg.WindBlendFactor);
+                        
+                        // Set local wind parameters (used when WindMode=1 or 2)
+                        shToUse.SetFloat("u_WindStrength_Local", veg.WindStrength);
+                        shToUse.SetVec2("u_WindDirection_Local", new OpenTK.Mathematics.Vector2(veg.WindDirection[0], veg.WindDirection[1]));
+                        shToUse.SetFloat("u_WindSpeed_Local", veg.WindSpeed);
+                        shToUse.SetFloat("u_WindGustiness_Local", veg.WindGustiness);
+                        shToUse.SetFloat("u_BranchAmplitude_Local", veg.BranchAmplitude);
+                        shToUse.SetFloat("u_BranchSpeed_Local", veg.BranchSpeed);
+                        shToUse.SetFloat("u_BranchTurbulence_Local", veg.BranchTurbulence);
+                        shToUse.SetFloat("u_TrunkStiffness_Local", veg.TrunkStiffness);
+                        shToUse.SetFloat("u_TrunkBendAmount_Local", veg.TrunkBendAmount);
+                        shToUse.SetFloat("u_LeafFlutter_Local", veg.LeafFlutter);
+                        shToUse.SetFloat("u_LeafFlutterSpeed_Local", veg.LeafFlutterSpeed);
+                    }
+                    else
+                    {
+                        // No VegetationProperties - default to Global mode
+                        shToUse.SetInt("u_WindMode", 0);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Engine.Utils.DebugLogger.Log($"[VegetationRenderer] Failed to set wind mode uniforms: {ex.Message}");
+                }
+                
+                try
+                {
+                    // REMOVED: shToUse.SetFloat("u_Time", time);
+                    // REMOVED: shToUse.SetFloat("u_WindStrength", windStrength);
+                    // ... all weather/time uniforms are now read from Global UBO
+                    
+                    // Snow parameters are still set individually (not in Global UBO structure yet)
                     shToUse.SetFloat("u_SnowSlopeMin", snowSlopeMin);
                     shToUse.SetFloat("u_SnowSlopeMax", snowSlopeMax);
                     shToUse.SetFloat("u_SnowSparkle", snowSparkle);
@@ -975,28 +998,80 @@ namespace Engine.Rendering
 
                 // CRITICAL: Set wind/weather uniforms for animated shadows
                 // The shadow depth shader has the same wind animation code as the forward shader
+                // Use material-specific parameters if available (to match forward shader behavior)
                 try
                 {
                     shader.SetFloat("u_Time", time);
 
-                    // Primary wind parameters
-                    shader.SetFloat("u_WindStrength", windStrength);
-                    shader.SetVec2("u_WindDirection", windDirection);
-                    shader.SetFloat("u_WindSpeed", windSpeed);
-                    shader.SetFloat("u_WindGustiness", windGustiness);
+                    // Determine which wind parameters to use based on material WindMode
+                    float effectiveWindStrength = windStrength;
+                    OpenTK.Mathematics.Vector2 effectiveWindDirection = windDirection;
+                    float effectiveWindSpeed = windSpeed;
+                    float effectiveWindGustiness = windGustiness;
+                    float effectiveBranchAmplitude = branchAmplitude;
+                    float effectiveBranchSpeed = branchSpeed;
+                    float effectiveBranchTurbulence = branchTurbulence;
+                    float effectiveTrunkStiffness = trunkStiffness;
+                    float effectiveTrunkBendAmount = trunkBendAmount;
+                    float effectiveLeafFlutter = leafFlutter;
+                    float effectiveLeafFlutterSpeed = leafFlutterSpeed;
 
-                    // Advanced wind parameters
-                    shader.SetFloat("u_BranchAmplitude", branchAmplitude);
-                    shader.SetFloat("u_BranchSpeed", branchSpeed);
-                    shader.SetFloat("u_BranchTurbulence", branchTurbulence);
-                    shader.SetFloat("u_TrunkStiffness", trunkStiffness);
-                    shader.SetFloat("u_TrunkBendAmount", trunkBendAmount);
-                    shader.SetFloat("u_LeafFlutter", leafFlutter);
-                    shader.SetFloat("u_LeafFlutterSpeed", leafFlutterSpeed);
+                    // If material runtime is available, check its WindMode
+                    if (mr != null)
+                    {
+                        int windMode = mr.VegetationWindMode;
+                        float blendFactor = mr.VegetationWindBlendFactor;
 
-                    // Weather effects
+                        if (windMode == 1) // Local mode - use material parameters
+                        {
+                            effectiveWindStrength = mr.VegetationWindStrength;
+                            effectiveWindDirection = new OpenTK.Mathematics.Vector2(mr.VegetationWindDirection[0], mr.VegetationWindDirection[1]);
+                            effectiveWindSpeed = mr.VegetationWindSpeed;
+                            effectiveWindGustiness = mr.VegetationWindGustiness;
+                            effectiveBranchAmplitude = mr.VegetationBranchAmplitude;
+                            effectiveBranchSpeed = mr.VegetationBranchSpeed;
+                            effectiveBranchTurbulence = mr.VegetationBranchTurbulence;
+                            effectiveTrunkStiffness = mr.VegetationTrunkStiffness;
+                            effectiveTrunkBendAmount = mr.VegetationTrunkBendAmount;
+                            effectiveLeafFlutter = mr.VegetationLeafFlutter;
+                            effectiveLeafFlutterSpeed = mr.VegetationLeafFlutterSpeed;
+                        }
+                        else if (windMode == 2) // Blend mode - blend between local and global
+                        {
+                            effectiveWindStrength = mr.VegetationWindStrength * (1 - blendFactor) + windStrength * blendFactor;
+                            effectiveWindDirection = new OpenTK.Mathematics.Vector2(
+                                mr.VegetationWindDirection[0] * (1 - blendFactor) + windDirection.X * blendFactor,
+                                mr.VegetationWindDirection[1] * (1 - blendFactor) + windDirection.Y * blendFactor
+                            );
+                            effectiveWindSpeed = mr.VegetationWindSpeed * (1 - blendFactor) + windSpeed * blendFactor;
+                            effectiveWindGustiness = mr.VegetationWindGustiness * (1 - blendFactor) + windGustiness * blendFactor;
+                            effectiveBranchAmplitude = mr.VegetationBranchAmplitude * (1 - blendFactor) + branchAmplitude * blendFactor;
+                            effectiveBranchSpeed = mr.VegetationBranchSpeed * (1 - blendFactor) + branchSpeed * blendFactor;
+                            effectiveBranchTurbulence = mr.VegetationBranchTurbulence * (1 - blendFactor) + branchTurbulence * blendFactor;
+                            effectiveTrunkStiffness = mr.VegetationTrunkStiffness * (1 - blendFactor) + trunkStiffness * blendFactor;
+                            effectiveTrunkBendAmount = mr.VegetationTrunkBendAmount * (1 - blendFactor) + trunkBendAmount * blendFactor;
+                            effectiveLeafFlutter = mr.VegetationLeafFlutter * (1 - blendFactor) + leafFlutter * blendFactor;
+                            effectiveLeafFlutterSpeed = mr.VegetationLeafFlutterSpeed * (1 - blendFactor) + leafFlutterSpeed * blendFactor;
+                        }
+                        // else: windMode == 0 (Global) - use default values from WeatherManager
+                    }
+
+                    // Bind effective wind parameters (either global, local, or blended)
+                    shader.SetFloat("u_WindStrength", effectiveWindStrength);
+                    shader.SetVec2("u_WindDirection", effectiveWindDirection);
+                    shader.SetFloat("u_WindSpeed", effectiveWindSpeed);
+                    shader.SetFloat("u_WindGustiness", effectiveWindGustiness);
+                    shader.SetFloat("u_BranchAmplitude", effectiveBranchAmplitude);
+                    shader.SetFloat("u_BranchSpeed", effectiveBranchSpeed);
+                    shader.SetFloat("u_BranchTurbulence", effectiveBranchTurbulence);
+                    shader.SetFloat("u_TrunkStiffness", effectiveTrunkStiffness);
+                    shader.SetFloat("u_TrunkBendAmount", effectiveTrunkBendAmount);
+                    shader.SetFloat("u_LeafFlutter", effectiveLeafFlutter);
+                    shader.SetFloat("u_LeafFlutterSpeed", effectiveLeafFlutterSpeed);
+
+                    // Weather effects (always use global values)
                     shader.SetFloat("u_RainIntensity", rainIntensity);
-                    shader.SetFloat("u_SnowCoverage", snowIntensity); // Note: shader uses u_SnowCoverage
+                    shader.SetFloat("u_SnowCoverage", snowIntensity);
                     shader.SetFloat("u_SnowAccumulation", snowAccumulation);
                     shader.SetFloat("u_SnowDisplacement", snowDisplacement);
                     shader.SetFloat("u_SnowSlopeMin", snowSlopeMin);

@@ -217,6 +217,9 @@ namespace Engine.Rendering
         public float WaterForwardWaveAmplitude = 0.1f;
         public float WaterForwardWaveFrequency = 2.0f;
         public float[] WaterForwardWaveDirection = new float[] { 1.0f, 0.0f };
+        // WaterForward: Global/Local/Blend System
+        public int WaterForwardWaveMode = 0; // 0=Global, 1=Local, 2=Blend
+        public float WaterForwardWaveBlendFactor = 1.0f;
         // Phase 2: Normal Mapping
         public float WaterForwardNormalStrength = 1.0f;
         public float WaterForwardNormalStrength2 = 0.5f;
@@ -261,6 +264,21 @@ namespace Engine.Rendering
         public bool WaterForwardFlipReflectionX = false;
         public bool WaterForwardFlipReflectionY = false;
         public float WaterForwardReflectionClipPlaneOffset = 0.05f;
+
+        // VegetationForward shader properties (wind animation)
+        public int VegetationWindMode = 0; // 0=Global, 1=Local, 2=Blend
+        public float VegetationWindBlendFactor = 1.0f;
+        public float VegetationWindStrength = 0.5f;
+        public float[] VegetationWindDirection = new float[] { 1.0f, 0.0f };
+        public float VegetationWindSpeed = 1.0f;
+        public float VegetationWindGustiness = 0.5f;
+        public float VegetationBranchAmplitude = 2.5f;
+        public float VegetationBranchSpeed = 4.0f;
+        public float VegetationBranchTurbulence = 0.8f;
+        public float VegetationTrunkStiffness = 0.85f;
+        public float VegetationTrunkBendAmount = 0.3f;
+        public float VegetationLeafFlutter = 0.6f;
+        public float VegetationLeafFlutterSpeed = 8.0f;
 
         public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
         {
@@ -462,6 +480,9 @@ namespace Engine.Rendering
                     mr.WaterForwardWaveAmplitude = w.WaveAmplitude;
                     mr.WaterForwardWaveFrequency = w.WaveFrequency;
                     mr.WaterForwardWaveDirection = w.WaveDirection ?? new float[] { 1.0f, 0.0f };
+                    // Global/Local/Blend system
+                    mr.WaterForwardWaveMode = w.WaveMode;
+                    mr.WaterForwardWaveBlendFactor = w.WaveBlendFactor;
 
                     // Phase 2: Normal Mapping
                     mr.WaterForwardNormalStrength = w.NormalStrength;
@@ -515,6 +536,31 @@ namespace Engine.Rendering
 
                     // Force transparency mode for WaterForward shader
                     mr.TransparencyMode = 1;
+                }
+            }
+            catch { }
+
+            // Load VegetationForward properties if present
+            try
+            {
+                if (a != null && a.VegetationProperties != null && string.Equals(a.Shader, "VegetationForward", StringComparison.OrdinalIgnoreCase))
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Loading VegetationForward properties for material {a.Name}"); } catch { }
+                    var v = a.VegetationProperties;
+
+                    mr.VegetationWindMode = v.WindMode;
+                    mr.VegetationWindBlendFactor = v.WindBlendFactor;
+                    mr.VegetationWindStrength = v.WindStrength;
+                    mr.VegetationWindDirection = v.WindDirection ?? new float[] { 1.0f, 0.0f };
+                    mr.VegetationWindSpeed = v.WindSpeed;
+                    mr.VegetationWindGustiness = v.WindGustiness;
+                    mr.VegetationBranchAmplitude = v.BranchAmplitude;
+                    mr.VegetationBranchSpeed = v.BranchSpeed;
+                    mr.VegetationBranchTurbulence = v.BranchTurbulence;
+                    mr.VegetationTrunkStiffness = v.TrunkStiffness;
+                    mr.VegetationTrunkBendAmount = v.TrunkBendAmount;
+                    mr.VegetationLeafFlutter = v.LeafFlutter;
+                    mr.VegetationLeafFlutterSpeed = v.LeafFlutterSpeed;
                 }
             }
             catch { }
@@ -820,8 +866,6 @@ namespace Engine.Rendering
             {
                 try
                 {
-                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Binding WaterForward shader uniforms"); } catch { }
-
                     // Phase 1: Base Color
                     sh.SetVec4("u_WaterColor", new OpenTK.Mathematics.Vector4(
                         WaterForwardColor[0], WaterForwardColor[1], WaterForwardColor[2], WaterForwardColor[3]));
@@ -829,11 +873,21 @@ namespace Engine.Rendering
                         WaterForwardDeepColor[0], WaterForwardDeepColor[1], WaterForwardDeepColor[2], WaterForwardDeepColor[3]));
                     sh.SetFloat("u_Transparency", WaterForwardTransparency);
 
-                    // Wave Animation
+                    // Wave Animation - Legacy uniforms (deprecated, use u_WaveMode system instead)
                     sh.SetFloat("u_WaveSpeed", WaterForwardWaveSpeed);
                     sh.SetFloat("u_WaveAmplitude", WaterForwardWaveAmplitude);
                     sh.SetFloat("u_WaveFrequency", WaterForwardWaveFrequency);
                     sh.SetVec2("u_WaveDirection", new OpenTK.Mathematics.Vector2(
+                        WaterForwardWaveDirection[0], WaterForwardWaveDirection[1]));
+
+                    // Global/Local/Blend system for wave animation
+                    sh.SetInt("u_WaveMode", WaterForwardWaveMode);
+                    sh.SetFloat("u_WaveBlendFactor", WaterForwardWaveBlendFactor);
+                    // Local wave parameters (used when mode != Global)
+                    sh.SetFloat("u_WaveSpeed_Local", WaterForwardWaveSpeed);
+                    sh.SetFloat("u_WaveAmplitude_Local", WaterForwardWaveAmplitude);
+                    sh.SetFloat("u_WaveFrequency_Local", WaterForwardWaveFrequency);
+                    sh.SetVec2("u_WaveDirection_Local", new OpenTK.Mathematics.Vector2(
                         WaterForwardWaveDirection[0], WaterForwardWaveDirection[1]));
 
                     // Phase 2: Normal Mapping (two layers)
@@ -845,9 +899,9 @@ namespace Engine.Rendering
                     sh.SetFloat("u_NormalLayer2Scale", WaterForwardNormalLayer2Scale);
                     sh.SetFloat("u_NormalLayer1Speed", WaterForwardNormalLayer1Speed);
                     sh.SetFloat("u_NormalLayer2Speed", WaterForwardNormalLayer2Speed);
-                    sh.SetVec2("u_NormalLayer1Direction", new OpenTK.Mathematics.Vector2(
+                    sh.SetVec2("u_NormalLayer1Direction_Local", new OpenTK.Mathematics.Vector2(
                         WaterForwardNormalLayer1Direction[0], WaterForwardNormalLayer1Direction[1]));
-                    sh.SetVec2("u_NormalLayer2Direction", new OpenTK.Mathematics.Vector2(
+                    sh.SetVec2("u_NormalLayer2Direction_Local", new OpenTK.Mathematics.Vector2(
                         WaterForwardNormalLayer2Direction[0], WaterForwardNormalLayer2Direction[1]));
 
                     // Phase 2: Depth & Refraction
@@ -907,6 +961,22 @@ namespace Engine.Rendering
 
                     // Planar reflection view-projection matrix
                     sh.SetMat4("u_ReflectionViewProj", Engine.Rendering.ReflectionBuffer.ReflectionViewProj);
+
+                    // CRITICAL: Bind GLOBAL wind parameters from WeatherComponent
+                    // These are used when WaveMode = 0 (Global) or 2 (Blend)
+                    // This makes water waves and normal directions follow the wind!
+                    try
+                    {
+                        var wm = Engine.Systems.WeatherManager.GetCurrentWeather();
+                        if (wm != null)
+                        {
+                            sh.SetFloat("u_WindStrength", wm.WindStrength);
+                            sh.SetVec2("u_WindDirection", new OpenTK.Mathematics.Vector2(wm.GetWindDirection().X, wm.GetWindDirection().Y));
+                            sh.SetFloat("u_WindSpeed", wm.WindSpeed);
+                            sh.SetFloat("u_WindGustiness", wm.WindGustiness);
+                        }
+                    }
+                    catch { }
                 }
                 catch (Exception ex)
                 {
@@ -914,8 +984,68 @@ namespace Engine.Rendering
                 }
             }
 
-            // Set time uniform for all shaders that need animation (Water, BlackHole, etc.)
-            // This must be done OUTSIDE the Water-specific block so other shaders can use it
+            // Bind VegetationForward shader uniforms if shader is "VegetationForward"
+            if (string.Equals(ShaderName, "VegetationForward", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    // Global/Local/Blend system for wind animation
+                    sh.SetInt("u_WindMode", VegetationWindMode);
+                    sh.SetFloat("u_WindBlendFactor", VegetationWindBlendFactor);
+
+                    // Local wind parameters (used when mode != Global)
+                    sh.SetFloat("u_WindStrength_Local", VegetationWindStrength);
+                    sh.SetVec2("u_WindDirection_Local", new OpenTK.Mathematics.Vector2(
+                        VegetationWindDirection[0], VegetationWindDirection[1]));
+                    sh.SetFloat("u_WindSpeed_Local", VegetationWindSpeed);
+                    sh.SetFloat("u_WindGustiness_Local", VegetationWindGustiness);
+
+                    // Advanced wind parameters (branches, trunk, leaves)
+                    sh.SetFloat("u_BranchAmplitude_Local", VegetationBranchAmplitude);
+                    sh.SetFloat("u_BranchSpeed_Local", VegetationBranchSpeed);
+                    sh.SetFloat("u_BranchTurbulence_Local", VegetationBranchTurbulence);
+                    sh.SetFloat("u_TrunkStiffness_Local", VegetationTrunkStiffness);
+                    sh.SetFloat("u_TrunkBendAmount_Local", VegetationTrunkBendAmount);
+                    sh.SetFloat("u_LeafFlutter_Local", VegetationLeafFlutter);
+                    sh.SetFloat("u_LeafFlutterSpeed_Local", VegetationLeafFlutterSpeed);
+
+                    // CRITICAL: Bind GLOBAL wind parameters from WeatherComponent
+                    // These are used when WindMode = 0 (Global) or 2 (Blend)
+                    try
+                    {
+                        var wm = Engine.Systems.WeatherManager.GetCurrentWeather();
+                        if (wm != null)
+                        {
+                            // Primary wind parameters
+                            sh.SetFloat("u_WindStrength", wm.WindStrength);
+                            sh.SetVec2("u_WindDirection", new OpenTK.Mathematics.Vector2(wm.GetWindDirection().X, wm.GetWindDirection().Y));
+                            sh.SetFloat("u_WindSpeed", wm.WindSpeed);
+                            sh.SetFloat("u_WindGustiness", wm.WindGustiness);
+
+                            // Advanced wind parameters
+                            sh.SetFloat("u_BranchAmplitude", wm.BranchAmplitude);
+                            sh.SetFloat("u_BranchSpeed", wm.BranchSpeed);
+                            sh.SetFloat("u_BranchTurbulence", wm.BranchTurbulence);
+                            sh.SetFloat("u_TrunkStiffness", wm.TrunkStiffness);
+                            sh.SetFloat("u_TrunkBendAmount", wm.TrunkBendAmount);
+                            sh.SetFloat("u_LeafFlutter", wm.LeafFlutter);
+                            sh.SetFloat("u_LeafFlutterSpeed", wm.LeafFlutterSpeed);
+
+                            // Weather effects
+                            sh.SetFloat("u_RainIntensity", wm.RainIntensity);
+                            sh.SetFloat("u_SnowAccumulation", wm.SnowAccumulation);
+                        }
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] Error binding VegetationForward uniforms: {ex.Message}"); } catch { }
+                }
+            }
+
+            // Set time uniform for all shaders that need animation (Water, Vegetation, BlackHole, etc.)
+            // NOTE: We use u_Time (lowercase) not uTime (Global UBO) because shadow shaders expect u_Time
             try
             {
                 sh.SetFloat("u_Time", time);

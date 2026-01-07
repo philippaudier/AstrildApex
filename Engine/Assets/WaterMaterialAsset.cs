@@ -12,6 +12,13 @@ namespace Engine.Assets
         public float[] DeepWaterColor { get; set; } = new float[] { 0.0f, 0.1f, 0.3f, 1.0f };  // Deep water color (RGBA)
         public float Transparency { get; set; } = 0.3f;                                        // Overall transparency (0-1)
 
+        // === GLOBAL/LOCAL/BLEND WAVE SYSTEM ===
+        // 0 = Global (wind from WeatherComponent influences waves)
+        // 1 = Local (material-specific wave parameters)
+        // 2 = Blend (mix between Local and Global)
+        public int WaveMode { get; set; } = 0;                 // Wave control mode (Global/Local/Blend)
+        public float WaveBlendFactor { get; set; } = 1.0f;     // Blend factor (0 = local, 1 = global) - used when WaveMode = 2
+
         // === PHASE 1 & 6: Wave Animation Parameters ===
         public float WaveSpeed { get; set; } = 1.0f;           // Wave animation speed
         public float WaveAmplitude { get; set; } = 0.1f;       // Wave displacement height (vertex displacement)

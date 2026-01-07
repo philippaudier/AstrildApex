@@ -1,5 +1,6 @@
 using System;
 using OpenTK.Mathematics;
+using Engine.Rendering;
 
 namespace Engine.Components
 {
@@ -61,7 +62,7 @@ namespace Engine.Components
         /// <summary>
         /// Update time and linked systems. Called by engine update loop.
         /// </summary>
-        public void Update(float deltaTime)
+        public new void Update(float deltaTime)
         {
             if (!AutoAdvance) return;
 
@@ -220,6 +221,23 @@ namespace Engine.Components
         /// </summary>
         private void UpdateEnvironmentSettings()
         {
+            // Auto-detect EnvironmentSettings entity if not set
+            if (EnvironmentEntity == null && Entity?.Scene != null)
+            {
+                try
+                {
+                    foreach (var e in Entity.Scene.Entities)
+                    {
+                        if (e.HasComponent<EnvironmentSettings>())
+                        {
+                            EnvironmentEntity = e;
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
             if (EnvironmentEntity == null) return;
 
             var envSettings = EnvironmentEntity.GetComponent<EnvironmentSettings>();
@@ -250,6 +268,23 @@ namespace Engine.Components
         /// </summary>
         private void UpdateGlobalEffects()
         {
+            // Auto-detect GlobalEffects entity if not set
+            if (GlobalEffectsEntity == null && Entity?.Scene != null)
+            {
+                try
+                {
+                    foreach (var e in Entity.Scene.Entities)
+                    {
+                        if (e.HasComponent<GlobalEffects>())
+                        {
+                            GlobalEffectsEntity = e;
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
             if (GlobalEffectsEntity == null) return;
 
             var globalEffects = GlobalEffectsEntity.GetComponent<GlobalEffects>();

@@ -259,6 +259,24 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\motionblur.frag</Link>
     </None>
+    <!-- Volumetric Fog Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\volumetric_fog.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\volumetric_fog.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\volumetric_fog.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\volumetric_fog.frag</Link>
+    </None>
+    <!-- Color Grading Shaders -->
+    <None Update="Rendering\Shaders\PostProcess\color_grading.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\color_grading.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\PostProcess\color_grading.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\PostProcess\color_grading.frag</Link>
+    </None>
     <None Update="Rendering\Shaders\PostProcess\Blit.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\PostProcess\Blit.vert</Link>

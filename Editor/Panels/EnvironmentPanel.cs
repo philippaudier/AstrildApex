@@ -113,18 +113,19 @@ namespace Editor.Panels
             {
                 ImGui.Indent();
                 
-                var newSun = DrawLightAssignment(scene, "Sun Light", env.SunLight, LightType.Directional);
-                if (newSun != env.SunLight)
+                // New unified celestial body system
+                var newMainLight = DrawLightAssignment(scene, "Main Directional Light (Sun/Moon)", env.MainDirectionalLight, LightType.Directional);
+                if (newMainLight != env.MainDirectionalLight)
                 {
-                    env.SunLight = newSun;
+                    env.MainDirectionalLight = newMainLight;
                     Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                 }
 
-                var newMoon = DrawLightAssignment(scene, "Moon Light", env.MoonLight, LightType.Directional);
-                if (newMoon != env.MoonLight)
+                ImGui.SameLine();
+                ImGui.TextDisabled("(?)");
+                if (ImGui.IsItemHovered())
                 {
-                    env.MoonLight = newMoon;
-                    Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    ImGui.SetTooltip("Unified system: ONE light blends between sun (day) and moon (night).\nConfigure sun/moon colors in EnvironmentSettings inspector.");
                 }
                 
                 // Time of day

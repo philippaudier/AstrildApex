@@ -304,39 +304,77 @@ namespace Editor.Rendering
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
         private struct GlobalUniforms
         {
+            // === CAMERA & TRANSFORMS ===
             public Matrix4 ViewMatrix;
             public Matrix4 ProjectionMatrix;
             public Matrix4 ViewProjectionMatrix;
             public Vector3 CameraPosition; private float _pad1;
-            
-            // Directional Light (main sun)
+
+            // === DIRECTIONAL LIGHT (Sun/Moon) ===
             public Vector3 DirLightDirection;  private float _pad2;
             public Vector3 DirLightColor;      public float DirLightIntensity;
 
-            // Point Lights (max 4) - MOVED to match shader layout
+            // === POINT LIGHTS (max 4) ===
             public int PointLightCount; private float _pad3; private float _pad4; private float _pad5;
-            public Vector4 PointLightPos0; public Vector4 PointLightColor0;  // pos.xyz + range, color.rgb + intensity
+            public Vector4 PointLightPos0; public Vector4 PointLightColor0;
             public Vector4 PointLightPos1; public Vector4 PointLightColor1;
             public Vector4 PointLightPos2; public Vector4 PointLightColor2;
             public Vector4 PointLightPos3; public Vector4 PointLightColor3;
-            
-            // Spot Lights (max 2 for now)
+
+            // === SPOT LIGHTS (max 2) ===
             public int SpotLightCount; private float _pad6; private float _pad7; private float _pad8;
             public Vector4 SpotLightPos0; public Vector4 SpotLightDir0; public Vector4 SpotLightColor0; public float SpotLightAngle0; public float SpotLightInnerAngle0; private float _pad9; private float _pad10;
             public Vector4 SpotLightPos1; public Vector4 SpotLightDir1; public Vector4 SpotLightColor1; public float SpotLightAngle1; public float SpotLightInnerAngle1; private float _pad11; private float _pad12;
 
-            // Ambient / skybox tint - MOVED to end to match shader layout
+            // === AMBIENT & SKYBOX ===
             public Vector3 AmbientColor; public float AmbientIntensity;
             public Vector3 SkyboxTint; public float SkyboxExposure;
 
-            // Fog settings - MOVED to end to match shader layout
-            public int FogEnabled; private float _pad13; private float _pad14; private float _pad15;
+            // === FOG (from WeatherComponent) ===
+            public int FogEnabled; public float FogDensity; private float _pad13; private float _pad14;
             public Vector3 FogColor; public float FogStart;
-            public float FogEnd; private Vector3 _pad16;
+            public float FogEnd; private Vector3 _pad15;
 
-            // Clipping plane for water reflections
-            public float ClipPlaneEnabled; private float _pad17; private float _pad18; private float _pad19;
-            public Vector4 ClipPlane; // plane equation: normal.xyz, d
+            // === CLIP PLANE ===
+            public float ClipPlaneEnabled; private float _pad16; private float _pad17; private float _pad18;
+            public Vector4 ClipPlane;
+
+            // === TIME & WEATHER SYSTEM ===
+
+            // Time
+            public float Time;
+            public float TimeOfDay;
+            public float DayNightBlend;
+            public float GoldenHourBlend;
+
+            // Wind parameters
+            public Vector2 WindDirection;
+            public float WindStrength;
+            public float WindSpeed;
+            public float WindGustiness;
+            private float _pad19; private float _pad20; private float _pad21;
+
+            // Advanced wind (vegetation)
+            public float BranchAmplitude;
+            public float BranchSpeed;
+            public float BranchTurbulence;
+            public float TrunkStiffness;
+            public float TrunkBendAmount;
+            public float LeafFlutter;
+            public float LeafFlutterSpeed;
+            private float _pad22;
+
+            // Precipitation
+            public float RainIntensity;
+            public float SnowAccumulation;
+            public float SnowIntensity;
+            public float Wetness;
+
+            // Snow parameters
+            public float SnowSlopeMin;
+            public float SnowSlopeMax;
+            public float SnowSparkle;
+            public float SnowDisplacement;
         }
 
         private struct RenderItem
@@ -360,6 +398,11 @@ namespace Editor.Rendering
             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Constructor: instances={_instanceCount}, this={this.GetHashCode()}"); } catch { }
 
             InitializeUBOs();
+
+            // CRITICAL: Clear shader cache to force recompilation with updated Global UBO layout
+            // This ensures shaders use the correct std140 layout for uTime, uWindStrength, etc.
+            try { Engine.Rendering.ShaderLibrary.ClearCache(); } catch { }
+
             // Initialize grid visibility from persisted settings
             try { _showGrid = Editor.State.EditorSettings.ShowGrid; } catch { _showGrid = true; }
             // Load persisted camera near/far from settings
@@ -662,9 +705,22 @@ namespace Editor.Rendering
         {
             Console.WriteLine($"[ViewportRenderer] ⚡ OnTerrainVegetationRegenerated CALLED for terrain mode={terrain.Mode}");
             
-            // Clear auto-init flag when vegetation is manually regenerated
-            // This allows re-initialization if batches were cleared
-            _autoInitAttempted.Remove(terrain);
+            // CRITICAL: Guard against recursion - if we're already updating vegetation, skip
+            // This prevents infinite loops when ApplyLiveMaterialUpdate triggers OnTerrainVegetationRegenerated
+            // which loads materials, which can trigger another ApplyLiveMaterialUpdate
+            if (_isUpdatingVegetation)
+            {
+                Console.WriteLine("[ViewportRenderer] ⚠️ OnTerrainVegetationRegenerated: Recursion detected, skipping");
+                return;
+            }
+            
+            try
+            {
+                _isUpdatingVegetation = true;
+            
+                // Clear auto-init flag when vegetation is manually regenerated
+                // This allows re-initialization if batches were cleared
+                _autoInitAttempted.Remove(terrain);
 
             // CRITICAL: Update WeatherManager whenever vegetation is regenerated
             // This ensures wind parameters are synchronized before rendering new vegetation
@@ -855,6 +911,11 @@ namespace Editor.Rendering
                 _vegetationRenderer.RefreshAllBatches();
             }
             catch { }
+            }
+            finally
+            {
+                _isUpdatingVegetation = false;
+            }
         }
 
         /// <summary>
@@ -1096,6 +1157,9 @@ namespace Editor.Rendering
         }
 
         private bool _subscribedToMaterialChanges = false;
+        
+        // Guard against infinite recursion when applying material changes triggers vegetation regeneration
+        private bool _isUpdatingVegetation = false;
 
         // === FBO ===
             private int _fbo, _colorTex, _idTex, _depthTex;
@@ -3090,6 +3154,15 @@ void main(){
                             projMatrix.M41, projMatrix.M42, projMatrix.M43, projMatrix.M44
                         );
 
+                        // CRITICAL: Re-upload Global UBO before vegetation rendering
+                        // The UBO was updated with reflection view/proj matrices above (line 2866-2869)
+                        // But Time/Wind parameters are only in Global UBO, so re-upload is essential
+                        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
+                        GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
+                        GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
+                            System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
+                            ref _globalUniforms);
+
                         var windDir = weather.GetWindDirection();
                         var windDirGL = new OpenTK.Mathematics.Vector2(windDir.X, windDir.Y);
                         var camPosGL = new OpenTK.Mathematics.Vector3(
@@ -3533,19 +3606,35 @@ void main(){
 
         public void RenderScene()
         {
-            // Update weather system (editor-time weather updates ONLY)
-            // In Play Mode, PlayMode.UpdateSimulation() handles weather updates
+            // Update time system FIRST (drives TimeOfDay for all systems)
+            // In Play Mode, PlayMode.UpdateSimulation() handles time updates
             if (!PlayMode.IsPlaying)
             {
                 try
                 {
                     float deltaTime = (float)_weatherDeltaStopwatch.Elapsed.TotalSeconds;
                     _weatherDeltaStopwatch.Restart();
+                    
+                    // Update TimeComponent first
+                    if (_scene != null)
+                    {
+                        foreach (var entity in _scene.Entities)
+                        {
+                            var timeComp = entity.GetComponent<Engine.Components.TimeComponent>();
+                            if (timeComp != null && entity.Active)
+                            {
+                                timeComp.Update(deltaTime);
+                                break; // Only one TimeComponent per scene
+                            }
+                        }
+                    }
+                    
+                    // Then update weather system (depends on time)
                     _weatherSystem.Update(_scene, deltaTime);
                 }
                 catch (System.Exception ex)
                 {
-                    System.Console.WriteLine($"[ViewportRenderer] Weather system error: {ex.Message}");
+                    System.Console.WriteLine($"[ViewportRenderer] Time/Weather system error: {ex.Message}");
                 }
             }
 
@@ -3823,10 +3912,18 @@ void main(){
                         }
                     }
 
-                    // DEBUG: Log wind parameters every 60 frames (verbose-only)
+                    // DEBUG: Log wind parameters every 60 frames (always log to diagnose animation freeze)
                     if ((_frameCounter++ % 60) == 0)
                     {
-                        try { if (Engine.Utils.DebugLogger.EnableVerbose) LogManager.LogVerbose($"Vegetation render: time={currentTime:F2}s, windStr={weather.WindStrength:F2}, windSpeed={weather.WindSpeed:F2}, windDir=({windDir.X:F2}, {windDir.Y:F2}), branchAmp={weather.BranchAmplitude:F2}, trunkStiff={weather.TrunkStiffness:F2}", "ViewportRenderer"); } catch { }
+                        try 
+                        { 
+                            LogManager.LogInfo($"[ANIMATION DEBUG] Frame={_frameCounter}, Time={currentTime:F2}s, WindStr={weather.WindStrength:F3}, WindSpeed={weather.WindSpeed:F3}, BranchAmp={weather.BranchAmplitude:F3}, WindDir=({windDir.X:F2},{windDir.Y:F2})", "ViewportRenderer");
+                            if (weather.WindStrength < 0.01f)
+                            {
+                                LogManager.LogWarning("WindStrength is near ZERO! Set WindStrength > 0.3 in WeatherComponent to see animation.", "ViewportRenderer");
+                            }
+                        } 
+                        catch { }
                     }
 
                     // CRITICAL: Ensure Global UBO is bound AND uploaded before vegetation rendering
@@ -5633,6 +5730,20 @@ void main(){
             _globalUniforms.ViewProjectionMatrix = _viewGL * _projGL;
             _globalUniforms.CameraPosition = CameraPosition();
 
+            // CRITICAL: Update time for animations (vegetation, water, etc.)
+            _globalUniforms.Time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+
+            // Update TimeOfDay from TimeComponent (if present in scene)
+            if (_scene != null)
+            {
+                var timeComp = _scene.Entities.FirstOrDefault(e => e.HasComponent<Engine.Components.TimeComponent>())
+                    ?.GetComponent<Engine.Components.TimeComponent>();
+                if (timeComp != null)
+                {
+                    _globalUniforms.TimeOfDay = timeComp.TimeOfDay;
+                }
+            }
+            
             // CRITICAL: Reset clipping plane to disabled by default
             // Only RenderReflectionPass should enable it temporarily
             _globalUniforms.ClipPlaneEnabled = 0;
@@ -5672,6 +5783,39 @@ void main(){
             _globalUniforms.FogColor = lighting.FogColor;
             _globalUniforms.FogStart = lighting.FogStart;
             _globalUniforms.FogEnd = lighting.FogEnd;
+            
+            // CRITICAL: Update weather parameters from WeatherManager
+            var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+            _globalUniforms.WindDirection = new OpenTK.Mathematics.Vector2(weather.WindDirectionX, weather.WindDirectionZ);
+            _globalUniforms.WindStrength = weather.WindStrength;
+            _globalUniforms.WindSpeed = weather.WindSpeed;
+            _globalUniforms.WindGustiness = weather.WindGustiness;
+            
+            // Advanced wind (vegetation)
+            _globalUniforms.BranchAmplitude = weather.BranchAmplitude;
+            _globalUniforms.BranchSpeed = weather.BranchSpeed;
+            _globalUniforms.BranchTurbulence = weather.BranchTurbulence;
+            _globalUniforms.TrunkStiffness = weather.TrunkStiffness;
+            _globalUniforms.TrunkBendAmount = weather.TrunkBendAmount;
+            _globalUniforms.LeafFlutter = weather.LeafFlutter;
+            _globalUniforms.LeafFlutterSpeed = weather.LeafFlutterSpeed;
+            
+            // Precipitation
+            _globalUniforms.RainIntensity = weather.RainIntensity;
+            _globalUniforms.SnowIntensity = weather.SnowIntensity;
+            _globalUniforms.SnowAccumulation = weather.SnowAccumulation;
+            _globalUniforms.Wetness = weather.Wetness;
+            
+            // DEBUG: Log UBO values every 60 frames to verify they're being set
+            if ((_frameCounter % 60) == 0)
+            {
+                try
+                {
+                    Console.WriteLine($"[UBO] Time={_globalUniforms.Time:F2}, WindStr={_globalUniforms.WindStrength:F3}, WindSpeed={_globalUniforms.WindSpeed:F2}, BranchAmp={_globalUniforms.BranchAmplitude:F2}");
+                    LogManager.LogInfo($"[UBO DEBUG] Time={_globalUniforms.Time:F2}, TimeOfDay={_globalUniforms.TimeOfDay:F2}, WindStr={_globalUniforms.WindStrength:F3}, BranchAmp={_globalUniforms.BranchAmplitude:F2}", "ViewportRenderer");
+                }
+                catch { }
+            }
             
             // Debug logging for UBO values (also persist to astrild_debug.log)
             try
@@ -5780,12 +5924,13 @@ void main(){
                 }
             }
             
-            // ✅ Rebind notre UBO sur le binding 0 AVANT d’écrire/puis dessiner
+            // ✅ Rebind notre UBO sur le binding 0 AVANT d'écrire/puis dessiner
             GL.BindBufferBase(BufferRangeTarget.UniformBuffer, 0, _globalUBO);
             GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
             GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
                 System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(),
                 ref _globalUniforms);
+
         }
         
         /* private void RenderBatches()
@@ -8446,6 +8591,24 @@ void main(){
             // Set lighting state for skybox renderer
             Engine.Rendering.SkyboxRenderer.CurrentLightingState = L;
 
+            // Get TimeComponent, WeatherComponent, and EnvironmentSettings for global parameters
+            TimeComponent? timeComponent = null;
+            WeatherComponent? weatherComponent = null;
+            EnvironmentSettings? envSettings = null;
+
+            foreach (var entity in _scene.Entities.Where(e => e.Active))
+            {
+                if (timeComponent == null)
+                    timeComponent = entity.GetComponent<TimeComponent>();
+                if (weatherComponent == null)
+                    weatherComponent = entity.GetComponent<WeatherComponent>();
+                if (envSettings == null)
+                    envSettings = entity.GetComponent<EnvironmentSettings>();
+
+                if (timeComponent != null && weatherComponent != null && envSettings != null)
+                    break;
+            }
+
             // Global dir light via UBO existant
             var globals = new GlobalUniforms
             {
@@ -8453,8 +8616,105 @@ void main(){
                 ProjectionMatrix = _projGL,
                 ViewProjectionMatrix = _viewGL * _projGL,
                 CameraPosition = CameraPosition(),
-                DirLightDirection = L.HasDirectional ? L.DirDirection : new Vector3(0,1,0) // direction réelle (négation gérée dans le shader)
+                DirLightDirection = L.HasDirectional ? L.DirDirection : new Vector3(0,1,0),
+                DirLightColor = L.HasDirectional ? L.DirColor : new Vector3(1,1,1),
+                DirLightIntensity = L.HasDirectional ? L.DirIntensity : 1.0f,
+                PointLightCount = 0,
+                SpotLightCount = 0,
+                AmbientColor = L.AmbientColor,
+                AmbientIntensity = L.AmbientIntensity,
+                SkyboxTint = new Vector3(1,1,1),
+                SkyboxExposure = 1.0f,
+                FogEnabled = 0,
+                FogDensity = 0.0f,
+                FogColor = new Vector3(0.7f, 0.7f, 0.8f),
+                FogStart = 0.0f,
+                FogEnd = 300.0f,
+                ClipPlaneEnabled = 0,
+
+                // Time & Weather (defaults)
+                Time = (float)System.Diagnostics.Stopwatch.GetTimestamp() / System.Diagnostics.Stopwatch.Frequency,
+                TimeOfDay = 12.0f,
+                DayNightBlend = 1.0f,
+                GoldenHourBlend = 0.0f,
+                WindDirection = new Vector2(1, 0),
+                WindStrength = 0.0f,
+                WindSpeed = 1.0f,
+                WindGustiness = 0.0f,
+                BranchAmplitude = 2.5f,
+                BranchSpeed = 4.0f,
+                BranchTurbulence = 0.8f,
+                TrunkStiffness = 0.85f,
+                TrunkBendAmount = 0.3f,
+                LeafFlutter = 0.6f,
+                LeafFlutterSpeed = 8.0f,
+                RainIntensity = 0.0f,
+                SnowAccumulation = 0.0f,
+                SnowIntensity = 0.0f,
+                Wetness = 0.0f,
+                SnowSlopeMin = 0.0f,
+                SnowSlopeMax = 45.0f,
+                SnowSparkle = 0.5f,
+                SnowDisplacement = 0.5f
             };
+
+            // Override with TimeComponent data if present
+            if (timeComponent != null)
+            {
+                globals.TimeOfDay = timeComponent.TimeOfDay;
+                globals.DayNightBlend = timeComponent.GetDayNightBlend();
+                globals.GoldenHourBlend = timeComponent.GetGoldenHourBlend();
+            }
+
+            // Override with WeatherComponent data if present
+            if (weatherComponent != null)
+            {
+                var windDir = weatherComponent.GetWindDirection();
+                globals.WindDirection = new Vector2(windDir.X, windDir.Y);
+                globals.WindStrength = weatherComponent.WindStrength;
+                globals.WindSpeed = weatherComponent.WindSpeed;
+                globals.WindGustiness = weatherComponent.WindGustiness;
+                globals.BranchAmplitude = weatherComponent.BranchAmplitude;
+                globals.BranchSpeed = weatherComponent.BranchSpeed;
+                globals.BranchTurbulence = weatherComponent.BranchTurbulence;
+                globals.TrunkStiffness = weatherComponent.TrunkStiffness;
+                globals.TrunkBendAmount = weatherComponent.TrunkBendAmount;
+                globals.LeafFlutter = weatherComponent.LeafFlutter;
+                globals.LeafFlutterSpeed = weatherComponent.LeafFlutterSpeed;
+                globals.RainIntensity = weatherComponent.RainIntensity;
+                globals.SnowAccumulation = weatherComponent.SnowAccumulation;
+                globals.SnowIntensity = weatherComponent.SnowIntensity;
+                globals.Wetness = weatherComponent.Wetness;
+                globals.SnowSlopeMin = weatherComponent.SnowSlopeMin;
+                globals.SnowSlopeMax = weatherComponent.SnowSlopeMax;
+                globals.SnowSparkle = weatherComponent.SnowSparkle;
+                globals.SnowDisplacement = weatherComponent.SnowDisplacement;
+
+                if (weatherComponent.FogEnabled)
+                {
+                    globals.FogEnabled = 1;
+                    globals.FogDensity = weatherComponent.FogDensity;
+                    globals.FogColor = new Vector3(
+                        weatherComponent.FogColor.X,
+                        weatherComponent.FogColor.Y,
+                        weatherComponent.FogColor.Z
+                    );
+                    globals.FogStart = weatherComponent.FogStart;
+                    globals.FogEnd = weatherComponent.FogEnd;
+                }
+            }
+
+            // Override with EnvironmentSettings for skybox/ambient
+            if (envSettings != null)
+            {
+                globals.SkyboxTint = new Vector3(
+                    envSettings.SkyboxTint.X,
+                    envSettings.SkyboxTint.Y,
+                    envSettings.SkyboxTint.Z
+                );
+                globals.SkyboxExposure = envSettings.SkyboxExposure;
+            }
+
             GL.BindBuffer(BufferTarget.UniformBuffer, _globalUBO);
             GL.BufferSubData(BufferTarget.UniformBuffer, IntPtr.Zero,
                 System.Runtime.InteropServices.Marshal.SizeOf<GlobalUniforms>(), ref globals);

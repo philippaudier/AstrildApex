@@ -802,6 +802,9 @@ namespace Editor.Panels
                     // Use new terrain inspector
                     Editor.Inspector.TerrainInspector.Draw(entity, tg);
                     break;
+                case Engine.Components.TimeComponent time:
+                    Editor.Inspector.TimeInspector.Draw(time);
+                    break;
                 case Engine.Components.WeatherComponent weather:
                     Editor.Inspector.WeatherInspector.Draw(weather);
                     break;
@@ -938,6 +941,12 @@ namespace Editor.Panels
                 // Environment
                 if (ImGui.BeginMenu("Environment"))
                 {
+                    if (ImGui.MenuItem("Time") && !entity.HasComponent<Engine.Components.TimeComponent>())
+                    {
+                        entity.AddComponent<Engine.Components.TimeComponent>();
+                        InvalidateComponentCache();
+                        ImGui.CloseCurrentPopup();
+                    }
                     if (ImGui.MenuItem("Environment Settings") && !entity.HasComponent<EnvironmentSettings>())
                     {
                         entity.AddComponent<EnvironmentSettings>();

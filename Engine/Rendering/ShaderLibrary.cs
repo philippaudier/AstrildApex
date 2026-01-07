@@ -102,11 +102,45 @@ namespace Engine.Rendering
             GetShaderByName(name);
         }
 
+        /// <summary>
+        /// Clear all cached shaders and force recompilation on next use.
+        /// Call this when Global UBO layout changes or shader source files are modified.
+        /// </summary>
+        public static void ClearCache()
+        {
+            foreach (var kvp in _cache)
+            {
+                if (kvp.Value != null && kvp.Value.Handle > 0)
+                {
+                    try { GL.DeleteProgram(kvp.Value.Handle); } catch { }
+                }
+            }
+            _cache.Clear();
+        }
+
         public static ShaderProgram? GetShaderByName(string? name)
         {
             EnsureInitialized();
             if (string.IsNullOrEmpty(name)) return null;
-            if (_cache.TryGetValue(name, out var prog)) return prog;
+            if (_cache.TryGetValue(name, out var prog))
+            {
+                // CRITICAL FIX: Re-bind Global UBO even for cached shaders
+                // The UBO might have been created after shader compilation
+                if (prog != null)
+                {
+                    try
+                    {
+                        prog.Use();
+                        int globalBlockIndex = GL.GetUniformBlockIndex(prog.Handle, "Global");
+                        if (globalBlockIndex != -1)
+                        {
+                            GL.UniformBlockBinding(prog.Handle, globalBlockIndex, 0);
+                        }
+                    }
+                    catch { }
+                }
+                return prog;
+            }
             if (!_pairs.TryGetValue(name, out var paths))
             {
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Shader '{name}' not found. Available: {string.Join(", ", _pairs.Keys)}"); } catch { }
@@ -124,7 +158,10 @@ namespace Engine.Rendering
                 {
                     p.Use();
                     int globalBlockIndex = GL.GetUniformBlockIndex(p.Handle, "Global");
-                    if (globalBlockIndex != -1) GL.UniformBlockBinding(p.Handle, globalBlockIndex, 0);
+                    if (globalBlockIndex != -1)
+                    {
+                        GL.UniformBlockBinding(p.Handle, globalBlockIndex, 0);
+                    }
                 }
                 catch { }
                 _cache[name] = p;

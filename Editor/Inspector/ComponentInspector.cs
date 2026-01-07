@@ -51,6 +51,8 @@ namespace Editor.Inspector
                     case MeshRendererComponent meshRenderer: MeshRendererInspector.Draw(meshRenderer); break;
                     case Engine.Components.Terrain terrain: TerrainInspector.Draw(entity, terrain); break;
                     case Engine.Components.WeatherComponent weather: WeatherInspector.Draw(weather); break;
+                    case Engine.Components.TimeComponent time: TimeInspector.Draw(time); break;
+                    case Engine.Components.EnvironmentSettings env: EnvironmentInspector.Draw(env); break;
                     case Engine.Components.ParticleSystem particleSystem: ParticleSystemInspector.Draw(particleSystem); break;
                     case Engine.Audio.Components.AudioSource audioSource: AudioSourceInspector.Draw(audioSource); break;
                     case Engine.Audio.Components.AudioListenerComponent audioListener: AudioListenerInspector.Draw(audioListener); break;
