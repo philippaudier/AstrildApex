@@ -44,6 +44,9 @@ namespace Engine.Rendering.PostProcess
         private int _uNoiseStrength = -1;
         private int _uTime = -1;
 
+        // Screen resolution for depth analysis
+        private int _uScreenSize = -1;
+
         public void Initialize()
         {
             try
@@ -98,6 +101,8 @@ namespace Engine.Rendering.PostProcess
                 _uNoiseSpeed = GL.GetUniformLocation(_shader.Handle, "u_NoiseSpeed");
                 _uNoiseStrength = GL.GetUniformLocation(_shader.Handle, "u_NoiseStrength");
                 _uTime = GL.GetUniformLocation(_shader.Handle, "u_Time");
+                
+                _uScreenSize = GL.GetUniformLocation(_shader.Handle, "u_ScreenSize");
             }
         }
 
@@ -109,7 +114,16 @@ namespace Engine.Rendering.PostProcess
             }
 
             if (_shader == null || !(effect is VolumetricFogEffect fog))
+            {
+                try { Engine.Utils.DebugLogger.Log("[VolumetricFog] Shader not initialized or effect type mismatch"); } catch { }
                 return;
+            }
+
+            // Debug: Check if depth texture is valid
+            if (context.DepthTexture == 0)
+            {
+                try { Engine.Utils.DebugLogger.Log("[VolumetricFog] WARNING: Depth texture is 0!"); } catch { }
+            }
 
             _shader.Use();
 
@@ -187,6 +201,15 @@ namespace Engine.Rendering.PostProcess
                 // For now, use a simple accumulated time based on system time
                 float time = (float)DateTime.Now.TimeOfDay.TotalSeconds;
                 GL.Uniform1(_uTime, time);
+            }
+
+            // Screen size for depth buffer analysis (valley detection)
+            if (_uScreenSize >= 0)
+            {
+                // Get screen size from context or default to reasonable size
+                float width = context.Width > 0 ? context.Width : 1920;
+                float height = context.Height > 0 ? context.Height : 1080;
+                GL.Uniform2(_uScreenSize, width, height);
             }
 
             // Fullscreen triangle (project convention)

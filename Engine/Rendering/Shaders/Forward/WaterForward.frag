@@ -359,6 +359,7 @@ void main()
     // Implementation based on Rastertek Tutorial (https://www.rastertek.com/gl4linuxtut30.html)
     // Standard OpenGL planar reflection approach
     vec3 reflectionColor = vec3(0.0);
+    float edgeFade = 1.0; // Default to full reflection, will be calculated if planar reflections enabled
 
     if (u_UsePlanarReflections > 0)
     {
@@ -375,12 +376,28 @@ void main()
         if (u_FlipReflectionY != 0)
             reflectionUV.y = 1.0 - reflectionUV.y;
 
-        // Apply simple distortion to reflection UVs using the water surface normals
-        // This uses the existing refraction strength parameter to perturb the lookup
-        // and simulate small ripples distorting the reflected image.
-        // Scale down the effect so it's subtle by default.
-        float distortionScale = 0.075; // tweakable constant
-        reflectionUV += tangentNormal.xy * u_RefractionStrength * distortionScale;
+        // Apply distortion to reflection UVs
+        float distortionScale = 0.075;
+        vec2 distortedUV = reflectionUV + tangentNormal.xy * u_RefractionStrength * distortionScale;
+
+        // Calculate smooth edge fade based on distance to texture boundaries
+        // Allow significant margin outside [0,1] before fading to IBL
+        // This prevents skybox from disappearing when looking at extreme angles
+        float fadeMargin = 0.3; // Allow UVs to go 30% outside [0,1] before fading
+
+        // Calculate fade based on how far outside the valid range we are
+        // Inside [0,1] = edgeFade 1.0
+        // At [-0.3, 1.3] = edgeFade 0.0
+        vec2 fadeFactors = vec2(
+            smoothstep(-fadeMargin, 0.0, distortedUV.x) * smoothstep(1.0 + fadeMargin, 1.0, distortedUV.x),
+            smoothstep(-fadeMargin, 0.0, distortedUV.y) * smoothstep(1.0 + fadeMargin, 1.0, distortedUV.y)
+        );
+
+        // Combined fade (both axes)
+        edgeFade = fadeFactors.x * fadeFactors.y;
+
+        // Clamp UVs for sampling (will sample edge/repeated if out of bounds)
+        reflectionUV = clamp(distortedUV, 0.0, 1.0);
 
         // Sample reflection texture with optional blur
         if (u_ReflectionBlur > 0.001)
@@ -411,7 +428,7 @@ void main()
 
     // === Combine all lighting ===
     vec3 ambient = diffuse * ssao;
-    vec3 finalColor = ambient + specular + directLight * baseColor + directSpecular;
+    vec3 finalColor = ambient + specular + directLight * baseColor;
 
     // Add caustics (additive blending for light effect)
     finalColor += caustics;
@@ -436,12 +453,31 @@ void main()
         // Reflection contribution (stronger at grazing angles)
         if (u_UsePlanarReflections > 0)
         {
-            // Blend planar reflection with the existing color based on fresnel
+            // Add sun specular to reflection BEFORE mixing
+            // This ensures the sun is visible in the water reflection
+            vec3 reflectionWithSun = reflectionColor + directSpecular;
+
+            // When edgeFade is low (near texture boundaries), fall back to IBL skybox
+            // This ensures skybox is always visible even when planar reflection UVs go out of bounds
+            vec3 iblReflection = samplePrefilteredEnv(R, roughness);
+            vec3 finalReflection = mix(iblReflection, reflectionWithSun, edgeFade);
+
+            // Blend reflection with the existing color based on fresnel
             // At grazing angles (high fresnel), more reflection visible
             // At steep angles (low fresnel), less reflection visible
-            float reflectionMix = saturate(fresnel * 0.8 + 0.2); // Always show some reflection
-            finalColor = mix(finalColor, reflectionColor, reflectionMix);
+            float reflectionMix = saturate(fresnel * 0.8 + 0.2);
+            finalColor = mix(finalColor, finalReflection, reflectionMix);
         }
+        else
+        {
+            // If no planar reflections, add sun specular directly
+            finalColor += directSpecular;
+        }
+    }
+    else
+    {
+        // No reflections/refractions - add sun specular directly
+        finalColor += directSpecular;
     }
 
     // === Fog ===

@@ -3237,6 +3237,26 @@ void main(){
                 {
                     try
                     {
+                        // CRITICAL: Completely disable OpenGL clip distance for skybox
+                                // Skybox is at infinity and should NEVER be clipped by water plane
+                                // The clip plane can cut the skybox geometry incorrectly at extreme camera angles
+                                bool wasClipDistanceEnabled = GL.IsEnabled(EnableCap.ClipDistance0);
+                                // Also temporarily disable face culling here: the reflection pass flips
+                                // the front-face winding (GL.FrontFace = CW) which will cull the inside
+                                // faces of the skybox cube and make it disappear. Disable culling so
+                                // the skybox always renders correctly, then restore previous state.
+                                bool wasCullEnabled = GL.IsEnabled(EnableCap.CullFace);
+                                int prevFrontFace = GL.GetInteger(GetPName.FrontFace);
+
+                                if (wasClipDistanceEnabled)
+                                {
+                                    GL.Disable(EnableCap.ClipDistance0);
+                                }
+                                if (wasCullEnabled)
+                                {
+                                    GL.Disable(EnableCap.CullFace);
+                                }
+
                         // PERFORMANCE: Use component cache instead of FirstOrDefault + LINQ
                         Engine.Components.EnvironmentSettings? env = null;
                         if (_scene.Cache != null)
@@ -3248,6 +3268,18 @@ void main(){
                         var skyExposure = env?.SkyboxExposure ?? 1.0f;
 
                         _skyboxRenderer.Render(viewMatrix, projMatrix, skyTint, skyExposure);
+
+                        // Restore clip distance and face-culling state
+                        if (wasCullEnabled)
+                        {
+                            GL.Enable(EnableCap.CullFace);
+                            // restore previous front-face direction
+                            GL.FrontFace((FrontFaceDirection)prevFrontFace);
+                        }
+                        if (wasClipDistanceEnabled)
+                        {
+                            GL.Enable(EnableCap.ClipDistance0);
+                        }
                     }
                     catch { }
                 }
@@ -3402,6 +3434,7 @@ void main(){
             // CRITICAL: Use MAIN CAMERA aspect ratio, NOT reflection texture aspect!
             // The reflection texture can be any size, but the frustum must match the main camera
             // to properly cover all visible water surface
+            // Use the SAME FOV as main camera - edge fade in shader handles out-of-bounds UVs
             float mainCameraAspect = _w / Math.Max(1.0f, (float)_h);
             var reflectedProj = CreateProjectionMatrix(mainCameraAspect);
 
