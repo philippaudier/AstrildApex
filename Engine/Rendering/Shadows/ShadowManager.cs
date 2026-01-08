@@ -113,6 +113,11 @@ namespace Engine.Rendering.Shadows
             GL.Enable(EnableCap.DepthTest);
             GL.DepthFunc(DepthFunction.Less);
 
+            // Enable polygon offset (depth bias) to reduce shadow acne and artifacts
+            // This is especially helpful when light is at grazing angles
+            GL.Enable(EnableCap.PolygonOffsetFill);
+            GL.PolygonOffset(2.0f, 4.0f); // Factor and units - adjust if needed
+
             // Enable front-face culling to reduce peter-panning
             // This renders only back faces to the shadow map
             GL.Enable(EnableCap.CullFace);
@@ -125,6 +130,9 @@ namespace Engine.Rendering.Shadows
         public void EndShadowPass()
         {
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            // Disable polygon offset
+            GL.Disable(EnableCap.PolygonOffsetFill);
 
             // Restore back-face culling
             GL.CullFace(TriangleFace.Back);
@@ -142,20 +150,31 @@ namespace Engine.Rendering.Shadows
             // Normalize light direction
             lightDirection = Vector3.Normalize(lightDirection);
 
+            // Calculate proper up vector to avoid gimbal lock when light is nearly vertical
+            Vector3 up = Vector3.UnitY;
+            float verticalDot = Math.Abs(Vector3.Dot(lightDirection, Vector3.UnitY));
+            
+            // If light is nearly vertical (pointing up or down), use a different up vector
+            if (verticalDot > 0.99f)
+            {
+                up = Vector3.UnitZ;
+            }
+
             // Position light far enough to encompass the scene
-            Vector3 lightPos = sceneCenter - lightDirection * sceneRadius * 2.0f;
+            // Use larger distance to ensure terrain edges are covered
+            Vector3 lightPos = sceneCenter - lightDirection * sceneRadius * 3.0f;
 
             // Create view matrix looking from light toward scene center
-            Matrix4 lightView = Matrix4.LookAt(lightPos, sceneCenter, Vector3.UnitY);
+            Matrix4 lightView = Matrix4.LookAt(lightPos, sceneCenter, up);
 
             // Create orthographic projection that encompasses the scene
-            // Use symmetric frustum centered on scene
-            float orthoSize = sceneRadius * 1.5f; // 1.5x for margin
+            // Increase margin to prevent shadow edges/cutoff
+            float orthoSize = sceneRadius * 2.0f; // 2.0x margin for better coverage
             Matrix4 lightProjection = Matrix4.CreateOrthographic(
                 orthoSize * 2.0f,  // width
                 orthoSize * 2.0f,  // height
                 0.1f,              // near plane
-                sceneRadius * 4.0f // far plane
+                sceneRadius * 6.0f // far plane (increased for better depth range)
             );
 
             // Combine view and projection

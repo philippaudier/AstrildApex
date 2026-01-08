@@ -160,9 +160,26 @@ namespace Engine.Rendering.Terrain
             GL.Disable(EnableCap.Blend);
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
-            // Culling ENABLED for terrain - triangles are wound CCW to face upward
-            GL.Enable(EnableCap.CullFace);
-            GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
+
+            // Apply terrain-specific render settings
+            if (terrain.CullMode == Engine.Components.TerrainCullingMode.None)
+            {
+                GL.Disable(EnableCap.CullFace);
+            }
+            else
+            {
+                GL.Enable(EnableCap.CullFace);
+                // Map TerrainCullingMode to OpenTK TriangleFace
+                var triangleFace = terrain.CullMode switch
+                {
+                    Engine.Components.TerrainCullingMode.Back => TriangleFace.Back,
+                    Engine.Components.TerrainCullingMode.Front => TriangleFace.Front,
+                    Engine.Components.TerrainCullingMode.FrontAndBack => TriangleFace.FrontAndBack,
+                    _ => TriangleFace.Back
+                };
+                GL.CullFace(triangleFace);
+            }
+            GL.PolygonMode(TriangleFace.FrontAndBack, terrain.RenderMode);  // Apply render mode from terrain
             
             // Check if debug face coloring is enabled
             bool debugFaceColor = false;

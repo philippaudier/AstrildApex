@@ -137,6 +137,42 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineEdge.frag</Link>
     </None>
+    <None Update="Rendering\Shaders\Effects\SelectionSilhouette.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionSilhouette.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionSilhouette.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionSilhouette.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionBlur.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionBlur.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionBlur.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionBlur.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionComposite.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionComposite.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineStencil.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineStencil.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineStencil.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineStencil.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineExpand.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineExpand.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\SelectionOutlineExpand.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\SelectionOutlineExpand.frag</Link>
+    </None>
     <None Update="Rendering\Shaders\Effects\EdgeDetection.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Effects\EdgeDetection.frag</Link>

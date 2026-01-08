@@ -193,7 +193,9 @@ public class ViewportPanel
 
         if (Renderer != null)
         {
-            ImGui.Image((IntPtr)Renderer.ColorTexture, avail, new Vector2(0, 1), new Vector2(1, 0));
+            int texId = Renderer.ColorTexture;
+            System.Console.WriteLine($"[DEBUG VIEWPORT] About to display texture ID={texId}, size=({avail.X}x{avail.Y})");
+            ImGui.Image((IntPtr)texId, avail, new Vector2(0, 1), new Vector2(1, 0));
 
             // Get image rect after drawing
             itemMin = ImGui.GetItemRectMin();

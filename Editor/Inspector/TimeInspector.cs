@@ -14,29 +14,29 @@ namespace Editor.Inspector
     {
         private static UITheme UI => ThemeManager.UI;
 
-        public static void Draw(TimeComponent time)
+        public static void Draw(Engine.Scene.Entity entity, TimeComponent time)
         {
             if (time == null) return;
 
-            DrawTimeOfDaySection(time);
+            DrawTimeOfDaySection(entity, time);
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
 
-            DrawSeasonSection(time);
+            DrawSeasonSection(entity, time);
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
 
-            DrawCelestialSection(time);
+            DrawCelestialSection(entity, time);
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
 
-            DrawLinkingSection(time);
+            DrawLinkingSection(entity, time);
         }
 
-        private static void DrawTimeOfDaySection(TimeComponent time)
+        private static void DrawTimeOfDaySection(Engine.Scene.Entity entity, TimeComponent time)
         {
             if (ThemedImGui.CollapsingHeader("🕐 Time of Day", ImGuiTreeNodeFlags.DefaultOpen))
             {
@@ -48,7 +48,11 @@ namespace Editor.Inspector
                     speed: 0.1f, min: 0f, max: 24f,
                     tooltip: "Current time of day (0 = midnight, 12 = noon, 24 = midnight)",
                     helpText: "Sunrise: ~6h, Noon: 12h, Sunset: ~18h, Midnight: 0h/24h");
-                time.TimeOfDay = timeOfDay;
+                if (Math.Abs(time.TimeOfDay - timeOfDay) > 0.001f)
+                {
+                    time.TimeOfDay = timeOfDay;
+                    time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene); // Apply to EnvironmentSettings in Edit mode
+                }
 
                 // Quick time presets
                 InspectorWidgets.DisabledLabel("Presets:");
@@ -58,10 +62,10 @@ namespace Editor.Inspector
                     ("Dusk", "18:00 PM"),
                     ("Night", "0:00 AM"));
 
-                if (preset == 0) time.TimeOfDay = 6.0f;  // Dawn
-                else if (preset == 1) time.TimeOfDay = 12.0f; // Noon
-                else if (preset == 2) time.TimeOfDay = 18.0f; // Dusk
-                else if (preset == 3) time.TimeOfDay = 0.0f;  // Midnight
+                if (preset == 0) { time.TimeOfDay = 6.0f; time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene); }
+                else if (preset == 1) { time.TimeOfDay = 12.0f; time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene); }
+                else if (preset == 2) { time.TimeOfDay = 18.0f; time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene); }
+                else if (preset == 3) { time.TimeOfDay = 0.0f; time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene); }
 
                 ImGui.Spacing();
 
@@ -104,7 +108,7 @@ namespace Editor.Inspector
             }
         }
 
-        private static void DrawSeasonSection(TimeComponent time)
+        private static void DrawSeasonSection(Engine.Scene.Entity entity, TimeComponent time)
         {
             if (ThemedImGui.CollapsingHeader("📅 Calendar", ImGuiTreeNodeFlags.None))
             {
@@ -137,7 +141,7 @@ namespace Editor.Inspector
             }
         }
 
-        private static void DrawCelestialSection(TimeComponent time)
+        private static void DrawCelestialSection(Engine.Scene.Entity entity, TimeComponent time)
         {
             if (ThemedImGui.CollapsingHeader("🌅 Time Blends", ImGuiTreeNodeFlags.None))
             {
@@ -164,10 +168,13 @@ namespace Editor.Inspector
             }
         }
 
-        private static void DrawLinkingSection(TimeComponent time)
+        private static void DrawLinkingSection(Engine.Scene.Entity entity, TimeComponent time)
         {
             if (ThemedImGui.CollapsingHeader("🔗 Linking", ImGuiTreeNodeFlags.None))
             {
+                // CRITICAL: Auto-detect linked entities (Update() is not called in Edit mode!)
+                time.UpdateLinkedEntitiesInEditMode(Panels.EditorUI.MainViewport.Renderer?.Scene);
+
                 InspectorWidgets.DisabledLabel("Linked Entities:");
 
                 // Display current links (read-only for now)

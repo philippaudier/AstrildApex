@@ -60,6 +60,95 @@ namespace Engine.Components
         private float _accumulatedTime = 0.0f; // For day advancement
 
         /// <summary>
+        /// Auto-detect and update linked entities. Call this from Inspector in Edit mode.
+        /// In Play mode, Update() handles this automatically.
+        /// </summary>
+        public void UpdateLinkedEntitiesInEditMode(Scene.Scene? scene = null)
+        {
+            // Try to get scene from parameter, then from Entity, then give up
+            var targetScene = scene ?? Entity?.Scene;
+
+            if (targetScene == null)
+            {
+                Console.WriteLine("[TimeComponent] UpdateLinkedEntitiesInEditMode: Scene is null! (Entity.Scene not set)");
+                return;
+            }
+
+            Console.WriteLine($"[TimeComponent] Searching for EnvironmentSettings in {targetScene.Entities.Count} entities...");
+
+            // Auto-detect EnvironmentSettings
+            if (EnvironmentEntity == null)
+            {
+                try
+                {
+                    foreach (var e in targetScene.Entities)
+                    {
+                        if (e.HasComponent<EnvironmentSettings>())
+                        {
+                            EnvironmentEntity = e;
+                            Console.WriteLine($"[TimeComponent] FOUND EnvironmentSettings on entity '{e.Name}'!");
+                            break;
+                        }
+                    }
+                    if (EnvironmentEntity == null)
+                    {
+                        Console.WriteLine("[TimeComponent] No EnvironmentSettings found in scene!");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TimeComponent] Exception during EnvironmentSettings search: {ex.Message}");
+                }
+            }
+
+            // Auto-detect GlobalEffects
+            if (GlobalEffectsEntity == null)
+            {
+                try
+                {
+                    foreach (var e in targetScene.Entities)
+                    {
+                        if (e.HasComponent<GlobalEffects>())
+                        {
+                            GlobalEffectsEntity = e;
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // Apply TimeOfDay to EnvironmentSettings
+            if (EnvironmentEntity != null)
+            {
+                try
+                {
+                    var envSettings = EnvironmentEntity.GetComponent<EnvironmentSettings>();
+                    if (envSettings != null)
+                    {
+                        envSettings.TimeOfDay = TimeOfDay;
+                        envSettings.DayOfYear = DayOfYear;
+                        envSettings.Latitude = Latitude;
+                        envSettings.UpdateCelestialBodies(TimeOfDay, DayOfYear, Latitude);
+                        Console.WriteLine($"[TimeComponent] Applied TimeOfDay={TimeOfDay:F2}, DayOfYear={DayOfYear}, Latitude={Latitude:F1} to EnvironmentSettings!");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[TimeComponent] EnvironmentEntity found but has no EnvironmentSettings component!");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TimeComponent] Exception applying TimeOfDay: {ex.Message}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("[TimeComponent] EnvironmentEntity is null, cannot apply TimeOfDay!");
+            }
+        }
+
+        /// <summary>
         /// Update time and linked systems. Called by engine update loop.
         /// </summary>
         public new void Update(float deltaTime)
@@ -244,7 +333,9 @@ namespace Engine.Components
             if (envSettings != null)
             {
                 envSettings.TimeOfDay = TimeOfDay;
-                envSettings.UpdateCelestialBodies(TimeOfDay);
+                envSettings.DayOfYear = DayOfYear;
+                envSettings.Latitude = Latitude;
+                envSettings.UpdateCelestialBodies(TimeOfDay, DayOfYear, Latitude);
             }
         }
 

@@ -133,6 +133,64 @@ namespace Editor.Inspector
                 ImGui.Separator();
             }
 
+            // === RENDERING SETTINGS ===
+            ImGui.Text("Rendering Settings");
+
+            // Render Mode dropdown
+            int renderModeIndex = (int)terrain.RenderMode;
+            string[] renderModeLabels = { "Fill", "Line (Wireframe)", "Point" };
+            if (ImGui.Combo("Render Mode", ref renderModeIndex, renderModeLabels, renderModeLabels.Length))
+            {
+                terrain.RenderMode = (OpenTK.Graphics.OpenGL4.PolygonMode)renderModeIndex;
+            }
+
+            // Cull Mode dropdown
+            int cullModeIndex = terrain.CullMode switch
+            {
+                Engine.Components.TerrainCullingMode.Back => 0,
+                Engine.Components.TerrainCullingMode.Front => 1,
+                Engine.Components.TerrainCullingMode.FrontAndBack => 2,
+                Engine.Components.TerrainCullingMode.None => 3,
+                _ => 0
+            };
+            string[] cullModeLabels = { "Back", "Front", "Front and Back", "None" };
+            if (ImGui.Combo("Cull Mode", ref cullModeIndex, cullModeLabels, cullModeLabels.Length))
+            {
+                terrain.CullMode = cullModeIndex switch
+                {
+                    0 => Engine.Components.TerrainCullingMode.Back,
+                    1 => Engine.Components.TerrainCullingMode.Front,
+                    2 => Engine.Components.TerrainCullingMode.FrontAndBack,
+                    3 => Engine.Components.TerrainCullingMode.None,
+                    _ => Engine.Components.TerrainCullingMode.Back
+                };
+            }
+
+            // Closed mesh option
+            bool closedMesh = terrain.ClosedMesh;
+            if (ImGui.Checkbox("Closed Mesh", ref closedMesh))
+            {
+                terrain.ClosedMesh = closedMesh;
+                terrain.GenerateTerrain(); // Regenerate mesh with new setting
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Generate side walls and bottom to create a closed volume");
+
+            // Skirt depth (only show if closed mesh is enabled)
+            if (terrain.ClosedMesh)
+            {
+                float skirtDepth = terrain.SkirtDepth;
+                if (ImGui.DragFloat("Skirt Depth", ref skirtDepth, 0.5f, 0.1f, 1000f))
+                {
+                    terrain.SkirtDepth = skirtDepth;
+                    terrain.GenerateTerrain(); // Regenerate mesh with new depth
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Depth of side walls below the lowest terrain point");
+            }
+
+            ImGui.Separator();
+
             // === MESH RESOLUTION ===
             ImGui.Text("Mesh Resolution");
             ImGui.TextDisabled("Higher = smoother but slower");

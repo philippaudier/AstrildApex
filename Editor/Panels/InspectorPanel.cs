@@ -386,36 +386,6 @@ namespace Editor.Panels
             ImGui.PopItemWidth();
         }
         
-        private static void DrawEnvironmentSettingsComponent(EnvironmentSettings env)
-        {
-            ImGui.PushItemWidth(120f);
-            ImGui.TextDisabled("Tip: Use the Environment panel for full control");
-            ImGui.Spacing();
-            
-            // Time of day - most important setting to show in inspector
-            var timeOfDay = env.TimeOfDay;
-            if (ImGui.SliderFloat("Time of Day", ref timeOfDay, 0.0f, 24.0f, "%.1f"))
-            {
-                env.TimeOfDay = timeOfDay;
-            }
-            
-            // Skybox tint
-            var tint = new Numerics.Vector3(env.SkyboxTint.X, env.SkyboxTint.Y, env.SkyboxTint.Z);
-            if (ImGui.ColorEdit3("Skybox Tint", ref tint))
-            {
-                env.SkyboxTint = new Vector3(tint.X, tint.Y, tint.Z);
-            }
-            
-            // Ambient intensity
-            var ambientIntensity = env.AmbientIntensity;
-            if (ImGui.DragFloat("Ambient Intensity", ref ambientIntensity, 0.01f, 0.0f, 5.0f))
-            {
-                env.AmbientIntensity = ambientIntensity;
-            }
-            
-            ImGui.PopItemWidth();
-        }
-        
         private static void DrawMeshRendererComponent(Engine.Scene.Entity entity, MeshRendererComponent meshRenderer)
         {
             ImGui.PushItemWidth(120f);
@@ -796,14 +766,14 @@ namespace Editor.Panels
                     Editor.Inspector.CharacterControllerInspector.Draw(characterController);
                     break;
                 case EnvironmentSettings env:
-                    DrawEnvironmentSettingsComponent(env);
+                    Editor.Inspector.EnvironmentInspector.Draw(env);
                     break;
                 case Engine.Components.Terrain tg:
                     // Use new terrain inspector
                     Editor.Inspector.TerrainInspector.Draw(entity, tg);
                     break;
                 case Engine.Components.TimeComponent time:
-                    Editor.Inspector.TimeInspector.Draw(time);
+                    Editor.Inspector.TimeInspector.Draw(entity, time);
                     break;
                 case Engine.Components.WeatherComponent weather:
                     Editor.Inspector.WeatherInspector.Draw(weather);

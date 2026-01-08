@@ -25,6 +25,17 @@ namespace Engine.Components
     }
 
     /// <summary>
+    /// Culling mode for terrain rendering.
+    /// </summary>
+    public enum TerrainCullingMode
+    {
+        Back = 0,         // Cull back faces (default)
+        Front = 1,        // Cull front faces
+        FrontAndBack = 2, // Cull both faces
+        None = 3          // No culling (render both sides)
+    }
+
+    /// <summary>
     /// Unity-style terrain component with heightmap-based mesh generation.
     /// Clean implementation without tessellation, layers, or splatmaps.
     /// </summary>
@@ -178,6 +189,19 @@ namespace Engine.Components
 
         [Engine.Serialization.SerializableAttribute("streamingMaxLOD")]
         public int StreamingMaxLOD { get; set; } = 3;  // Maximum LOD level (0 = highest detail)
+
+        // === RENDERING SETTINGS ===
+        [Engine.Serialization.SerializableAttribute("renderMode")]
+        public PolygonMode RenderMode { get; set; } = PolygonMode.Fill;  // Fill, Line (wireframe), or Point
+
+        [Engine.Serialization.SerializableAttribute("cullMode")]
+        public TerrainCullingMode CullMode { get; set; } = TerrainCullingMode.Back;  // Back, Front, FrontAndBack, or None
+
+        [Engine.Serialization.SerializableAttribute("closedMesh")]
+        public bool ClosedMesh { get; set; } = false;  // Generate side walls and bottom to create a closed volume
+
+        [Engine.Serialization.SerializableAttribute("skirtDepth")]
+        public float SkirtDepth { get; set; } = 10f;  // Depth of the side walls below lowest point
 
         // === WEATHER SYSTEM MOVED TO WeatherComponent ===
         // Weather parameters are now controlled by the global WeatherComponent
@@ -656,9 +680,24 @@ namespace Engine.Components
             int res = Math.Max(2, MeshResolution);
             int vertexCount = res * res;
 
+            // If ClosedMesh is enabled, we need additional vertices for sides and bottom
+            int totalVertexCount = vertexCount;
+            int baseIndexCount = (res - 1) * (res - 1) * 6;
+            int totalIndexCount = baseIndexCount;
+
+            if (ClosedMesh)
+            {
+                // Add vertices for 4 side walls (each wall needs res*2 vertices)
+                // and bottom face (res*res vertices)
+                totalVertexCount += (res * 2 * 4) + (res * res);
+                // Add indices for 4 side walls (each wall: (res-1)*2*3*2 triangles)
+                // and bottom face ((res-1)*(res-1)*6 indices)
+                totalIndexCount += ((res - 1) * 2 * 6 * 4) + ((res - 1) * (res - 1) * 6);
+            }
+
             // Vertex format: Position(3) + Normal(3) + TexCoord(2) = 8 floats
-            float[] vertices = new float[vertexCount * 8];
-            uint[] indices = new uint[(res - 1) * (res - 1) * 6];
+            float[] vertices = new float[totalVertexCount * 8];
+            uint[] indices = new uint[totalIndexCount];
 
             float stepX = TerrainWidth / (res - 1);
             float stepZ = TerrainLength / (res - 1);
@@ -728,6 +767,13 @@ namespace Engine.Components
                 }
             }
 
+            // Generate closed mesh sides and bottom if requested
+            if (ClosedMesh)
+            {
+                uint baseVertexIndex = (uint)(res * res);
+                iIdx = GenerateClosedMeshGeometry(vertices, indices, res, startX, startZ, stepX, stepZ, baseVertexIndex, iIdx);
+            }
+
             // Debug: log vertex/index counts before upload
             Console.WriteLine($"[Terrain] GenerateMesh: vertexCount={vertexCount}, indexCount={indices.Length}");
 
@@ -737,6 +783,207 @@ namespace Engine.Components
             // Upload to GPU
             UploadMeshToGPU(vertices, indices);
             _indexCount = indices.Length;
+        }
+
+        /// <summary>
+        /// Generate side walls and bottom for closed mesh
+        /// </summary>
+        private int GenerateClosedMeshGeometry(float[] vertices, uint[] indices, int res, 
+            float startX, float startZ, float stepX, float stepZ, uint baseVertexIndex, int iIdx)
+        {
+            int vIdx = (int)baseVertexIndex * 8;
+            uint currentVertex = baseVertexIndex;
+
+            // Find the minimum height for the bottom of the skirt
+            float minHeight = float.MaxValue;
+            for (int z = 0; z < res; z++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    float u = x / (float)(res - 1);
+                    float v = z / (float)(res - 1);
+                    float h = SampleHeightBilinear(u, v) * TerrainHeight;
+                    if (h < minHeight) minHeight = h;
+                }
+            }
+            float skirtBottom = minHeight - SkirtDepth;
+
+            // === SIDE WALL 1: Front edge (Z=0, X varies) ===
+            for (int x = 0; x < res; x++)
+            {
+                float u = x / (float)(res - 1);
+                float posX = startX + x * stepX;
+                float topHeight = SampleHeightBilinear(u, 0) * TerrainHeight;
+
+                // Top vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = topHeight;
+                vertices[vIdx++] = startZ;
+                vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; vertices[vIdx++] = -1f; // Normal facing forward
+                vertices[vIdx++] = u; vertices[vIdx++] = 1f;
+
+                // Bottom vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = skirtBottom;
+                vertices[vIdx++] = startZ;
+                vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; vertices[vIdx++] = -1f;
+                vertices[vIdx++] = u; vertices[vIdx++] = 0f;
+            }
+
+            // Indices for front wall
+            for (int x = 0; x < res - 1; x++)
+            {
+                uint topLeft = currentVertex + (uint)(x * 2);
+                uint bottomLeft = topLeft + 1;
+                uint topRight = topLeft + 2;
+                uint bottomRight = topRight + 1;
+
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+            }
+            currentVertex += (uint)(res * 2);
+
+            // === SIDE WALL 2: Back edge (Z=max, X varies) ===
+            for (int x = 0; x < res; x++)
+            {
+                float u = x / (float)(res - 1);
+                float posX = startX + x * stepX;
+                float posZ = startZ + (res - 1) * stepZ;
+                float topHeight = SampleHeightBilinear(u, 1) * TerrainHeight;
+
+                // Top vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = topHeight;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; vertices[vIdx++] = 1f; // Normal facing back
+                vertices[vIdx++] = u; vertices[vIdx++] = 1f;
+
+                // Bottom vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = skirtBottom;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; vertices[vIdx++] = 1f;
+                vertices[vIdx++] = u; vertices[vIdx++] = 0f;
+            }
+
+            // Indices for back wall (same winding as front for consistency)
+            for (int x = 0; x < res - 1; x++)
+            {
+                uint topLeft = currentVertex + (uint)(x * 2);
+                uint bottomLeft = topLeft + 1;
+                uint topRight = topLeft + 2;
+                uint bottomRight = topRight + 1;
+
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+            }
+            currentVertex += (uint)(res * 2);
+
+            // === SIDE WALL 3: Left edge (X=0, Z varies) ===
+            for (int z = 0; z < res; z++)
+            {
+                float v = z / (float)(res - 1);
+                float posZ = startZ + z * stepZ;
+                float topHeight = SampleHeightBilinear(0, v) * TerrainHeight;
+
+                // Top vertex
+                vertices[vIdx++] = startX;
+                vertices[vIdx++] = topHeight;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = -1f; vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; // Normal facing left
+                vertices[vIdx++] = v; vertices[vIdx++] = 1f;
+
+                // Bottom vertex
+                vertices[vIdx++] = startX;
+                vertices[vIdx++] = skirtBottom;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = -1f; vertices[vIdx++] = 0f; vertices[vIdx++] = 0f;
+                vertices[vIdx++] = v; vertices[vIdx++] = 0f;
+            }
+
+            // Indices for left wall (same winding as others for consistency)
+            for (int z = 0; z < res - 1; z++)
+            {
+                uint topLeft = currentVertex + (uint)(z * 2);
+                uint bottomLeft = topLeft + 1;
+                uint topRight = topLeft + 2;
+                uint bottomRight = topRight + 1;
+
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+            }
+            currentVertex += (uint)(res * 2);
+
+            // === SIDE WALL 4: Right edge (X=max, Z varies) ===
+            for (int z = 0; z < res; z++)
+            {
+                float v = z / (float)(res - 1);
+                float posX = startX + (res - 1) * stepX;
+                float posZ = startZ + z * stepZ;
+                float topHeight = SampleHeightBilinear(1, v) * TerrainHeight;
+
+                // Top vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = topHeight;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = 1f; vertices[vIdx++] = 0f; vertices[vIdx++] = 0f; // Normal facing right
+                vertices[vIdx++] = v; vertices[vIdx++] = 1f;
+
+                // Bottom vertex
+                vertices[vIdx++] = posX;
+                vertices[vIdx++] = skirtBottom;
+                vertices[vIdx++] = posZ;
+                vertices[vIdx++] = 1f; vertices[vIdx++] = 0f; vertices[vIdx++] = 0f;
+                vertices[vIdx++] = v; vertices[vIdx++] = 0f;
+            }
+
+            // Indices for right wall
+            for (int z = 0; z < res - 1; z++)
+            {
+                uint topLeft = currentVertex + (uint)(z * 2);
+                uint bottomLeft = topLeft + 1;
+                uint topRight = topLeft + 2;
+                uint bottomRight = topRight + 1;
+
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+            }
+            currentVertex += (uint)(res * 2);
+
+            // === BOTTOM FACE ===
+            for (int z = 0; z < res; z++)
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    float u = x / (float)(res - 1);
+                    float v = z / (float)(res - 1);
+                    float posX = startX + x * stepX;
+                    float posZ = startZ + z * stepZ;
+
+                    vertices[vIdx++] = posX;
+                    vertices[vIdx++] = skirtBottom;
+                    vertices[vIdx++] = posZ;
+                    vertices[vIdx++] = 0f; vertices[vIdx++] = -1f; vertices[vIdx++] = 0f; // Normal facing down
+                    vertices[vIdx++] = u; vertices[vIdx++] = v;
+                }
+            }
+
+            // Indices for bottom face (reverse winding to face downward)
+            for (int z = 0; z < res - 1; z++)
+            {
+                for (int x = 0; x < res - 1; x++)
+                {
+                    uint topLeft = currentVertex + (uint)(z * res + x);
+                    uint topRight = topLeft + 1;
+                    uint bottomLeft = currentVertex + (uint)((z + 1) * res + x);
+                    uint bottomRight = bottomLeft + 1;
+
+                    indices[iIdx++] = topLeft; indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft;
+                    indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+                }
+            }
+
+            return iIdx;
         }
 
         /// <summary>
@@ -750,8 +997,8 @@ namespace Engine.Components
 
             // Build a deterministic key from heightmap guid + parameters
             // Include heightmap file modification time when available so the cache invalidates when the source changes
-            // V3: Fixed normal calculation to use heightmap resolution instead of mesh resolution
-            string key = $"v3_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}";
+            // V4: Added ClosedMesh and SkirtDepth parameters
+            string key = $"v4_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}_{ClosedMesh}_{SkirtDepth}";
             try
             {
                 if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))

@@ -555,7 +555,25 @@ namespace Editor.Rendering
             // PERFORMANCE: Component cache is initialized lazily via getter
             // No need to manually initialize - just access Cache property to trigger init
 
-            // CRITICAL: Clear terrain subscriptions when changing scene
+            // === CRITICAL: CLEANUP OLD SCENE RESOURCES ===
+            // Similar to Unreal Engine's OnWorldCleanup pattern
+            // Clear all rendering resources from the previous scene before loading new one
+            
+            // 1. Clear vegetation renderer batches (GPU resources)
+            if (_vegetationRenderer != null)
+            {
+                try
+                {
+                    _vegetationRenderer.ClearBatches();
+                    Console.WriteLine("[ViewportRenderer] ✓ Cleared vegetation batches from previous scene");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportRenderer] ⚠️ Failed to clear vegetation batches: {ex.Message}");
+                }
+            }
+
+            // 2. Clear terrain subscriptions when changing scene
             // This prevents old terrains from the previous scene (e.g., playScene) from staying subscribed
             // which caused terrains to disappear when exiting Play Mode
             _subscribedTerrains.Clear();
@@ -703,7 +721,7 @@ namespace Editor.Rendering
         /// </summary>
         private void OnTerrainVegetationRegenerated(Engine.Components.Terrain terrain)
         {
-            Console.WriteLine($"[ViewportRenderer] ⚡ OnTerrainVegetationRegenerated CALLED for terrain mode={terrain.Mode}");
+            // Console.WriteLine($"[ViewportRenderer] ⚡ OnTerrainVegetationRegenerated CALLED for terrain mode={terrain.Mode}");
             
             // CRITICAL: Guard against recursion - if we're already updating vegetation, skip
             // This prevents infinite loops when ApplyLiveMaterialUpdate triggers OnTerrainVegetationRegenerated
@@ -778,14 +796,14 @@ namespace Editor.Rendering
             }
 
             // CRITICAL DEBUG: Log vegetation instances mode
-            Console.WriteLine($"[ViewportRenderer] OnTerrainVegetationRegenerated: TerrainMode={terrain.Mode}, VegInstancesCount={vegetationInstances?.Count ?? 0}");
-            if (vegetationInstances != null)
-            {
-                foreach (var kvp in vegetationInstances)
-                {
-                    Console.WriteLine($"[ViewportRenderer]   LayerIndex={kvp.Key}, InstanceCount={kvp.Value?.Count ?? 0}");
-                }
-            }
+            // Console.WriteLine($"[ViewportRenderer] OnTerrainVegetationRegenerated: TerrainMode={terrain.Mode}, VegInstancesCount={vegetationInstances?.Count ?? 0}");
+            // if (vegetationInstances != null)
+            // {
+            //     foreach (var kvp in vegetationInstances)
+            //     {
+            //         Console.WriteLine($"[ViewportRenderer]   LayerIndex={kvp.Key}, InstanceCount={kvp.Value?.Count ?? 0}");
+            //     }
+            // }
 
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
@@ -799,7 +817,7 @@ namespace Editor.Rendering
                     continue;
                 }
 
-                Console.WriteLine($"[ViewportRenderer] Processing Layer {layerIndex}: Name={layer.Name}, PrefabGuid={layer.PrefabGuid}, Enabled={layer.Enabled}");
+                // Console.WriteLine($"[ViewportRenderer] Processing Layer {layerIndex}: Name={layer.Name}, PrefabGuid={layer.PrefabGuid}, Enabled={layer.Enabled}");
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: PrefabGuid={layer.PrefabGuid?.ToString() ?? "NULL"}, ModelGuid={layer.ModelGuid?.ToString() ?? "NULL"}, Density={layer.Density}"); } catch { }
 
                 // Try to get model GUID from either direct assignment or prefab
@@ -1709,10 +1727,12 @@ namespace Editor.Rendering
             {
                 _outlineRenderer = new Engine.Rendering.SelectionOutlineRenderer();
                 _outlineRenderer.Initialize();
+                Console.WriteLine("[ViewportRenderer] SelectionOutlineRenderer created and initialized successfully");
             }
             catch (Exception ex)
             {
-                if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to create Selection Outline renderer: {ex.Message}");
+                Console.WriteLine($"[ViewportRenderer] FAILED to create Selection Outline renderer: {ex.Message}");
+                Console.WriteLine($"[ViewportRenderer] Stack trace: {ex.StackTrace}");
                 _outlineRenderer = null;
             }
 
@@ -3810,6 +3830,8 @@ void main(){
             uint zero = 0;
             GL.ClearBuffer(ClearBuffer.Color, 1, ref zero);
 
+            Console.WriteLine($"[DEBUG RENDER] Scene cleared, starting render pipeline. Selected={Editor.State.Selection.ActiveEntityId}");
+
             // Grid will be rendered later as an overlay so it appears on top of the scene.
 
             // === RENDER PIPELINE WITH PROPER ORDERING ===
@@ -4474,78 +4496,144 @@ void main(){
     }
 
     // ===================== SELECTION OUTLINE =====================
-    private void RenderSelectionOutline(int colorTexture)
+    /// <summary>
+    /// Helper to render selected object for stencil mask
+    /// Called by outline renderer during stencil pass
+    /// </summary>
+    private void RenderSelectedObjectForStencil()
+    {
+        Console.WriteLine("[ViewportRenderer] RenderSelectedObjectForStencil called");
+
+        uint selectedId = Editor.State.Selection.ActiveEntityId;
+        var selectedEntity = _scene?.Entities.FirstOrDefault(e => e.Id == selectedId);
+        if (selectedEntity == null)
         {
-            if (_outlineRenderer == null || Scene == null) return;
+            Console.WriteLine("[ViewportRenderer] No selected entity found");
+            return;
+        }
 
-            // Get outline settings from EditorSettings
-            var outlineData = Editor.State.EditorSettings.Outline;
-            if (!outlineData.Enabled) return;
+        var meshRenderer = selectedEntity.GetComponent<Engine.Components.MeshRendererComponent>();
+        if (meshRenderer == null || !meshRenderer.HasMeshToRender())
+        {
+            Console.WriteLine("[ViewportRenderer] No mesh renderer or no mesh");
+            return;
+        }
 
-            // Get selected entity ID
-            uint selectedId = Editor.State.Selection.ActiveEntityId;
-            if (selectedId == 0) return;
+        Console.WriteLine($"[ViewportRenderer] Rendering entity {selectedEntity.Name} (mesh={meshRenderer.Mesh})");
 
-            // Convert settings to renderer format
-            var settings = new Engine.Rendering.SelectionOutlineRenderer.OutlineSettings
-            {
-                Enabled = outlineData.Enabled,
-                Thickness = outlineData.Thickness,
-                Color = new Vector4(outlineData.ColorR, outlineData.ColorG, outlineData.ColorB, outlineData.ColorA),
-                EnablePulse = outlineData.EnablePulse,
-                PulseSpeed = outlineData.PulseSpeed,
-                PulseMinAlpha = outlineData.PulseMinAlpha,
-                PulseMaxAlpha = outlineData.PulseMaxAlpha
-            };
+        // Get current shader program (stencil shader is already bound)
+        int currentProgram = GL.GetInteger(GetPName.CurrentProgram);
+        Console.WriteLine($"[ViewportRenderer] Current program: {currentProgram}");
 
+        // Set model matrix
+        var model = selectedEntity.WorldMatrix;
+        int modelLoc = GL.GetUniformLocation(currentProgram, "u_Model");
+        Console.WriteLine($"[ViewportRenderer] u_Model location: {modelLoc}");
+        GL.UniformMatrix4(modelLoc, false, ref model);
+
+        // Apply culling mode
+        Engine.Components.CullingMode cullingMode = Engine.Components.CullingMode.Back;
+        if (meshRenderer.MaterialGuid.HasValue && meshRenderer.MaterialGuid.Value != Guid.Empty)
+        {
             try
             {
-                // DEBUG: Optionally check texture sizes before rendering outline (expensive GL queries)
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                {
-                    try
-                    {
-                        GL.BindTexture(TextureTarget.Texture2D, _postTex);
-                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int postTexW);
-                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int postTexH);
-
-                        GL.BindTexture(TextureTarget.Texture2D, _idTex);
-                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int idTexW);
-                        GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int idTexH);
-
-                        if (postTexW != _w || postTexH != _h || idTexW != _w || idTexH != _h)
-                        {
-                            LogManager.LogWarning($"Texture size mismatch! _w={_w}, _h={_h}, postTex={postTexW}x{postTexH}, idTex={idTexW}x{idTexH}", "ViewportRenderer");
-                        }
-                    }
-                    catch { }
-                }
-
-                // Choose destination framebuffer: prefer _postFbo2 (ping-pong) when available,
-                // otherwise render into _postFbo (so the final `ColorTexture` is updated).
-                // Avoid rendering directly to default framebuffer (0) because the UI displays
-                // the renderer's texture (`Renderer.ColorTexture`) and drawing to 0 would
-                // leave that texture stale (causing the frozen-frame symptom).
-                int destFbo = (_postFbo2 != 0) ? _postFbo2 : ((_postFbo != 0) ? _postFbo : _fbo);
-
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, destFbo);
-                var db = new DrawBuffersEnum[] { DrawBuffersEnum.ColorAttachment0 };
-                GL.DrawBuffers(db.Length, db);
-                GL.Viewport(0, 0, _w, _h);
-
-                // Render outline using the provided colorTexture (color) and _idTex (entity IDs)
-                float time = (float)System.DateTime.Now.TimeOfDay.TotalSeconds;
-                _outlineRenderer.RenderOutline(colorTexture, _idTex, selectedId, _w, _h, settings, time);
-
-                // Restore state: unbind to default (RenderScene will rebind _fbo at next frame start)
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                var mat = Engine.Assets.AssetDatabase.LoadMaterial(meshRenderer.MaterialGuid.Value);
+                if (mat != null) cullingMode = (Engine.Components.CullingMode)mat.CullingMode;
             }
-            catch (Exception ex)
+            catch { }
+        }
+        ApplyCullingModeFromEnum(cullingMode);
+
+        // Render the mesh
+        if (meshRenderer.IsUsingCustomMesh())
+        {
+            var customMesh = LoadCustomMesh(meshRenderer.CustomMeshGuid!.Value, meshRenderer.SubmeshIndex);
+            if (customMesh.HasValue)
             {
-                if (Engine.Utils.DebugLogger.EnableVerbose)
-                    Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to render selection outline: {ex.Message}");
+                GL.BindVertexArray(customMesh.Value.VAO);
+                GL.DrawElements(PrimitiveType.Triangles, customMesh.Value.IndexCount, DrawElementsType.UnsignedInt, 0);
             }
         }
+        else
+        {
+            // Use primitive mesh
+            Console.WriteLine($"[ViewportRenderer] Drawing primitive mesh: {meshRenderer.Mesh}");
+            switch (meshRenderer.Mesh)
+            {
+                case MeshKind.Cube:
+                    Console.WriteLine($"[ViewportRenderer] Binding VAO {_legacyCubeVao}, drawing {_cubeIdx.Length} indices");
+                    GL.BindVertexArray(_legacyCubeVao);
+                    GL.DrawElements(PrimitiveType.Triangles, _cubeIdx.Length, DrawElementsType.UnsignedInt, 0);
+                    break;
+                case MeshKind.Plane:
+                    GL.BindVertexArray(_legacyPlaneVao);
+                    GL.DrawElements(PrimitiveType.Triangles, _planeIndexCount, DrawElementsType.UnsignedInt, 0);
+                    break;
+                case MeshKind.Quad:
+                    GL.BindVertexArray(_legacyQuadVao);
+                    GL.DrawElements(PrimitiveType.Triangles, _quadIndexCount, DrawElementsType.UnsignedInt, 0);
+                    break;
+                case MeshKind.Sphere:
+                    GL.BindVertexArray(_legacySphereVao);
+                    GL.DrawElements(PrimitiveType.Triangles, _sphereIndexCount, DrawElementsType.UnsignedInt, 0);
+                    break;
+                case MeshKind.Capsule:
+                    GL.BindVertexArray(_legacyCapsuleVao);
+                    GL.DrawElements(PrimitiveType.Triangles, _capsuleIndexCount, DrawElementsType.UnsignedInt, 0);
+                    break;
+            }
+        }
+
+        RestoreDefaultCulling();
+    }
+
+    /// <summary>
+    /// Render selection outline using marginallyclever stencil approach
+    /// This avoids all read/write feedback issues
+    /// </summary>
+    private void RenderSelectionOutline(int colorTexture, int destFbo)
+    {
+        if (_outlineRenderer == null || Scene == null) return;
+
+        var outlineData = Editor.State.EditorSettings.Outline;
+        if (!outlineData.Enabled) return;
+
+        uint selectedId = Editor.State.Selection.ActiveEntityId;
+        if (selectedId == 0) return;
+
+        var settings = new Engine.Rendering.SelectionOutlineRenderer.OutlineSettings
+        {
+            Enabled = outlineData.Enabled,
+            Thickness = outlineData.Thickness,
+            Color = new Vector4(outlineData.ColorR, outlineData.ColorG, outlineData.ColorB, outlineData.ColorA),
+            EnablePulse = outlineData.EnablePulse,
+            PulseSpeed = outlineData.PulseSpeed,
+            PulseMinAlpha = outlineData.PulseMinAlpha,
+            PulseMaxAlpha = outlineData.PulseMaxAlpha
+        };
+
+        try
+        {
+            float time = (float)System.DateTime.Now.TimeOfDay.TotalSeconds;
+
+            Action renderCallback = () => RenderSelectedObjectForStencil();
+
+            _outlineRenderer.RenderOutline(
+                colorTexture,
+                renderCallback,
+                _viewGL,
+                _projGL,
+                destFbo,
+                _w,
+                _h,
+                settings,
+                time);
+        }
+        catch (Exception ex)
+        {
+            try { Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Outline render failed: {ex.Message}"); } catch { }
+        }
+    }
 
         // Calculate cascade split distances using practical split scheme (logarithmic + linear blend)
         // https://developer.nvidia.com/gpugems/gpugems3/part-ii-light-and-shadows/chapter-10-parallel-split-shadow-maps-programmable-gpus
@@ -5807,15 +5895,15 @@ void main(){
             _globalUniforms.Wetness = weather.Wetness;
             
             // DEBUG: Log UBO values every 60 frames to verify they're being set
-            if ((_frameCounter % 60) == 0)
-            {
-                try
-                {
-                    Console.WriteLine($"[UBO] Time={_globalUniforms.Time:F2}, WindStr={_globalUniforms.WindStrength:F3}, WindSpeed={_globalUniforms.WindSpeed:F2}, BranchAmp={_globalUniforms.BranchAmplitude:F2}");
-                    LogManager.LogInfo($"[UBO DEBUG] Time={_globalUniforms.Time:F2}, TimeOfDay={_globalUniforms.TimeOfDay:F2}, WindStr={_globalUniforms.WindStrength:F3}, BranchAmp={_globalUniforms.BranchAmplitude:F2}", "ViewportRenderer");
-                }
-                catch { }
-            }
+            // if ((_frameCounter % 60) == 0)
+            // {
+            //     try
+            //     {
+            //         Console.WriteLine($"[UBO] Time={_globalUniforms.Time:F2}, WindStr={_globalUniforms.WindStrength:F3}, WindSpeed={_globalUniforms.WindSpeed:F2}, BranchAmp={_globalUniforms.BranchAmplitude:F2}");
+            //         LogManager.LogInfo($"[UBO DEBUG] Time={_globalUniforms.Time:F2}, TimeOfDay={_globalUniforms.TimeOfDay:F2}, WindStr={_globalUniforms.WindStrength:F3}, BranchAmp={_globalUniforms.BranchAmplitude:F2}", "ViewportRenderer");
+            //     }
+            //     catch { }
+            // }
             
             // Debug logging for UBO values (also persist to astrild_debug.log)
             try
@@ -5998,12 +6086,22 @@ void main(){
             var items = new List<RenderItem>(_scene.Entities.Count);
             var entitiesSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_scene.Entities);
 
+            int totalEntities = 0;
+            int terrainSkipped = 0;
+            int frustumCulled = 0;
+            int added = 0;
+
             for (int i = 0; i < entitiesSpan.Length; i++)
             {
                 var entity = entitiesSpan[i];
+                totalEntities++;
 
                 // Skip terrain entities - they are rendered separately in RenderTerrain()
-                if (entity.HasComponent<Engine.Components.Terrain>()) continue;
+                if (entity.HasComponent<Engine.Components.Terrain>())
+                {
+                    terrainSkipped++;
+                    continue;
+                }
 
                 // Frustum culling - Quick Win #1
                 entity.GetWorldTRS(out var worldPos, out var worldRot, out var worldScale);
@@ -6018,7 +6116,11 @@ void main(){
 
                 // Skip entities outside frustum
                 if (!_frustum.IsVisible(boundingSphere))
+                {
+                    frustumCulled++;
+                    Console.WriteLine($"[DEBUG FRUSTUM] Entity '{entity.Name}' (ID={entity.Id}) CULLED - Pos=({worldPos.X:F2},{worldPos.Y:F2},{worldPos.Z:F2}), Radius={boundsRadius:F2}");
                     continue;
+                }
 
                 // Standard mesh renderers
                 if (entity.HasComponent<MeshRendererComponent>())
@@ -6112,6 +6214,9 @@ void main(){
                         ObjectId = entity.Id,
                         CullingMode = materialAsset != null ? (Engine.Components.CullingMode)materialAsset.CullingMode : Engine.Components.CullingMode.Back
                     });
+                    
+                    added++;
+                    Console.WriteLine($"[DEBUG FRUSTUM] Entity '{entity.Name}' (ID={entity.Id}) ADDED - Pos=({worldPos.X:F2},{worldPos.Y:F2},{worldPos.Z:F2}), Radius={boundsRadius:F2}");
 
                     continue;
                 }
@@ -6119,6 +6224,8 @@ void main(){
                 // Skip terrain entities - handled separately in RenderTerrain()
                 // Removed old chunk-based terrain system
             }
+
+            Console.WriteLine($"[DEBUG FRUSTUM SUMMARY] Total={totalEntities}, TerrainSkipped={terrainSkipped}, FrustumCulled={frustumCulled}, Added={added}");
 
             return items;
         }
@@ -6307,6 +6414,7 @@ void main(){
 
         private void DrawForwardOpaque()
         {
+            int renderedCount = 0;
 
             if (_pbrShader == null)
             {
@@ -6323,6 +6431,8 @@ void main(){
                     var meshRenderer = e.GetComponent<Engine.Components.MeshRendererComponent>();
                     if (meshRenderer == null || !meshRenderer.HasMeshToRender())
                         continue;
+
+                    renderedCount++;
 
                     var model = e.WorldMatrix;
                     var mvp = model * _viewGL * _projGL;
@@ -6748,11 +6858,12 @@ void main(){
                     var item = items[idx];
                     bool isTransparent = item.MaterialRuntime != null && item.MaterialRuntime.TransparencyMode != 0;
 
-                    // Debug logging removed: avoid expensive per-frame console output
+                    Console.WriteLine($"[DEBUG LOOP] idx={idx}, ObjectId={item.ObjectId}, MatGuid={item.MaterialGuid}, Transparent={isTransparent}");
 
                     if (isTransparent) { idx++; continue; }
 
                     var matGuid = item.MaterialGuid;
+                    Console.WriteLine($"[DEBUG LOOP] Processing matGuid={matGuid}");
                     // Load/bind material once for this material's group
                     Engine.Rendering.MaterialRuntime? mr = null;
                     
@@ -6988,9 +7099,12 @@ void main(){
                         list.Add(it);
                     }
 
+                    Console.WriteLine($"[DEBUG LOOP] Grouped {groups.Count} VAO groups, total items in groups: {groups.Sum(g => g.Value.Count)}");
+
                     foreach (var kv in groups)
                     {
                         var group = kv.Value;
+                        Console.WriteLine($"[DEBUG LOOP] Rendering VAO group, count={group.Count}");
                         if (group.Count == 0) continue;
                         var first = group[0];
                         GL.BindVertexArray(first.Vao);
@@ -7013,8 +7127,19 @@ void main(){
                                 ? PrimitiveType.Patches
                                 : PrimitiveType.Triangles;
 
+                            renderedCount++;
+                            Console.WriteLine($"[DEBUG LOOP] Drawing ObjectId={it.ObjectId}, IndexCount={it.IndexCount}");
                             RecordDraw(primitiveType, it.IndexCount);
                             GL.DrawElements(primitiveType, it.IndexCount, DrawElementsType.UnsignedInt, 0);
+                            
+                            // DEBUG: Read a pixel after draw to verify rendering happened
+                            if (renderedCount == 1)
+                            {
+                                GL.Finish(); // Ensure draw completes
+                                byte[] testPixel = new byte[4];
+                                GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, testPixel);
+                                Console.WriteLine($"[DEBUG AFTER DRAW] Center pixel after first draw: R={testPixel[0]}, G={testPixel[1]}, B={testPixel[2]}, A={testPixel[3]}");
+                            }
                         }
                         
                         // Restore default culling after group
@@ -7026,6 +7151,8 @@ void main(){
                     while (nextIdx < items.Count && items[nextIdx].MaterialGuid == matGuid) nextIdx++;
                     idx = nextIdx;
                 }
+
+            Console.WriteLine($"[DEBUG RENDER] DrawForwardOpaque completed, rendered {renderedCount} entities");
 
             // TRANSPARENT rendering moved to DrawForwardTransparent()
             // Called in Render() AFTER vegetation/particles for correct glass refraction
@@ -10056,7 +10183,7 @@ void main(){
                 // This is important because the outline renderer depends on _postTex being valid
                 if (allEffects.Count == 0)
                 {
-                    // Console.WriteLine($"[DEBUG] No post-effects, preparing to Blit _fbo → _postFbo");
+                    // No post-effects enabled, blit scene directly to post buffer
                     if (_postFbo != 0 && _colorTex != 0 && _fbo != 0)
                     {
                         try
@@ -10081,6 +10208,8 @@ void main(){
                             GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _postFbo);
                             GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
 
+                            Console.WriteLine($"[DEBUG BLIT] About to blit: Read FBO={_fbo}, Draw FBO={_postFbo}, size={_w}x{_h}");
+
                             GL.BlitFramebuffer(
                                 0, 0, _w, _h,  // source rectangle
                                 0, 0, _w, _h,  // destination rectangle
@@ -10088,14 +10217,45 @@ void main(){
                                 BlitFramebufferFilter.Nearest  // use Nearest for exact copy
                             );
 
+                            // CRITICAL: Ensure blit is complete before shader reads the texture
+                            // Without this, the outline shader may read from an incomplete/stale texture
+                            GL.Finish();
+
+                            // DEBUG: Check if blit actually worked
+                            byte[] beforePixel = new byte[4];
+                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                            GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, beforePixel);
+
+                            byte[] afterPixel = new byte[4];
+                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo);
+                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                            GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, afterPixel);
+
+                            Console.WriteLine($"[DEBUG BLIT] Source pixel: R={beforePixel[0]}, G={beforePixel[1]}, B={beforePixel[2]}");
+                            Console.WriteLine($"[DEBUG BLIT] Dest pixel after blit: R={afterPixel[0]}, G={afterPixel[1]}, B={afterPixel[2]}");
+
+                            // DEBUG: Sample multiple points to see if cubes are rendered anywhere
+                            byte[] topLeft = new byte[4];
+                            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+                            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                            GL.ReadPixels(_w / 4, _h / 4, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, topLeft);
+                            
+                            byte[] topRight = new byte[4];
+                            GL.ReadPixels(3 * _w / 4, _h / 4, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, topRight);
+                            
+                            byte[] bottomLeft = new byte[4];
+                            GL.ReadPixels(_w / 4, 3 * _h / 4, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, bottomLeft);
+                            
+                            byte[] bottomRight = new byte[4];
+                            GL.ReadPixels(3 * _w / 4, 3 * _h / 4, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, bottomRight);
+                            
+                            Console.WriteLine($"[DEBUG SAMPLE] TopLeft: R={topLeft[0]}, TopRight: R={topRight[0]}, BottomLeft: R={bottomLeft[0]}, BottomRight: R={bottomRight[0]}");
+
                             // Console.WriteLine($"[DEBUG] Blit complete, checking FBO status...");
                             var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.DrawFramebuffer);
-                            // Console.WriteLine($"[DEBUG] DrawFramebuffer status: {fboStatus}");
-
-                            // CRITICAL: Restore framebuffer state
-                            // Just unbind to 0 - RenderScene() will rebind _fbo at the start of next frame
+                            // Restore framebuffer state
                             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
                             _postTexHealthy = true;
                         }
                         catch (Exception ex)
@@ -10219,6 +10379,8 @@ void main(){
                                           Editor.State.EditorSettings.Outline.Enabled &&
                                           Editor.State.Selection.ActiveEntityId != 0;
 
+                // Console.WriteLine($"shouldRenderOutline={shouldRenderOutline}, _postTexHealthy={_postTexHealthy}");
+
                 if (shouldRenderOutline)
                 {
                     // Console.WriteLine($"[DEBUG] Rendering outline, _postTex={_postTex}, _postTexHealthy={_postTexHealthy}");
@@ -10263,16 +10425,29 @@ void main(){
                         catch { _postFbo2 = 0; _postTex2 = 0; }
                     }
 
-                    // Render outline (RenderSelectionOutline will write to _postFbo2 when available)
-                    // Prefer using the raw scene color texture as input to avoid read/write
-                    // feedback when post targets are being ping-ponged.
+                    // CRITICAL: Use _postTex as source since it contains the blitted scene
+                    // _colorTex is the RAW scene render, _postTex is after blit
+                    // We MUST write to _postFbo2 to avoid read/write feedback on _postTex
                     int srcColor = (_postTex != 0 && _postTexHealthy) ? _postTex : _colorTex;
-                    RenderSelectionOutline(srcColor);
+                    int destFbo = (_postFbo2 != 0) ? _postFbo2 : _postFbo;
+
+                    Console.WriteLine($"[DEBUG OUTLINE] Calling RenderSelectionOutline with srcColor={srcColor} (_colorTex={_colorTex}, _postTex={_postTex}, _postTexHealthy={_postTexHealthy})");
+                    Console.WriteLine($"[DEBUG OUTLINE] Will render to destFbo={destFbo}");
+
+                    RenderSelectionOutline(srcColor, destFbo);
 
                     // If we have a ping-pong destination (_postFbo2) we still copy it back
                     // to _postFbo so subsequent code reads the final image from _postTex.
                     if (_postFbo2 != 0 && _postTex2 != 0)
                     {
+                        // DEBUG: Read pixel from _postFbo2 BEFORE blit to see what the outline shader produced
+                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo2);
+                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                        byte[] beforeBlit = new byte[4];
+                        GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, beforeBlit);
+                        Console.WriteLine($"[DEBUG OUTLINE BLIT] _postFbo2 center pixel BEFORE blit: R={beforeBlit[0]}, G={beforeBlit[1]}, B={beforeBlit[2]}");
+
+                        // Blit from ping-pong buffer back to main post buffer
                         GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo2);
                         GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
@@ -10286,16 +10461,55 @@ void main(){
                             BlitFramebufferFilter.Nearest
                         );
 
+                        // DEBUG: Read pixel from _postFbo AFTER blit
+                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo);
+                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                        byte[] afterOutlineBlit = new byte[4];
+                        GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, afterOutlineBlit);
+                        Console.WriteLine($"[DEBUG OUTLINE BLIT] _postFbo center pixel AFTER copy: R={afterOutlineBlit[0]}, G={afterOutlineBlit[1]}, B={afterOutlineBlit[2]}");
+
                         // Console.WriteLine($"[DEBUG] Outline Blit complete");
 
                         // Restore default framebuffer binding
                         GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                        
+                        // CRITICAL: Mark _postTex as healthy since we just wrote to it
+                        _postTexHealthy = true;
+                        Console.WriteLine($"[DEBUG] Outline applied with ping-pong, _postTexHealthy={_postTexHealthy}");
                     }
                     else
                     {
-                        Console.WriteLine("[DEBUG] Skipping outline blit: no ping-pong buffer available; outline drawn directly to target");
-                        // Nothing else to do - RenderSelectionOutline already drew the outline
+                        Console.WriteLine($"[DEBUG] Outline applied directly to _postFbo (no ping-pong), _postTexHealthy was {_postTexHealthy}");
+                        // RenderSelectionOutline wrote directly to _postFbo
+                        // CRITICAL: If we read from _colorTex and wrote to _postFbo, we need to mark it healthy
+                        // The result is now in _postTex which contains scene+outline
+                        _postTexHealthy = true;
+                        Console.WriteLine($"[DEBUG] Set _postTexHealthy={_postTexHealthy} after direct outline");
                         GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    }
+                    Console.WriteLine($"[DEBUG] FINAL: _postTexHealthy={_postTexHealthy}, ColorTexture will return {(_postTex != 0 && _postTexHealthy ? "_postTex (WITH outline)" : "_colorTex (NO outline)")}");
+                    
+                    // DEBUG: Read center pixel from _postFbo to verify it contains rendered data
+                    try
+                    {
+                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _postFbo);
+                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                        byte[] centerPixel = new byte[4];
+                        GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, centerPixel);
+                        Console.WriteLine($"[DEBUG PIXEL] _postFbo center pixel: R={centerPixel[0]}, G={centerPixel[1]}, B={centerPixel[2]}, A={centerPixel[3]}");
+                        
+                        // Also read from _colorTex (main FBO before blit)
+                        GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _fbo);
+                        GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+                        byte[] colorPixel = new byte[4];
+                        GL.ReadPixels(_w / 2, _h / 2, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, colorPixel);
+                        Console.WriteLine($"[DEBUG PIXEL] _fbo (_colorTex) center pixel BEFORE BLIT: R={colorPixel[0]}, G={colorPixel[1]}, B={colorPixel[2]}, A={colorPixel[3]}");
+                        
+                        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DEBUG PIXEL] Failed to read pixel: {ex.Message}");
                     }
                 }
                 // Note: When no outline is needed, _postTex already contains the final image from post-processing

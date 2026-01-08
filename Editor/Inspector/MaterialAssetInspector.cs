@@ -279,6 +279,41 @@ namespace Editor.Inspector
                 ImGui.TextUnformatted("Shader: TerrainForward");
                 ImGui.TextDisabled("(Fixed shader for terrain rendering)");
                 
+                ImGui.Spacing();
+                ImGui.Separator();
+                ImGui.Spacing();
+                
+                // Render Settings for Terrain
+                ImGui.TextColored(new Vector4(0.8f, 0.9f, 1.0f, 1.0f), "🎨 Render Settings");
+                ImGui.Spacing();
+                
+                // Culling Mode
+                {
+                    int cullMode = mat.CullingMode;
+                    var cullModes = new[] { "Back", "Front", "None (Both)" };
+                    if (ImGui.Combo("Culling Mode", ref cullMode, cullModes, cullModes.Length))
+                    {
+                        BeginEdit("Culling Mode");
+                        mat.CullingMode = Math.Clamp(cullMode, 0, 2);
+
+                        // Invalidate material cache to ensure new CullingMode is picked up
+                        Engine.Assets.AssetDatabase.InvalidateMaterial(guid);
+
+                        SaveAndApplyImmediate(guid, mat, "Culling Mode");
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        string tooltip = cullMode switch
+                        {
+                            0 => "Back: Cull back faces (default for terrain)\nBest performance.",
+                            1 => "Front: Cull front faces (rarely used for terrain)\nSpecial use case only.",
+                            2 => "None: Render both sides (for special terrain effects)\nDouble-sided rendering, performance cost.",
+                            _ => "Which faces to cull during rendering"
+                        };
+                        ImGui.SetTooltip(tooltip);
+                    }
+                }
+                
                 return; // Skip all other material properties
             }
 

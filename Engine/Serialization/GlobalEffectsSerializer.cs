@@ -115,8 +115,36 @@ namespace Engine.Serialization
                         effectData["samplecount"] = motionBlur.SampleCount;
                         effectData["maxblurradius"] = motionBlur.MaxBlurRadius;
                         break;
+
+                    case ColorGradingEffect colorGrading:
+                        effectData["source"] = colorGrading.Source.ToString();
+                        effectData["blendfactor"] = colorGrading.BlendFactor;
+                        // Manual parameters
+                        effectData["saturation"] = colorGrading.Saturation;
+                        effectData["contrast"] = colorGrading.Contrast;
+                        effectData["brightness"] = colorGrading.Brightness;
+                        effectData["colorfilter"] = new[] { colorGrading.ColorFilter.X, colorGrading.ColorFilter.Y, colorGrading.ColorFilter.Z };
+                        effectData["temperature"] = colorGrading.Temperature;
+                        effectData["tint"] = colorGrading.Tint;
+                        effectData["hueshift"] = colorGrading.HueShift;
+                        effectData["vibrance"] = colorGrading.Vibrance;
+                        // Time of day presets
+                        effectData["nightsaturation"] = colorGrading.NightSaturation;
+                        effectData["nightcontrast"] = colorGrading.NightContrast;
+                        effectData["nighttemperature"] = colorGrading.NightTemperature;
+                        effectData["daysaturation"] = colorGrading.DaySaturation;
+                        effectData["daycontrast"] = colorGrading.DayContrast;
+                        effectData["daytemperature"] = colorGrading.DayTemperature;
+                        effectData["sunrisesaturation"] = colorGrading.SunriseSaturation;
+                        effectData["sunrisecontrast"] = colorGrading.SunriseContrast;
+                        effectData["sunrisetemperature"] = colorGrading.SunriseTemperature;
+                        effectData["sunsetsaturation"] = colorGrading.SunsetSaturation;
+                        effectData["sunsetcontrast"] = colorGrading.SunsetContrast;
+                        effectData["sunsettemperature"] = colorGrading.SunsetTemperature;
+                        effectData["transitionspeed"] = colorGrading.TransitionSpeed;
+                        break;
                 }
-                
+
                 effectsData.Add(effectData);
             }
             
@@ -156,6 +184,7 @@ namespace Engine.Serialization
                         "Engine.Rendering.GTAOEffect" or "GTAOEffect" => new GTAOEffect(),
                         "Engine.Rendering.DepthOfFieldEffect" or "DepthOfFieldEffect" => new DepthOfFieldEffect(),
                         "Engine.Rendering.MotionBlurEffect" or "MotionBlurEffect" => new MotionBlurEffect(),
+                        "Engine.Rendering.ColorGradingEffect" or "ColorGradingEffect" => new ColorGradingEffect(),
                         _ => null
                     };
                     
@@ -318,8 +347,66 @@ namespace Engine.Serialization
                             if (effectObj.TryGetValue("maxblurradius", out var maxBlurRadiusElement))
                                 motionBlur.MaxBlurRadius = maxBlurRadiusElement.GetSingle();
                             break;
+
+                        case ColorGradingEffect colorGrading:
+                            if (effectObj.TryGetValue("source", out var sourceElement))
+                            {
+                                if (Enum.TryParse<ColorGradingEffect.ColorGradingSource>(sourceElement.GetString(), out var source))
+                                    colorGrading.Source = source;
+                            }
+                            if (effectObj.TryGetValue("blendfactor", out var blendFactorElement))
+                                colorGrading.BlendFactor = blendFactorElement.GetSingle();
+                            // Manual parameters
+                            if (effectObj.TryGetValue("saturation", out var saturationElement))
+                                colorGrading.Saturation = saturationElement.GetSingle();
+                            if (effectObj.TryGetValue("contrast", out var contrastElement))
+                                colorGrading.Contrast = contrastElement.GetSingle();
+                            if (effectObj.TryGetValue("brightness", out var brightnessElement))
+                                colorGrading.Brightness = brightnessElement.GetSingle();
+                            if (effectObj.TryGetValue("colorfilter", out var colorFilterElement))
+                            {
+                                var arr = colorFilterElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    colorGrading.ColorFilter = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("temperature", out var tempElement))
+                                colorGrading.Temperature = tempElement.GetSingle();
+                            if (effectObj.TryGetValue("tint", out var tintElement))
+                                colorGrading.Tint = tintElement.GetSingle();
+                            if (effectObj.TryGetValue("hueshift", out var hueShiftElement))
+                                colorGrading.HueShift = hueShiftElement.GetSingle();
+                            if (effectObj.TryGetValue("vibrance", out var vibranceElement))
+                                colorGrading.Vibrance = vibranceElement.GetSingle();
+                            // Time of day presets
+                            if (effectObj.TryGetValue("nightsaturation", out var nightSatElement))
+                                colorGrading.NightSaturation = nightSatElement.GetSingle();
+                            if (effectObj.TryGetValue("nightcontrast", out var nightContElement))
+                                colorGrading.NightContrast = nightContElement.GetSingle();
+                            if (effectObj.TryGetValue("nighttemperature", out var nightTempElement))
+                                colorGrading.NightTemperature = nightTempElement.GetSingle();
+                            if (effectObj.TryGetValue("daysaturation", out var daySatElement))
+                                colorGrading.DaySaturation = daySatElement.GetSingle();
+                            if (effectObj.TryGetValue("daycontrast", out var dayContElement))
+                                colorGrading.DayContrast = dayContElement.GetSingle();
+                            if (effectObj.TryGetValue("daytemperature", out var dayTempElement))
+                                colorGrading.DayTemperature = dayTempElement.GetSingle();
+                            if (effectObj.TryGetValue("sunrisesaturation", out var sunriseSatElement))
+                                colorGrading.SunriseSaturation = sunriseSatElement.GetSingle();
+                            if (effectObj.TryGetValue("sunrisecontrast", out var sunriseContElement))
+                                colorGrading.SunriseContrast = sunriseContElement.GetSingle();
+                            if (effectObj.TryGetValue("sunrisetemperature", out var sunriseTempElement))
+                                colorGrading.SunriseTemperature = sunriseTempElement.GetSingle();
+                            if (effectObj.TryGetValue("sunsetsaturation", out var sunsetSatElement))
+                                colorGrading.SunsetSaturation = sunsetSatElement.GetSingle();
+                            if (effectObj.TryGetValue("sunsetcontrast", out var sunsetContElement))
+                                colorGrading.SunsetContrast = sunsetContElement.GetSingle();
+                            if (effectObj.TryGetValue("sunsettemperature", out var sunsetTempElement))
+                                colorGrading.SunsetTemperature = sunsetTempElement.GetSingle();
+                            if (effectObj.TryGetValue("transitionspeed", out var transSpeedElement))
+                                colorGrading.TransitionSpeed = transSpeedElement.GetSingle();
+                            break;
                     }
-                    
+
                     component.AddEffect(effect);
                 }
             }
