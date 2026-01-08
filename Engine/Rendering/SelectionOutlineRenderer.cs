@@ -284,9 +284,37 @@ namespace Engine.Rendering
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _stencilFbo);
             GL.Viewport(0, 0, _width, _height);
 
+            // CRITICAL: Ensure we're drawing to ColorAttachment0
+            GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
+
+            // Verify FBO status
+            var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Stencil FBO status after bind: {fboStatus}");
+
             // Clear to BLACK (object will be rendered as white)
             GL.ClearColor(0, 0, 0, 0);
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+
+            // DEBUG TEST: Skip rendering and just clear to white to test if outline works
+            bool TEST_SKIP_RENDER_CLEAR_WHITE = false;
+            if (TEST_SKIP_RENDER_CLEAR_WHITE)
+            {
+                System.Console.WriteLine($"[SelectionOutlineRenderer] TEST: Clearing stencil to WHITE instead of rendering");
+                GL.ClearColor(1, 1, 1, 1);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
+
+                // Early return - skip rendering entirely
+                GL.UseProgram(0);
+                GL.DepthMask(true);
+                GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                System.Console.WriteLine($"[SelectionOutlineRenderer] TEST: Stencil cleared to white, PASS 1 complete");
+                return;
+            }
+
+            // Verify clear worked by reading a pixel
+            byte[] afterClearPixel = new byte[1];
+            GL.ReadPixels(_width / 2, _height / 2, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, afterClearPixel);
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Center pixel AFTER clear: {afterClearPixel[0]} (should be 0)");
 
             // Use stencil shader
             GL.UseProgram(_stencilShader);
@@ -295,30 +323,61 @@ namespace Engine.Rendering
             int viewLoc = GL.GetUniformLocation(_stencilShader, "u_View");
             int projLoc = GL.GetUniformLocation(_stencilShader, "u_Projection");
             System.Console.WriteLine($"[SelectionOutlineRenderer] u_View loc={viewLoc}, u_Projection loc={projLoc}");
+
+            // DEBUG: Print matrices to verify they're not zero/invalid
+            System.Console.WriteLine($"[SelectionOutlineRenderer] View M11={view.M11:F3}, M14={view.M14:F3}, M41={view.M41:F3}, M44={view.M44:F3}");
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Proj M11={projection.M11:F3}, M33={projection.M33:F3}, M34={projection.M34:F3}, M44={projection.M44:F3}");
+
             GL.UniformMatrix4(viewLoc, false, ref view);
             GL.UniformMatrix4(projLoc, false, ref projection);
 
             // DISABLE depth test and depth write to ensure rendering works
             GL.Disable(EnableCap.DepthTest);
             GL.DepthMask(false);
-            GL.Disable(EnableCap.CullFace);
 
-            // Render the object (callback will bind VAO and draw)
-            System.Console.WriteLine($"[SelectionOutlineRenderer] Calling render callback...");
+            // CRITICAL: Render object TWICE to capture full silhouette
+            // Once with front faces, once with back faces
+            // This ensures complete outline regardless of viewing angle
 
-            // Check GL errors before draw
-            var errBefore = GL.GetError();
-            if (errBefore != ErrorCode.NoError)
-                System.Console.WriteLine($"[SelectionOutlineRenderer] GL ERROR BEFORE DRAW: {errBefore}");
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Rendering front faces...");
+            GL.Enable(EnableCap.CullFace);
+            GL.CullFace(TriangleFace.Back);  // Render front faces
+
+            // Verify shader is still bound before callback
+            int programBefore = GL.GetInteger(GetPName.CurrentProgram);
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Program BEFORE callback: {programBefore} (should be {_stencilShader})");
 
             renderObjectCallback();
 
-            // Check GL errors after draw
-            var errAfter = GL.GetError();
-            if (errAfter != ErrorCode.NoError)
-                System.Console.WriteLine($"[SelectionOutlineRenderer] GL ERROR AFTER DRAW: {errAfter}");
+            // Check if callback changed the shader
+            int programAfter = GL.GetInteger(GetPName.CurrentProgram);
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Program AFTER callback: {programAfter} (should still be {_stencilShader})");
 
-            System.Console.WriteLine($"[SelectionOutlineRenderer] Callback returned");
+            // Rebind shader and matrices if callback changed them
+            if (programAfter != _stencilShader)
+            {
+                System.Console.WriteLine($"[SelectionOutlineRenderer] WARNING: Callback changed shader! Rebinding...");
+                GL.UseProgram(_stencilShader);
+                GL.UniformMatrix4(viewLoc, false, ref view);
+                GL.UniformMatrix4(projLoc, false, ref projection);
+            }
+
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Rendering back faces...");
+            GL.CullFace(TriangleFace.Front);  // Render back faces
+            renderObjectCallback();
+
+            // Check again after second callback
+            programAfter = GL.GetInteger(GetPName.CurrentProgram);
+            if (programAfter != _stencilShader)
+            {
+                System.Console.WriteLine($"[SelectionOutlineRenderer] WARNING: Second callback changed shader!");
+                GL.UseProgram(_stencilShader);
+                GL.UniformMatrix4(viewLoc, false, ref view);
+                GL.UniformMatrix4(projLoc, false, ref projection);
+            }
+
+            GL.Disable(EnableCap.CullFace);
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Both passes complete");
 
             GL.UseProgram(0);
 
@@ -329,21 +388,28 @@ namespace Engine.Rendering
             GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _stencilFbo);
             GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
 
-            // Sample center
-            byte[] centerPixel = new byte[1];
-            GL.ReadPixels(_width / 2, _height / 2, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, centerPixel);
+            // Count how many white pixels we have in stencil buffer
+            int whitePixelCount = 0;
+            int sampleCount = 0;
 
-            // Sample corners and edges to find white pixels
-            byte[] topLeft = new byte[1];
-            byte[] topRight = new byte[1];
-            byte[] bottomLeft = new byte[1];
-            byte[] bottomRight = new byte[1];
-            GL.ReadPixels(_width / 4, _height / 4, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, topLeft);
-            GL.ReadPixels(3 * _width / 4, _height / 4, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, topRight);
-            GL.ReadPixels(_width / 4, 3 * _height / 4, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, bottomLeft);
-            GL.ReadPixels(3 * _width / 4, 3 * _height / 4, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, bottomRight);
+            // Sample a 5x5 grid across the screen
+            for (int y = 0; y < 5; y++)
+            {
+                for (int x = 0; x < 5; x++)
+                {
+                    int px = (x + 1) * _width / 6;  // Divide screen into 6 parts, sample at 1/6, 2/6, 3/6, 4/6, 5/6
+                    int py = (y + 1) * _height / 6;
 
-            System.Console.WriteLine($"[SelectionOutlineRenderer] Stencil FBO samples: center={centerPixel[0]}, TL={topLeft[0]}, TR={topRight[0]}, BL={bottomLeft[0]}, BR={bottomRight[0]}");
+                    byte[] pixel = new byte[1];
+                    GL.ReadPixels(px, py, 1, 1, PixelFormat.Red, PixelType.UnsignedByte, pixel);
+
+                    sampleCount++;
+                    if (pixel[0] > 128) whitePixelCount++;  // Consider > 128 as white
+                }
+            }
+
+            float coverage = (float)whitePixelCount / sampleCount * 100f;
+            System.Console.WriteLine($"[SelectionOutlineRenderer] Stencil coverage: {whitePixelCount}/{sampleCount} samples ({coverage:F1}%) are white");
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
@@ -488,7 +554,7 @@ namespace Engine.Rendering
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
             GL.Enable(EnableCap.CullFace);
-            GL.CullFace(CullFaceMode.Back);
+            GL.CullFace(TriangleFace.Back);
             GL.FrontFace(FrontFaceDirection.Ccw);
 
             // Unbind all textures
