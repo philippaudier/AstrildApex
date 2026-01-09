@@ -1059,6 +1059,29 @@ namespace Engine.Rendering.Terrain
             }
         }
 
+        /// <summary>
+        /// Render terrain tiles for shadow pass (InfiniteStreaming mode only)
+        /// Simple geometry-only rendering with provided shadow shader
+        /// </summary>
+        public void RenderShadowPass(Engine.Rendering.ShaderProgram shadowShader, System.Numerics.Vector3 cameraPos)
+        {
+            if (_tileManager == null || shadowShader == null)
+                return;
+
+            // Render all visible tiles with shadow shader
+            _tileManager.ForEachRenderable(tile =>
+            {
+                if (tile.Vao != 0 && tile.IndexCount > 0)
+                {
+                    // Bind tile VAO and render
+                    GL.BindVertexArray(tile.Vao);
+                    GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
+                }
+            });
+
+            GL.BindVertexArray(0);
+        }
+
         private MaterialAsset? GetMaterialCached(Guid materialGuid)
         {
             // Try to get from cache first

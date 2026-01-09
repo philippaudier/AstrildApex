@@ -264,6 +264,14 @@ namespace Engine.Rendering
         public bool WaterForwardFlipReflectionX = false;
         public bool WaterForwardFlipReflectionY = false;
         public float WaterForwardReflectionClipPlaneOffset = 0.05f;
+        // Phase 7: Gerstner Wave Fine-Tuning (FBM parameters)
+        public int WaterForwardWaveOctaves = 6; // Number of wave iterations (1-8)
+        public float WaterForwardWaveLacunarity = 1.18f; // Frequency multiplier per octave
+        public float WaterForwardWaveGain = 0.2f; // Weight decay per octave (0-1)
+        public float WaterForwardWaveSteepness = 0.6f; // Wave sharpness (0=sine, 1=peaked)
+        // Phase 8: Domain Warping
+        public float WaterForwardDomainWarpStrength = 0.0f; // Domain warping strength (0=off, 0.1-0.5=subtle, >0.5=strong)
+        public float WaterForwardDomainWarpFrequency = 0.5f; // Domain warp frequency scale
 
         // VegetationForward shader properties (wind animation)
         public int VegetationWindMode = 0; // 0=Global, 1=Local, 2=Blend

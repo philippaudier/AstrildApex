@@ -126,7 +126,52 @@ namespace Engine.Components
         
         [Serialization.SerializableAttribute("fogEnd")]
         public float FogEnd { get; set; } = 300.0f; // Linear fog end distance
-        
+
+        // === CLOUD PARAMETERS ===
+
+        [Serialization.SerializableAttribute("cloudEnabled")]
+        public bool CloudEnabled { get; set; } = false; // Enable/disable cloud rendering
+
+        [Serialization.SerializableAttribute("cloudCoverage")]
+        public float CloudCoverage { get; set; } = 0.5f; // 0.0 = clear sky, 1.0 = overcast
+
+        [Serialization.SerializableAttribute("cloudDensity")]
+        public float CloudDensity { get; set; } = 0.8f; // 0.0 = transparent, 1.0 = opaque
+
+        [Serialization.SerializableAttribute("cloudType")]
+        public CloudType CloudType { get; set; } = CloudType.Cumulus; // Type of clouds
+
+        [Serialization.SerializableAttribute("cloudScattering")]
+        public float CloudScattering { get; set; } = 0.6f; // Sun scattering intensity
+
+        [Serialization.SerializableAttribute("cloudAmbient")]
+        public float CloudAmbient { get; set; } = 0.3f; // Ambient lighting contribution
+
+        [Serialization.SerializableAttribute("cloudSpeed")]
+        public float CloudSpeed { get; set; } = 1.0f; // Animation speed multiplier
+
+        [Serialization.SerializableAttribute("cloudTurbulence")]
+        public float CloudTurbulence { get; set; } = 0.5f; // Shape distortion over time
+
+        [Serialization.SerializableAttribute("cloudDetailSpeed")]
+        public float CloudDetailSpeed { get; set; } = 0.5f; // Detail evolution speed (organic shape changes)
+
+        // Fine-tune parameters for advanced cloud control
+        [Serialization.SerializableAttribute("cloudNoiseScale")]
+        public float CloudNoiseScale { get; set; } = 1.0f; // Global noise scale multiplier (0.1-5.0)
+
+        [Serialization.SerializableAttribute("cloudMorphSpeed")]
+        public float CloudMorphSpeed { get; set; } = 0.5f; // Organic morphing speed (0.0-2.0)
+
+        [Serialization.SerializableAttribute("cloudEdgeSoftness")]
+        public float CloudEdgeSoftness { get; set; } = 0.5f; // Edge softness/hardness (0.0-1.0)
+
+        [Serialization.SerializableAttribute("cloudBillowiness")]
+        public float CloudBillowiness { get; set; } = 0.6f; // Cotton/billowy appearance strength (0.0-1.0)
+
+        [Serialization.SerializableAttribute("cloudDetailStrength")]
+        public float CloudDetailStrength { get; set; } = 0.5f; // Fine detail strength (0.0-1.0)
+
         // === MATERIAL REFERENCES ===
         
         [Serialization.SerializableAttribute("wetnessMapMaterial")]
@@ -246,23 +291,30 @@ namespace Engine.Components
     public sealed class WeatherPreset
     {
         public string Name { get; set; } = "Custom";
-        
+
         public float WindStrength { get; set; }
         public float WindDirectionX { get; set; }
         public float WindDirectionZ { get; set; }
         public float WindSpeed { get; set; }
         public float WindGustiness { get; set; }
-        
+
         public float RainIntensity { get; set; }
         public float SnowIntensity { get; set; }
         public float SnowAccumulation { get; set; }
         public float Wetness { get; set; }
-        
+
         public bool FogEnabled { get; set; }
         public float FogDensity { get; set; }
         public float FogStart { get; set; }
         public float FogEnd { get; set; }
         public Vector3 FogColor { get; set; }
+
+        // Cloud parameters
+        public bool CloudEnabled { get; set; }
+        public float CloudCoverage { get; set; }
+        public float CloudDensity { get; set; }
+        public CloudType CloudType { get; set; }
+        public float CloudScattering { get; set; }
 
         // === BUILT-IN PRESETS ===
         
@@ -282,7 +334,12 @@ namespace Engine.Components
             FogDensity = 0.0f,
             FogStart = 10.0f,
             FogEnd = 300.0f,
-            FogColor = new Vector3(0.7f, 0.8f, 0.9f)
+            FogColor = new Vector3(0.7f, 0.8f, 0.9f),
+            CloudEnabled = true,
+            CloudCoverage = 0.15f,
+            CloudDensity = 0.5f,
+            CloudType = CloudType.Cirrus,
+            CloudScattering = 0.7f
         };
 
         public static WeatherPreset Windy => new WeatherPreset
@@ -320,7 +377,12 @@ namespace Engine.Components
             FogDensity = 0.02f,
             FogStart = 20.0f,
             FogEnd = 200.0f,
-            FogColor = new Vector3(0.6f, 0.65f, 0.7f)
+            FogColor = new Vector3(0.6f, 0.65f, 0.7f),
+            CloudEnabled = true,
+            CloudCoverage = 0.6f,
+            CloudDensity = 0.75f,
+            CloudType = CloudType.Stratus,
+            CloudScattering = 0.4f
         };
 
         public static WeatherPreset HeavyRain => new WeatherPreset
@@ -339,7 +401,12 @@ namespace Engine.Components
             FogDensity = 0.05f,
             FogStart = 10.0f,
             FogEnd = 150.0f,
-            FogColor = new Vector3(0.5f, 0.55f, 0.6f)
+            FogColor = new Vector3(0.5f, 0.55f, 0.6f),
+            CloudEnabled = true,
+            CloudCoverage = 0.85f,
+            CloudDensity = 0.9f,
+            CloudType = CloudType.Cumulus,
+            CloudScattering = 0.3f
         };
 
         public static WeatherPreset Storm => new WeatherPreset
@@ -358,7 +425,12 @@ namespace Engine.Components
             FogDensity = 0.08f,
             FogStart = 5.0f,
             FogEnd = 100.0f,
-            FogColor = new Vector3(0.4f, 0.45f, 0.5f)
+            FogColor = new Vector3(0.4f, 0.45f, 0.5f),
+            CloudEnabled = true,
+            CloudCoverage = 0.95f,
+            CloudDensity = 1.0f,
+            CloudType = CloudType.Storm,
+            CloudScattering = 0.2f
         };
 
         public static WeatherPreset LightSnow => new WeatherPreset
@@ -442,8 +514,19 @@ namespace Engine.Components
         /// </summary>
         public static WeatherPreset[] GetAllPresets() => new[]
         {
-            Clear, Windy, LightRain, HeavyRain, Storm, 
+            Clear, Windy, LightRain, HeavyRain, Storm,
             LightSnow, HeavySnow, Blizzard, Foggy
         };
+    }
+
+    /// <summary>
+    /// Cloud type enumeration for different cloud appearances
+    /// </summary>
+    public enum CloudType
+    {
+        Cirrus = 0,      // Thin, wispy, high-altitude clouds
+        Cumulus = 1,     // Fluffy, puffy, cotton-like clouds
+        Stratus = 2,     // Layered, uniform, low-altitude clouds
+        Storm = 3        // Dense, dark, turbulent storm clouds
     }
 }

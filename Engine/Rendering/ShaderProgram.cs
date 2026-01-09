@@ -43,6 +43,20 @@ namespace Engine.Rendering
         /// </summary>
         public static ShaderProgram FromSource(string vertSrc, string fragSrc, string? tcsSrc = null, string? tesSrc = null)
         {
+            // If tessellation shaders are provided, add USE_TESSELLATION define to vertex shader
+            bool hasTessellation = !string.IsNullOrEmpty(tcsSrc) && !string.IsNullOrEmpty(tesSrc);
+            if (hasTessellation)
+            {
+                // Inject #define USE_TESSELLATION right after #version
+                int versionEnd = vertSrc.IndexOf('\n');
+                if (versionEnd > 0)
+                {
+                    vertSrc = vertSrc.Substring(0, versionEnd + 1) +
+                             "#define USE_TESSELLATION\n" +
+                             vertSrc.Substring(versionEnd + 1);
+                }
+            }
+
             int v = GL.CreateShader(ShaderType.VertexShader);
             GL.ShaderSource(v, vertSrc);
             GL.CompileShader(v);

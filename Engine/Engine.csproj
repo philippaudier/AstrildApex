@@ -93,6 +93,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Includes\IBL.glsl</Link>
     </None>
+    <None Update="Rendering\Shaders\Includes\CloudNoise.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Includes\CloudNoise.glsl</Link>
+    </None>
     <!-- NOTE: SSAO.glsl include removed - SSAO is now a post-processing effect -->
     <!-- AO Shaders (GTAO only, SSAO removed) -->
     <None Update="Rendering\Shaders\AO\Prefilter.vert">
@@ -176,6 +180,22 @@
     <None Update="Rendering\Shaders\Effects\EdgeDetection.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Effects\EdgeDetection.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\starfield.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\starfield.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\starfield.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\starfield.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\clouds.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\clouds.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Effects\clouds.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Effects\clouds.frag</Link>
     </None>
     <!-- Post-Process Shaders -->
     <None Update="Rendering\Shaders\PostProcess\fullscreen.vert">

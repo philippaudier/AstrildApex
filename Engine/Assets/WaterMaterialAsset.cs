@@ -86,6 +86,16 @@ namespace Engine.Assets
         public bool FlipReflectionY { get; set; } = false;      // Flip reflection vertically
         public float ReflectionClipPlaneOffset { get; set; } = 0.05f; // Offset above water level for clipping plane (prevents terrain bleeding through)
 
+        // === PHASE 7: Gerstner Wave Fine-Tuning (FBM parameters) ===
+        public int WaveOctaves { get; set; } = 6;               // Number of wave iterations/octaves (1-8, default 6)
+        public float WaveLacunarity { get; set; } = 1.18f;      // Frequency multiplier per octave (1.0-2.0, default 1.18)
+        public float WaveGain { get; set; } = 0.2f;             // Weight decay per octave (0.0-1.0, default 0.2)
+        public float WaveSteepness { get; set; } = 0.6f;        // Wave sharpness (0.0=sine wave, 1.0=peaked, default 0.6)
+
+        // === PHASE 8: Domain Warping ===
+        public float DomainWarpStrength { get; set; } = 0.0f;   // Domain warping strength (0.0=off, 0.1-0.5=subtle, >0.5=strong, default 0.0)
+        public float DomainWarpFrequency { get; set; } = 0.5f;  // Domain warp noise frequency scale (0.1-2.0, default 0.5)
+
         // Water presets
         public static WaterProperties CreateClearWater() => new WaterProperties
         {

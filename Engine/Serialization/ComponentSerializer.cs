@@ -594,6 +594,18 @@ namespace Engine.Serialization
                 var key = attr.Name ?? field.Name.ToLowerInvariant();
                 ResolveMember(v => field.SetValue(component, v), field.FieldType, key);
             }
+
+            // If the component defines an optional post-deserialize hook, invoke it so components
+            // can repair or initialize derived/default values after deserialization.
+            try
+            {
+                var hook = type.GetMethod("OnAfterDeserialize", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+                if (hook != null)
+                {
+                    hook.Invoke(component, null);
+                }
+            }
+            catch { }
         }
     }
 

@@ -454,15 +454,9 @@ namespace Editor.Panels
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
                         }
+
                         ImGui.EndMenu();
                     }
-                    // Water menu item removed - will be reimplemented later
-                    // if (ImGui.MenuItem("Water"))
-                    // {
-                    //     var water = scene.CreateWater("Water", new Vec3(0, 0, 0), 100f, 100f);
-                    //     Selection.SetSingle(water.Id);
-                    //     EditorUI.MainViewport.UpdateGizmoPivot();
-                    // }
                     // UX menu supprimé (Separator)
                     if (ImGui.BeginMenu("Light"))
                     {

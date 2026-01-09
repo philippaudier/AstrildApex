@@ -115,13 +115,14 @@ namespace Engine.Rendering.Shadows
 
             // Enable polygon offset (depth bias) to reduce shadow acne and artifacts
             // This is especially helpful when light is at grazing angles
+            // Increased values to handle horizon lighting and steep angles
             GL.Enable(EnableCap.PolygonOffsetFill);
-            GL.PolygonOffset(2.0f, 4.0f); // Factor and units - adjust if needed
+            GL.PolygonOffset(4.0f, 8.0f); // Factor and units - higher for grazing angles
 
-            // Enable front-face culling to reduce peter-panning
-            // This renders only back faces to the shadow map
-            GL.Enable(EnableCap.CullFace);
-            GL.CullFace(TriangleFace.Front);
+            // Disable face culling for shadow pass to prevent holes when light comes from side/below
+            // Terrain geometry was being culled with front-face culling, creating shadow holes
+            // Polygon offset should be sufficient to prevent shadow acne
+            GL.Disable(EnableCap.CullFace);
         }
 
         /// <summary>
@@ -134,7 +135,8 @@ namespace Engine.Rendering.Shadows
             // Disable polygon offset
             GL.Disable(EnableCap.PolygonOffsetFill);
 
-            // Restore back-face culling
+            // Re-enable back-face culling for normal rendering
+            GL.Enable(EnableCap.CullFace);
             GL.CullFace(TriangleFace.Back);
         }
 
@@ -161,20 +163,21 @@ namespace Engine.Rendering.Shadows
             }
 
             // Position light far enough to encompass the scene
-            // Use larger distance to ensure terrain edges are covered
-            Vector3 lightPos = sceneCenter - lightDirection * sceneRadius * 3.0f;
+            // Use very large distance to ensure terrain edges are covered at all angles
+            // Especially important when light is at/below horizon
+            Vector3 lightPos = sceneCenter - lightDirection * sceneRadius * 5.0f;
 
             // Create view matrix looking from light toward scene center
             Matrix4 lightView = Matrix4.LookAt(lightPos, sceneCenter, up);
 
             // Create orthographic projection that encompasses the scene
-            // Increase margin to prevent shadow edges/cutoff
-            float orthoSize = sceneRadius * 2.0f; // 2.0x margin for better coverage
+            // Increase margin to prevent shadow edges/cutoff at all angles
+            float orthoSize = sceneRadius * 2.5f; // 2.5x margin for better coverage at extreme angles
             Matrix4 lightProjection = Matrix4.CreateOrthographic(
-                orthoSize * 2.0f,  // width
-                orthoSize * 2.0f,  // height
-                0.1f,              // near plane
-                sceneRadius * 6.0f // far plane (increased for better depth range)
+                orthoSize * 2.0f,   // width
+                orthoSize * 2.0f,   // height
+                0.1f,               // near plane
+                sceneRadius * 10.0f // far plane (very large to cover horizon lighting)
             );
 
             // Combine view and projection

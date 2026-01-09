@@ -148,10 +148,19 @@ namespace Engine.Rendering
             }
             try
             {
-                string tescInfo = paths.tesc != null ? $" + tesc" : "";
-                string teseInfo = paths.tese != null ? $" + tese" : "";
+                // TEMPORARY: Disable tessellation for WaterForward (use on regular planes)
+                string? tescPath = paths.tesc;
+                string? tesePath = paths.tese;
+                if (string.Equals(name, "WaterForward", StringComparison.OrdinalIgnoreCase))
+                {
+                    tescPath = null;
+                    tesePath = null;
+                }
+
+                string tescInfo = tescPath != null ? $" + tesc" : "";
+                string teseInfo = tesePath != null ? $" + tese" : "";
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Loading shader {name} from {paths.vert} and {paths.frag}{tescInfo}{teseInfo}"); } catch { }
-                var p = ShaderProgram.FromFiles(paths.vert, paths.frag, paths.tesc, paths.tese);
+                var p = ShaderProgram.FromFiles(paths.vert, paths.frag, tescPath, tesePath);
                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ShaderLibrary] Successfully compiled shader {name}"); } catch { }
                 // Bind global uniform block if present
                 try

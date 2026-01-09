@@ -59,6 +59,54 @@ namespace Engine.Components
         [NonSerialized]
         private float _accumulatedTime = 0.0f; // For day advancement
 
+        // === PROCEDURAL SKY OVERRIDES (per-phase configurable via Inspector) ===
+
+        [Serialization.SerializableAttribute("daySkyTint")]
+        public System.Numerics.Vector3 DaySkyTint { get; set; } = new System.Numerics.Vector3(0.53f, 0.66f, 0.97f); // Bright sky blue
+
+        [Serialization.SerializableAttribute("nightSkyTint")]
+        public System.Numerics.Vector3 NightSkyTint { get; set; } = new System.Numerics.Vector3(0.12f, 0.15f, 0.25f); // Deep blue night sky
+
+        [Serialization.SerializableAttribute("dawnSkyTint")]
+        public System.Numerics.Vector3 DawnSkyTint { get; set; } = new System.Numerics.Vector3(1.0f, 0.7f, 0.5f); // Orange-pink sunrise
+
+        [Serialization.SerializableAttribute("duskSkyTint")]
+        public System.Numerics.Vector3 DuskSkyTint { get; set; } = new System.Numerics.Vector3(1.0f, 0.6f, 0.4f); // Deep orange sunset
+
+        [Serialization.SerializableAttribute("dayGroundColor")]
+        public System.Numerics.Vector3 DayGroundColor { get; set; } = new System.Numerics.Vector3(0.40f, 0.35f, 0.30f); // Brown earth
+
+        [Serialization.SerializableAttribute("nightGroundColor")]
+        public System.Numerics.Vector3 NightGroundColor { get; set; } = new System.Numerics.Vector3(0.08f, 0.09f, 0.12f); // Dark blue-grey ground
+
+        [Serialization.SerializableAttribute("dayAtmosphereThickness")]
+        public float DayAtmosphereThickness { get; set; } = 1.0f;
+
+        [Serialization.SerializableAttribute("nightAtmosphereThickness")]
+        public float NightAtmosphereThickness { get; set; } = 0.6f;
+
+        [Serialization.SerializableAttribute("dawnDuskAtmosphereThickness")]
+        public float DawnDuskAtmosphereThickness { get; set; } = 1.5f;
+
+        // Sun/Moon visual parameters (time-driven overrides)
+        [Serialization.SerializableAttribute("daySunSize")]
+        public float DaySunSize { get; set; } = 0.04f;
+
+        [Serialization.SerializableAttribute("nightMoonSize")]
+        public float NightMoonSize { get; set; } = 0.02f;
+
+        [Serialization.SerializableAttribute("dawnDuskSunSize")]
+        public float DawnDuskSunSize { get; set; } = 0.06f;
+
+        [Serialization.SerializableAttribute("daySunConvergence")]
+        public float DaySunConvergence { get; set; } = 5.0f;
+
+        [Serialization.SerializableAttribute("nightMoonConvergence")]
+        public float NightMoonConvergence { get; set; } = 3.0f;
+
+        [Serialization.SerializableAttribute("dawnDuskSunConvergence")]
+        public float DawnDuskSunConvergence { get; set; } = 8.0f;
+
         /// <summary>
         /// Auto-detect and update linked entities. Call this from Inspector in Edit mode.
         /// In Play mode, Update() handles this automatically.
@@ -130,6 +178,44 @@ namespace Engine.Components
                         envSettings.DayOfYear = DayOfYear;
                         envSettings.Latitude = Latitude;
                         envSettings.UpdateCelestialBodies(TimeOfDay, DayOfYear, Latitude);
+                        // Apply smooth procedural sky overrides from TimeComponent based on current blends
+                        try
+                        {
+                            float dayNight = GetDayNightBlend();
+                            float golden = GetGoldenHourBlend();
+                            bool isMorning = TimeOfDay < 12.0f;
+
+                            // Base lerp between night and day
+                            var baseSky = LerpVec3(NightSkyTint, DaySkyTint, dayNight);
+                            var baseGround = LerpVec3(NightGroundColor, DayGroundColor, dayNight);
+                            float baseAt = MathHelper.Lerp(NightAtmosphereThickness, DayAtmosphereThickness, dayNight);
+
+                            // Golden hour target (dawn or dusk)
+                            var goldenTargetSky = isMorning ? DawnSkyTint : DuskSkyTint;
+                            float goldenAtTarget = DawnDuskAtmosphereThickness;
+
+                            // Final values blend towards golden hour target when golden > 0
+                            var finalSky = LerpVec3(baseSky, goldenTargetSky, golden);
+                            var finalGround = LerpVec3(baseGround, goldenTargetSky, golden); // slight tint towards golden sky for ground
+                            float finalAt = MathHelper.Lerp(baseAt, goldenAtTarget, golden);
+
+                            // Sun size and convergence: blend between night (moon) and day (sun), then apply golden
+                            float baseSunSize = MathHelper.Lerp(NightMoonSize, DaySunSize, dayNight);
+                            float baseConvergence = MathHelper.Lerp(NightMoonConvergence, DaySunConvergence, dayNight);
+                            float finalSunSize = MathHelper.Lerp(baseSunSize, DawnDuskSunSize, golden);
+                            float finalConvergence = MathHelper.Lerp(baseConvergence, DawnDuskSunConvergence, golden);
+
+                            var overrides = new Engine.Components.ProceduralSkyboxParameters();
+                            overrides.SkyTint = new OpenTK.Mathematics.Vector3(finalSky.X, finalSky.Y, finalSky.Z);
+                            overrides.GroundColor = new OpenTK.Mathematics.Vector3(finalGround.X, finalGround.Y, finalGround.Z);
+                            overrides.AtmosphereThickness = finalAt;
+                            overrides.Exposure = 0.0f;
+                            overrides.SunSize = finalSunSize;
+                            overrides.SunSizeConvergence = finalConvergence;
+
+                            envSettings.ProceduralOverrides = overrides;
+                        }
+                        catch { }
                         Console.WriteLine($"[TimeComponent] Applied TimeOfDay={TimeOfDay:F2}, DayOfYear={DayOfYear}, Latitude={Latitude:F1} to EnvironmentSettings!");
                     }
                     else
@@ -305,6 +391,40 @@ namespace Engine.Components
             return x * x * (3.0f - 2.0f * x);
         }
 
+        // Optional hook invoked by the serializer after references are resolved.
+        // Ensures sensible defaults for color fields in case old/invalid serialized data
+        // left them as (0,0,0).
+        private void OnAfterDeserialize()
+        {
+            try
+            {
+                if (DaySkyTint.X == 0f && DaySkyTint.Y == 0f && DaySkyTint.Z == 0f)
+                    DaySkyTint = new System.Numerics.Vector3(0.53f, 0.66f, 0.97f);
+                if (NightSkyTint.X == 0f && NightSkyTint.Y == 0f && NightSkyTint.Z == 0f)
+                    NightSkyTint = new System.Numerics.Vector3(0.12f, 0.15f, 0.25f);
+                if (DawnSkyTint.X == 0f && DawnSkyTint.Y == 0f && DawnSkyTint.Z == 0f)
+                    DawnSkyTint = new System.Numerics.Vector3(1.0f, 0.7f, 0.5f);
+                if (DuskSkyTint.X == 0f && DuskSkyTint.Y == 0f && DuskSkyTint.Z == 0f)
+                    DuskSkyTint = new System.Numerics.Vector3(1.0f, 0.6f, 0.4f);
+                if (DayGroundColor.X == 0f && DayGroundColor.Y == 0f && DayGroundColor.Z == 0f)
+                    DayGroundColor = new System.Numerics.Vector3(0.40f, 0.35f, 0.30f);
+                if (NightGroundColor.X == 0f && NightGroundColor.Y == 0f && NightGroundColor.Z == 0f)
+                    NightGroundColor = new System.Numerics.Vector3(0.08f, 0.09f, 0.12f);
+            }
+            catch { }
+        }
+
+        // Helper to lerp between two System.Numerics.Vector3 values
+        private System.Numerics.Vector3 LerpVec3(System.Numerics.Vector3 a, System.Numerics.Vector3 b, float t)
+        {
+            t = Math.Clamp(t, 0.0f, 1.0f);
+            return new System.Numerics.Vector3(
+                a.X + (b.X - a.X) * t,
+                a.Y + (b.Y - a.Y) * t,
+                a.Z + (b.Z - a.Z) * t
+            );
+        }
+
         /// <summary>
         /// Update EnvironmentSettings component with current time
         /// </summary>
@@ -336,6 +456,37 @@ namespace Engine.Components
                 envSettings.DayOfYear = DayOfYear;
                 envSettings.Latitude = Latitude;
                 envSettings.UpdateCelestialBodies(TimeOfDay, DayOfYear, Latitude);
+                // Runtime: apply smooth procedural overrides so skybox renderer can read them each frame
+                try
+                {
+                    float dayNight = GetDayNightBlend();
+                    float golden = GetGoldenHourBlend();
+                    bool isMorning = TimeOfDay < 12.0f;
+
+                    var baseSky = LerpVec3(NightSkyTint, DaySkyTint, dayNight);
+                    var baseGround = LerpVec3(NightGroundColor, DayGroundColor, dayNight);
+                    float baseAt = MathHelper.Lerp(NightAtmosphereThickness, DayAtmosphereThickness, dayNight);
+
+                    var goldenTargetSky = isMorning ? DawnSkyTint : DuskSkyTint;
+                    var finalSky = LerpVec3(baseSky, goldenTargetSky, golden);
+                    var finalGround = LerpVec3(baseGround, goldenTargetSky, golden);
+                    float finalAt = MathHelper.Lerp(baseAt, DawnDuskAtmosphereThickness, golden);
+
+                    float baseSunSize = MathHelper.Lerp(NightMoonSize, DaySunSize, dayNight);
+                    float baseConvergence = MathHelper.Lerp(NightMoonConvergence, DaySunConvergence, dayNight);
+                    float finalSunSize = MathHelper.Lerp(baseSunSize, DawnDuskSunSize, golden);
+                    float finalConvergence = MathHelper.Lerp(baseConvergence, DawnDuskSunConvergence, golden);
+
+                    var overrides = new Engine.Components.ProceduralSkyboxParameters();
+                    overrides.SkyTint = new OpenTK.Mathematics.Vector3(finalSky.X, finalSky.Y, finalSky.Z);
+                    overrides.GroundColor = new OpenTK.Mathematics.Vector3(finalGround.X, finalGround.Y, finalGround.Z);
+                    overrides.AtmosphereThickness = finalAt;
+                    overrides.Exposure = 0.0f;
+                    overrides.SunSize = finalSunSize;
+                    overrides.SunSizeConvergence = finalConvergence;
+                    envSettings.ProceduralOverrides = overrides;
+                }
+                catch { }
             }
         }
 

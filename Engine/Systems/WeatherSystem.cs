@@ -326,6 +326,22 @@ namespace Engine.Systems
                 _currentState.FogStart = component.FogStart;
                 _currentState.FogEnd = component.FogEnd;
                 _currentState.FogColor = component.FogColor;
+
+                // Cloud parameters
+                _currentState.CloudEnabled = component.CloudEnabled;
+                _currentState.CloudCoverage = component.CloudCoverage;
+                _currentState.CloudDensity = component.CloudDensity;
+                _currentState.CloudType = component.CloudType;
+                _currentState.CloudScattering = component.CloudScattering;
+                _currentState.CloudAmbient = component.CloudAmbient;
+                _currentState.CloudSpeed = component.CloudSpeed;
+                _currentState.CloudTurbulence = component.CloudTurbulence;
+                _currentState.CloudDetailSpeed = component.CloudDetailSpeed;
+                _currentState.CloudNoiseScale = component.CloudNoiseScale;
+                _currentState.CloudMorphSpeed = component.CloudMorphSpeed;
+                _currentState.CloudEdgeSoftness = component.CloudEdgeSoftness;
+                _currentState.CloudBillowiness = component.CloudBillowiness;
+                _currentState.CloudDetailStrength = component.CloudDetailStrength;
             }
         }
 
@@ -359,6 +375,12 @@ namespace Engine.Systems
                 _currentState.FogStart = defaultPreset.FogStart;
                 _currentState.FogEnd = defaultPreset.FogEnd;
                 _currentState.FogColor = defaultPreset.FogColor;
+
+                _currentState.CloudEnabled = defaultPreset.CloudEnabled;
+                _currentState.CloudCoverage = defaultPreset.CloudCoverage;
+                _currentState.CloudDensity = defaultPreset.CloudDensity;
+                _currentState.CloudType = defaultPreset.CloudType;
+                _currentState.CloudScattering = defaultPreset.CloudScattering;
             }
         }
 
@@ -412,6 +434,24 @@ namespace Engine.Systems
         public float FogEnd { get; set; }
         public System.Numerics.Vector3 FogColor { get; set; }
 
+        // Cloud parameters
+        public bool CloudEnabled { get; set; }
+        public float CloudCoverage { get; set; }
+        public float CloudDensity { get; set; }
+        public Components.CloudType CloudType { get; set; }
+        public float CloudScattering { get; set; }
+        public float CloudAmbient { get; set; }
+        public float CloudSpeed { get; set; }
+        public float CloudTurbulence { get; set; }
+        public float CloudDetailSpeed { get; set; }
+
+        // Cloud fine-tune parameters
+        public float CloudNoiseScale { get; set; } = 1.0f;
+        public float CloudMorphSpeed { get; set; } = 0.5f;
+        public float CloudEdgeSoftness { get; set; } = 0.5f;
+        public float CloudBillowiness { get; set; } = 0.6f;
+        public float CloudDetailStrength { get; set; } = 0.5f;
+
         /// <summary>
         /// Get normalized wind direction
         /// </summary>
@@ -459,7 +499,22 @@ namespace Engine.Systems
                 FogDensity = this.FogDensity,
                 FogStart = this.FogStart,
                 FogEnd = this.FogEnd,
-                FogColor = this.FogColor
+                FogColor = this.FogColor,
+
+                CloudEnabled = this.CloudEnabled,
+                CloudCoverage = this.CloudCoverage,
+                CloudDensity = this.CloudDensity,
+                CloudType = this.CloudType,
+                CloudScattering = this.CloudScattering,
+                CloudAmbient = this.CloudAmbient,
+                CloudSpeed = this.CloudSpeed,
+                CloudTurbulence = this.CloudTurbulence,
+                CloudDetailSpeed = this.CloudDetailSpeed,
+                CloudNoiseScale = this.CloudNoiseScale,
+                CloudMorphSpeed = this.CloudMorphSpeed,
+                CloudEdgeSoftness = this.CloudEdgeSoftness,
+                CloudBillowiness = this.CloudBillowiness,
+                CloudDetailStrength = this.CloudDetailStrength
             };
         }
     }

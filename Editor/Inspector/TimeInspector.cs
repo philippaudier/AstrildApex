@@ -34,6 +34,112 @@ namespace Editor.Inspector
             ImGui.Spacing();
 
             DrawLinkingSection(entity, time);
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            DrawSkyOverridesSection(entity, time);
+            ImGui.Spacing();
+            DrawSunMoonSection(entity, time);
+        }
+
+        private static void DrawSkyOverridesSection(Engine.Scene.Entity entity, TimeComponent time)
+        {
+            if (!InspectorWidgets.Section("🌤 Sky Overrides (Time)", defaultOpen: false)) return;
+
+            uint entityId = time.Entity?.Id ?? 0;
+
+            // Sky tints
+            var dayTint = new OpenTK.Mathematics.Vector3(time.DaySkyTint.X, time.DaySkyTint.Y, time.DaySkyTint.Z);
+            if (InspectorWidgets.ColorFieldOTK("Day Sky Tint", ref dayTint, entityId, "DaySkyTint", tooltip: "Sky tint used during daytime"))
+            {
+                time.DaySkyTint = new System.Numerics.Vector3(dayTint.X, dayTint.Y, dayTint.Z);
+            }
+
+            var nightTint = new OpenTK.Mathematics.Vector3(time.NightSkyTint.X, time.NightSkyTint.Y, time.NightSkyTint.Z);
+            if (InspectorWidgets.ColorFieldOTK("Night Sky Tint", ref nightTint, entityId, "NightSkyTint", tooltip: "Sky tint used during night"))
+            {
+                time.NightSkyTint = new System.Numerics.Vector3(nightTint.X, nightTint.Y, nightTint.Z);
+            }
+
+            var dawnTint = new OpenTK.Mathematics.Vector3(time.DawnSkyTint.X, time.DawnSkyTint.Y, time.DawnSkyTint.Z);
+            if (InspectorWidgets.ColorFieldOTK("Dawn Sky Tint", ref dawnTint, entityId, "DawnSkyTint", tooltip: "Sky tint used during dawn (golden hour)"))
+            {
+                time.DawnSkyTint = new System.Numerics.Vector3(dawnTint.X, dawnTint.Y, dawnTint.Z);
+            }
+
+            var duskTint = new OpenTK.Mathematics.Vector3(time.DuskSkyTint.X, time.DuskSkyTint.Y, time.DuskSkyTint.Z);
+            if (InspectorWidgets.ColorFieldOTK("Dusk Sky Tint", ref duskTint, entityId, "DuskSkyTint", tooltip: "Sky tint used during dusk (golden hour)"))
+            {
+                time.DuskSkyTint = new System.Numerics.Vector3(duskTint.X, duskTint.Y, duskTint.Z);
+            }
+
+            ImGui.Spacing();
+
+            // Ground colors
+            var dayGround = new OpenTK.Mathematics.Vector3(time.DayGroundColor.X, time.DayGroundColor.Y, time.DayGroundColor.Z);
+            if (InspectorWidgets.ColorFieldOTK("Day Ground Color", ref dayGround, entityId, "DayGroundColor", tooltip: "Ground color used during daytime"))
+            {
+                time.DayGroundColor = new System.Numerics.Vector3(dayGround.X, dayGround.Y, dayGround.Z);
+            }
+
+            var nightGround = new OpenTK.Mathematics.Vector3(time.NightGroundColor.X, time.NightGroundColor.Y, time.NightGroundColor.Z);
+            if (InspectorWidgets.ColorFieldOTK("Night Ground Color", ref nightGround, entityId, "NightGroundColor", tooltip: "Ground color used during night"))
+            {
+                time.NightGroundColor = new System.Numerics.Vector3(nightGround.X, nightGround.Y, nightGround.Z);
+            }
+
+            ImGui.Spacing();
+
+            // Atmosphere thickness
+            float dayAt = time.DayAtmosphereThickness;
+            InspectorWidgets.FloatField("Day Atmosphere Thickness", ref dayAt, entityId, "DayAtmosphereThickness", speed: 0.01f, min: 0.1f, max: 5f, tooltip: "Atmosphere thickness for daytime");
+            time.DayAtmosphereThickness = dayAt;
+
+            float nightAt = time.NightAtmosphereThickness;
+            InspectorWidgets.FloatField("Night Atmosphere Thickness", ref nightAt, entityId, "NightAtmosphereThickness", speed: 0.01f, min: 0.1f, max: 5f, tooltip: "Atmosphere thickness for nighttime");
+            time.NightAtmosphereThickness = nightAt;
+
+            float dawnAt = time.DawnDuskAtmosphereThickness;
+            InspectorWidgets.FloatField("Dawn/Dusk Atmosphere Thickness", ref dawnAt, entityId, "DawnDuskAtmosphereThickness", speed: 0.01f, min: 0.1f, max: 5f, tooltip: "Atmosphere thickness for dawn/dusk (golden hour)");
+            time.DawnDuskAtmosphereThickness = dawnAt;
+
+            InspectorWidgets.EndSection();
+        }
+
+        // Add UI for sun/moon size and convergence
+        private static void DrawSunMoonSection(Engine.Scene.Entity entity, TimeComponent time)
+        {
+            if (!InspectorWidgets.Section("☀️ Sun/Moon Visuals", defaultOpen: false)) return;
+            uint entityId = time.Entity?.Id ?? 0;
+
+            float daySunSize = time.DaySunSize;
+            InspectorWidgets.FloatField("Day Sun Size", ref daySunSize, entityId, "DaySunSize", speed: 0.001f, min: 0.001f, max: 1.0f, tooltip: "Visual size of sun during day (used by procedural sky)");
+            time.DaySunSize = daySunSize;
+
+            float nightMoonSize = time.NightMoonSize;
+            InspectorWidgets.FloatField("Night Moon Size", ref nightMoonSize, entityId, "NightMoonSize", speed: 0.001f, min: 0.001f, max: 1.0f, tooltip: "Visual size of moon during night (used by procedural sky)");
+            time.NightMoonSize = nightMoonSize;
+
+            float dawnSunSize = time.DawnDuskSunSize;
+            InspectorWidgets.FloatField("Dawn/Dusk Sun Size", ref dawnSunSize, entityId, "DawnDuskSunSize", speed: 0.001f, min: 0.001f, max: 1.0f, tooltip: "Sun size during golden hour");
+            time.DawnDuskSunSize = dawnSunSize;
+
+            ImGui.Spacing();
+
+            float dayConv = time.DaySunConvergence;
+            InspectorWidgets.FloatField("Day Sun Convergence", ref dayConv, entityId, "DaySunConvergence", speed: 0.1f, min: 0.1f, max: 50f, tooltip: "Convergence/falloff multiplier for sun glow during day");
+            time.DaySunConvergence = dayConv;
+
+            float nightConv = time.NightMoonConvergence;
+            InspectorWidgets.FloatField("Night Moon Convergence", ref nightConv, entityId, "NightMoonConvergence", speed: 0.1f, min: 0.1f, max: 50f, tooltip: "Convergence/falloff multiplier for moon glow at night");
+            time.NightMoonConvergence = nightConv;
+
+            float dawnConv = time.DawnDuskSunConvergence;
+            InspectorWidgets.FloatField("Dawn/Dusk Convergence", ref dawnConv, entityId, "DawnDuskSunConvergence", speed: 0.1f, min: 0.1f, max: 100f, tooltip: "Convergence during golden hour");
+            time.DawnDuskSunConvergence = dawnConv;
+
+            InspectorWidgets.EndSection();
         }
 
         private static void DrawTimeOfDaySection(Engine.Scene.Entity entity, TimeComponent time)

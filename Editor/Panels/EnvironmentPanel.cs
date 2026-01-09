@@ -103,6 +103,66 @@ namespace Editor.Panels
                     env.SkyboxExposure = exposure;
                     Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                 }
+
+                // Stars settings
+                bool showStars = env.ShowStars;
+                if (ImGui.Checkbox("Show Stars", ref showStars))
+                {
+                    env.ShowStars = showStars;
+                    Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                }
+
+                if (env.ShowStars)
+                {
+                    int starCount = env.StarCount;
+                    if (ImGui.DragInt("Star Count", ref starCount, 10, 0, 100000))
+                    {
+                        env.StarCount = Math.Max(0, starCount);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    float starSize = env.StarSize;
+                    if (ImGui.DragFloat("Star Size", ref starSize, 0.05f, 0.1f, 64.0f))
+                    {
+                        env.StarSize = MathF.Max(0.1f, starSize);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    bool starRot = env.StarRotation;
+                    if (ImGui.Checkbox("Star Rotation", ref starRot))
+                    {
+                        env.StarRotation = starRot;
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    bool followTime = env.StarFollowTime;
+                    if (ImGui.Checkbox("Follow Time", ref followTime))
+                    {
+                        env.StarFollowTime = followTime;
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    var colA = new Numerics.Vector3(env.StarColorA.X, env.StarColorA.Y, env.StarColorA.Z);
+                    if (ImGui.ColorEdit3("Star Color A", ref colA))
+                    {
+                        env.StarColorA = new Vector3(colA.X, colA.Y, colA.Z);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    var colB = new Numerics.Vector3(env.StarColorB.X, env.StarColorB.Y, env.StarColorB.Z);
+                    if (ImGui.ColorEdit3("Star Color B", ref colB))
+                    {
+                        env.StarColorB = new Vector3(colB.X, colB.Y, colB.Z);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+
+                    float tw = env.StarTwinkle;
+                    if (ImGui.SliderFloat("Twinkle", ref tw, 0.0f, 1.0f))
+                    {
+                        env.StarTwinkle = tw;
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                }
                 
                 ImGui.Unindent();
                 ImGui.Spacing();

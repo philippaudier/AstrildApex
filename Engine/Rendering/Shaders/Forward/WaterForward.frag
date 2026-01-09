@@ -5,6 +5,7 @@
 #include "../Includes/Lighting.glsl"
 #include "../Includes/Fog.glsl"
 #include "../Includes/Shadows.glsl"
+#include "../Includes/CloudNoise.glsl"
 
 layout(location=0) out vec4 outColor;
 layout(location=1) out uint outId;

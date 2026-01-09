@@ -125,31 +125,68 @@ out vec4 vScreenPos; // Screen position for depth buffer reading
 out vec4 vReflectionPos; // Reflection position in clip space (for planar reflections)
 
 /// <summary>
-/// Directional sine wave function for water surface.
-/// Uses effective parameters from Global/Local/Blend system.
-/// Waves now follow waveDirection parameter.
+/// Gerstner wave calculation (physically accurate ocean waves)
+/// Based on GPU Gems Chapter 1 and Shadertoy examples
+/// Returns wave height and derivative for proper normal calculation
 /// </summary>
-float waveHeight(vec2 worldPos, float time, float waveSpeed, float waveFreq, float waveAmplitude, vec2 waveDir)
-{
-    float x = worldPos.x;
-    float z = worldPos.y;
+vec2 gerstnerWave(vec2 position, vec2 direction, float frequency, float timeshift, float steepness) {
+    float x = dot(direction, position) * frequency + timeshift;
+    float wave = exp(sin(x) - 1.0); // Exponential sine for sharper peaks
+    float dx = wave * cos(x);
+    return vec2(wave, -dx);
+}
 
-    // Normalize wave direction
-    vec2 dir = normalize(waveDir);
+/// <summary>
+/// Multi-octave Gerstner wave summation
+/// Creates realistic ocean surface by combining multiple wave frequencies
+/// </summary>
+vec3 getGerstnerWaves(vec2 position, float time, float waveSpeed, float waveFreq, float waveAmplitude, vec2 waveDir) {
+    const int ITERATIONS = 6; // Number of wave octaves
+    float wavePhaseShift = length(position) * 0.1; // Phase variation across surface
+    float iter = 0.0;
+    float frequency = waveFreq;
+    float timeMultiplier = waveSpeed;
+    float weight = 1.0;
+    float sumOfValues = 0.0; // Total wave height
+    float sumOfWeights = 0.0;
+    vec2 sumOfDerivatives = vec2(0.0); // For normal calculation
 
-    // Project world position onto wave direction for directional waves
-    float dirProjection = dot(vec2(x, z), dir);
+    // Steepness controls how sharp/peaked the waves are (0 = sine, 1 = very peaked)
+    float steepness = 0.6;
 
-    // Perpendicular direction for cross-waves
-    vec2 perpDir = vec2(-dir.y, dir.x);
-    float perpProjection = dot(vec2(x, z), perpDir);
+    for(int i = 0; i < ITERATIONS; i++) {
+        // Generate wave direction with some variation
+        float angle = iter * 0.5; // Rotate direction each octave
+        vec2 dir = vec2(
+            waveDir.x * cos(angle) - waveDir.y * sin(angle),
+            waveDir.x * sin(angle) + waveDir.y * cos(angle)
+        );
+        dir = normalize(dir);
 
-    // Multiple wave layers for more natural look, now directional
-    float wave1 = sin(dirProjection * waveFreq + time * waveSpeed) * 0.5;
-    float wave2 = sin(perpProjection * waveFreq * 1.3 + time * waveSpeed * 0.8) * 0.3;
-    float wave3 = sin((dirProjection + perpProjection) * waveFreq * 0.7 + time * waveSpeed * 1.2) * 0.2;
+        // Calculate wave data
+        vec2 res = gerstnerWave(position, dir, frequency, time * timeMultiplier + wavePhaseShift, steepness);
 
-    return (wave1 + wave2 + wave3) * waveAmplitude;
+        // Shift position by wave drag (creates realistic wave interactions)
+        position += dir * res.y * weight * 0.38; // DRAG_MULT from Shadertoy
+
+        // Accumulate results
+        sumOfValues += res.x * weight;
+        sumOfDerivatives += dir * res.y * weight;
+        sumOfWeights += weight;
+
+        // Modify next octave
+        weight = mix(weight, 0.0, 0.2); // Gradual weight decay
+        frequency *= 1.18;
+        timeMultiplier *= 1.07;
+
+        iter += 1232.399963; // "Random" offset for next wave
+    }
+
+    // Return: (height, dx, dz) for position and normal calculation
+    float height = (sumOfValues / sumOfWeights) * waveAmplitude;
+    vec2 derivatives = (sumOfDerivatives / sumOfWeights) * waveAmplitude;
+
+    return vec3(height, derivatives.x, derivatives.y);
 }
 
 void main()
@@ -166,20 +203,15 @@ void main()
     // Phase 6: Vertex displacement for waves (optional, controlled by waveAmplitude)
     if (waveAmplitude > 0.0)
     {
-        float wave = waveHeight(worldPos.xz, u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
+        // Use Gerstner waves for realistic wave displacement
+        vec3 waveData = getGerstnerWaves(worldPos.xz, u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
+        float wave = waveData.x; // Wave height
         worldPos.y += wave;
 
-        // Approximate normal calculation for displaced vertex
-        // Calculate neighboring heights for normal estimation
-        float epsilon = 0.1;
-        float hL = waveHeight(worldPos.xz - vec2(epsilon, 0.0), u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
-        float hR = waveHeight(worldPos.xz + vec2(epsilon, 0.0), u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
-        float hD = waveHeight(worldPos.xz - vec2(0.0, epsilon), u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
-        float hU = waveHeight(worldPos.xz + vec2(0.0, epsilon), u_Time, waveSpeed, waveFrequency, waveAmplitude, waveDirection);
-
-        // Compute gradient
-        vec3 tangentX = normalize(vec3(2.0 * epsilon, hR - hL, 0.0));
-        vec3 tangentZ = normalize(vec3(0.0, hU - hD, 2.0 * epsilon));
+        // Use wave derivatives for accurate normal calculation
+        // Gerstner waves provide dx and dz derivatives directly
+        vec3 tangentX = normalize(vec3(1.0, waveData.y, 0.0));
+        vec3 tangentZ = normalize(vec3(0.0, waveData.z, 1.0));
         worldNormal = normalize(cross(tangentZ, tangentX));
     }
 

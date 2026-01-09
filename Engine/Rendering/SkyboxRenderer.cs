@@ -893,6 +893,123 @@ namespace Engine.Rendering
                 }
             }
         }
+
+        /// <summary>
+        /// Render procedural skybox using explicit procedural parameters (overrides material values).
+        /// </summary>
+        public void RenderProceduralWithParams(Matrix4 view, Matrix4 projection, Engine.Components.ProceduralSkyboxParameters parms, Vector3 tintMul, float exposureMul, uint entityId = 0)
+        {
+            if (_shader == null)
+            {
+                return;
+            }
+
+            try
+            {
+                // Use values from parms (OpenTK.Vector3 types expected for SkyTint/GroundColor)
+                var sky = parms.SkyTint;
+                var ground = parms.GroundColor;
+                var sunTint = parms.SunTint;
+                float atmosphereThickness = parms.AtmosphereThickness;
+                float sunSize = parms.SunSize;
+                float sunConv = parms.SunSizeConvergence;
+                float modExposure = parms.Exposure > 0.0f ? parms.Exposure * Math.Max(0.0f, exposureMul) : 1.0f * Math.Max(0.0f, exposureMul);
+
+                // Sun direction: get from lighting state if available
+                var sunDir = new Vector3(0.321f, 0.766f, -0.557f);
+                var lightingState = GetCurrentLightingState();
+                if (lightingState != null && lightingState.HasDirectional)
+                {
+                    sunDir = -lightingState.DirDirection;
+                }
+
+                // Remove translation from view
+                var viewNoTranslation = new Matrix4(
+                    view.M11, view.M12, view.M13, 0,
+                    view.M21, view.M22, view.M23, 0,
+                    view.M31, view.M32, view.M33, 0,
+                    0, 0, 0, 1
+                );
+
+                if (_cubemapTexture == 0)
+                {
+                    _cubemapTexture = (uint)GL.GenTexture();
+                    GL.BindTexture(TextureTarget.TextureCubeMap, (int)_cubemapTexture);
+                    byte[] pixel = { 128, 128, 128 };
+                    for (int i = 0; i < 6; i++)
+                    {
+                        var target = TextureTarget.TextureCubeMapPositiveX + i;
+                        GL.TexImage2D(target, 0, PixelInternalFormat.Rgb, 1, 1, 0,
+                            PixelFormat.Rgb, PixelType.UnsignedByte, pixel);
+                    }
+
+                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+                    GL.TexParameter(TextureTarget.TextureCubeMap, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
+                    GL.BindTexture(TextureTarget.TextureCubeMap, 0);
+                }
+
+                GL.DepthMask(false);
+                GL.DepthFunc(DepthFunction.Lequal);
+
+                _shader.Use();
+                _shader.SetMat4("view", viewNoTranslation);
+                _shader.SetMat4("projection", projection);
+                _shader.SetInt("uMode", 1);
+                _shader.SetFloat("exposure", modExposure);
+                _shader.SetUInt("u_ObjectId", entityId);
+                _shader.SetVec3("skyTint", sky * tintMul);
+                _shader.SetVec3("groundColor", ground);
+                _shader.SetFloat("atmosphereThickness", atmosphereThickness);
+                _shader.SetVec3("sunDirection", sunDir);
+                _shader.SetVec3("sunTint", sunTint);
+                _shader.SetFloat("sunSize", sunSize);
+                _shader.SetFloat("sunSizeConvergence", sunConv);
+
+                if (lightingState != null)
+                {
+                    _shader.SetVec3("uAmbientColor", lightingState.AmbientColor);
+                    _shader.SetFloat("uAmbientIntensity", lightingState.AmbientIntensity);
+                    _shader.SetInt("uFogEnabled", lightingState.FogEnabled ? 1 : 0);
+                    _shader.SetVec3("uFogColor", lightingState.FogColor);
+                    _shader.SetFloat("uFogStart", lightingState.FogStart);
+                    _shader.SetFloat("uFogEnd", lightingState.FogEnd);
+                    _shader.SetFloat("uFogDensity", lightingState.FogDensity);
+                }
+                else
+                {
+                    _shader.SetInt("uFogEnabled", 0);
+                    _shader.SetFloat("uFogDensity", 0.01f);
+                }
+
+                GL.ActiveTexture(TextureUnit.Texture0);
+                GL.BindTexture(TextureTarget.TextureCubeMap, (int)_cubemapTexture);
+                _shader.SetInt("skybox", 0);
+
+                GL.BindVertexArray(_vao);
+                GL.DrawArrays(PrimitiveType.Triangles, 0, 36);
+                GL.BindVertexArray(0);
+
+                GL.DepthMask(true);
+                GL.DepthFunc(DepthFunction.Less);
+
+                IrradianceMap = 0;
+                PrefilteredEnvMap = 0;
+                PrefilterMaxLod = 0.0f;
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    GL.DepthMask(true);
+                    GL.DepthFunc(DepthFunction.Less);
+                    GL.BindVertexArray(0);
+                }
+                catch { }
+            }
+        }
         
         private void RenderCubemap(Matrix4 view, Matrix4 projection, Engine.Assets.SkyboxMaterialAsset skyboxMaterial, Vector3 tintMul, float exposureMul, uint entityId = 0)
         {

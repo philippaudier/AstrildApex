@@ -24,6 +24,32 @@ namespace Engine.Components
         [Engine.Serialization.Serializable("skyboxExposure")]
         public float SkyboxExposure { get; set; } = 1.0f;
 
+        // === STARS / SKY OBJECTS ===
+
+        [Engine.Serialization.Serializable("showStars")]
+        public bool ShowStars { get; set; } = true;
+
+        [Engine.Serialization.Serializable("starCount")]
+        public int StarCount { get; set; } = 1200; // reasonable default for editor preview
+
+        [Engine.Serialization.Serializable("starSize")]
+        public float StarSize { get; set; } = 1.8f; // GL point size multiplier
+
+        [Engine.Serialization.Serializable("starRotation")]
+        public bool StarRotation { get; set; } = true; // enable slow rotation of starfield
+
+        [Engine.Serialization.Serializable("starFollowTime")]
+        public bool StarFollowTime { get; set; } = true; // rotate stars according to TimeOfDay when true
+
+        [Engine.Serialization.Serializable("starColorA")]
+        public Vector3 StarColorA { get; set; } = new Vector3(1.0f, 0.98f, 0.9f);
+
+        [Engine.Serialization.Serializable("starColorB")]
+        public Vector3 StarColorB { get; set; } = new Vector3(0.8f, 0.9f, 1.0f);
+
+        [Engine.Serialization.Serializable("starTwinkle")]
+        public float StarTwinkle { get; set; } = 0.35f; // amount of brightness variance
+
         // === CELESTIAL BODIES (SUN/MOON SYSTEM) ===
 
         /// <summary>
@@ -192,80 +218,27 @@ namespace Engine.Components
             
             Vector3 sunPosition;
             
-            if (isDay)
-            {
-                // DAYTIME: Sun arc from East (sunrise) → Max Elevation (noon) → West (sunset)
-                float dayDuration = sunset - sunrise;
-                
-                // Safety check: if day duration is too short, use a default arc
-                if (dayDuration < 0.5f)
-                {
-                    dayDuration = 12.0f; // Fallback to 12-hour day
-                    sunrise = 6.0f;
-                    sunset = 18.0f;
-                }
-                
-                float dayProgress = MathHelper.Clamp((timeOfDay - sunrise) / dayDuration, 0.0f, 1.0f); // 0 = sunrise, 0.5 = noon, 1 = sunset
-                
-                // Arc: 0° (east/horizon) → maxElevation (noon) → 0° (west/horizon)
-                // Use sine curve for smooth arc, scaled by maxElevation
-                float arcAngle = dayProgress * 180.0f; // 0° to 180°
-                float arcAngleRad = MathHelper.DegreesToRadians(arcAngle);
-                
-                float elevationFactor = (float)Math.Sin(arcAngleRad); // 0 at horizon, 1 at peak
-                float maxElevationRad = MathHelper.DegreesToRadians(maxElevation);
-                
-                sunPosition = new Vector3(
-                    -(float)Math.Cos(arcAngleRad),  // X: -1 at east (sunrise), +1 at west (sunset)
-                    elevationFactor * (float)Math.Sin(maxElevationRad), // Y: scaled by season, always >= 0
-                    0  // Keep Z simple for now
-                );
-            }
-            else
-            {
-                // NIGHTTIME: Moon arc from East (after sunset) → Zenith (midnight) → West (before sunrise)
-                // Moon always stays above horizon with moderate elevation
-                float nightDuration = (24.0f - sunset) + sunrise; // Total night hours
-                
-                // Safety check
-                if (nightDuration < 0.5f || nightDuration > 20.0f)
-                {
-                    nightDuration = 12.0f; // Fallback
-                    sunrise = 6.0f;
-                    sunset = 18.0f;
-                }
-                
-                float nightProgress;
-                
-                if (timeOfDay >= sunset)
-                {
-                    // Evening: sunset → midnight
-                    nightProgress = (timeOfDay - sunset) / nightDuration;
-                }
-                else
-                {
-                    // Morning: midnight → sunrise
-                    nightProgress = ((24.0f - sunset) + timeOfDay) / nightDuration;
-                }
-                
-                nightProgress = MathHelper.Clamp(nightProgress, 0.0f, 1.0f);
-                
-                // Moon arc with moderate elevation (opposite season to sun)
-                float moonMaxElevation = 60.0f - solarDeclination; // Moon higher in winter, lower in summer (opposite to sun)
-                moonMaxElevation = MathHelper.Clamp(moonMaxElevation, 15.0f, 75.0f);
-                
-                float arcAngle = nightProgress * 180.0f; // 0° to 180°
-                float arcAngleRad = MathHelper.DegreesToRadians(arcAngle);
-                
-                float elevationFactor = (float)Math.Sin(arcAngleRad); // Always positive (0 to 1 to 0)
-                float moonMaxElevationRad = MathHelper.DegreesToRadians(moonMaxElevation);
-                
-                sunPosition = new Vector3(
-                    -(float)Math.Cos(arcAngleRad),  // X: -1 at east, +1 at west
-                    elevationFactor * (float)Math.Sin(moonMaxElevationRad), // Y: always >= 0
-                    0  // Keep Z simple for now
-                );
-            }
+            // NEW: Continuous 24h celestial arc
+            // Compute a continuous angle starting at sunrise = 0° and advancing through 360° over 24 hours.
+            // This makes the sun/moon follow a single smooth path and prevents 'teleportation' at day/night boundary.
+            // The vertical position is allowed to go below zero (under horizon) so the directional light rotates smoothly.
+            float angleHours = (timeOfDay - sunrise + 24.0f) % 24.0f; // Hours since sunrise in [0,24)
+            float angleDeg = (angleHours / 24.0f) * 360.0f; // 0..360 degrees over full day
+            float angleRad = MathHelper.DegreesToRadians(angleDeg);
+
+            // Invert rotation direction: negative angle rotates the opposite way
+            angleRad = -angleRad;
+
+            // X moves from -1 (east) to +1 (west) over the arc; Y follows sine of angle giving positive above horizon,
+            // negative below horizon. Scale Y by seasonal max elevation.
+            float maxElevationRad = MathHelper.DegreesToRadians(maxElevation);
+            float elevationFactor = (float)Math.Sin(angleRad); // -1..1
+
+            sunPosition = new Vector3(
+                -(float)Math.Cos(angleRad),
+                elevationFactor * (float)Math.Sin(maxElevationRad),
+                (float)Math.Sin(angleRad)
+            );
 
             // Light direction points FROM sun position TOWARD scene center
             Vector3 lightDirection = -sunPosition;
@@ -275,16 +248,11 @@ namespace Engine.Components
             // - pitch: vertical angle (from sunPosition.Y)
             // - yaw: horizontal rotation from East to West (from sunPosition.X)
             
-            // Pitch: angle from horizontal plane (positive = pointing down)
-            float pitch = (float)Math.Asin(MathHelper.Clamp(sunPosition.Y, -1.0f, 1.0f));
-            
-            // Yaw: rotation in horizontal plane (East = -90°, South = 0°, West = +90°)
-            // Since X goes from -1 (East) to +1 (West), we map this to yaw
-            float yaw = (float)Math.Asin(MathHelper.Clamp(sunPosition.X, -1.0f, 1.0f));
-            
-            // Create rotation from Euler angles (Y-up, Z-forward system)
-            // Apply rotations in order: Y (yaw) then X (pitch)
-            Quaternion rotation = Quaternion.FromEulerAngles(pitch, yaw, 0);
+            // Create a stable rotation from the light direction. Using asin() on components
+            // causes discontinuities near the horizon because asin() is limited to [-pi/2,pi/2].
+            // Use the helper that builds a quaternion from a direction vector so the
+            // rotation is continuous and doesn't produce a small loop at the horizon.
+            Quaternion rotation = QuaternionFromDirection(lightDirection);
 
             if (MainDirectionalLight.Transform != null)
             {
@@ -498,7 +466,7 @@ namespace Engine.Components
             float sunSize = 0.04f + (goldenHourBlend * 0.01f);
             float sunSizeConvergence = 5.0f + (goldenHourBlend * 5.0f); // More glow at golden hour
 
-            return new ProceduralSkyboxParameters
+            var result = new ProceduralSkyboxParameters
             {
                 SkyTint = skyTint,
                 GroundColor = groundColor,
@@ -508,6 +476,23 @@ namespace Engine.Components
                 SunSize = sunSize,
                 SunSizeConvergence = sunSizeConvergence
             };
+
+            // Apply external overrides if provided (TimeComponent can set these)
+            if (ProceduralOverrides.HasValue)
+            {
+                var o = ProceduralOverrides.Value;
+                // Blend/override core visual parameters if provided
+                result.SkyTint = o.SkyTint;
+                result.GroundColor = o.GroundColor;
+                result.AtmosphereThickness = o.AtmosphereThickness;
+                if (o.Exposure > 0.0f) result.Exposure = o.Exposure;
+
+                // Apply sun size/convergence overrides if present (non-zero)
+                if (o.SunSize > 0.0f) result.SunSize = o.SunSize;
+                if (o.SunSizeConvergence > 0.0f) result.SunSizeConvergence = o.SunSizeConvergence;
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -518,6 +503,10 @@ namespace Engine.Components
             float dayNightBlend = GetDayNightBlend(TimeOfDay);
             return CalculateProceduralSkyboxParameters(TimeOfDay, dayNightBlend);
         }
+
+        // Optional overrides provided by external systems (e.g. TimeComponent inspector)
+        // When set, these values replace the defaults returned by CalculateProceduralSkyboxParameters
+        public ProceduralSkyboxParameters? ProceduralOverrides { get; set; } = null;
 
         // === PRIVATE HELPERS ===
 

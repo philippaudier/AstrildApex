@@ -215,9 +215,15 @@ float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
 
     // Apply normal-based bias in world space BEFORE transformation
     // This prevents shadow acne more effectively than depth bias alone
-    float normalDot = max(dot(normal, lightDir), 0.0);
-    float slopeBias = u_ShadowBias * sqrt(1.0 - normalDot * normalDot);
-    vec3 biasedWorldPos = worldPos + normal * (u_ShadowBias + slopeBias);
+    // Use aggressive slope-scaled bias to handle grazing angles (light at horizon)
+    float normalDot = max(dot(normal, lightDir), 0.01); // Prevent division by zero
+
+    // Strongly increase bias at grazing angles (when normalDot is small)
+    // This prevents shadow artifacts when light is at/below horizon
+    float slopeScale = (1.0 - normalDot) * 15.0; // Aggressive scaling for shallow angles
+    float dynamicBias = u_ShadowBias * (1.0 + slopeScale);
+
+    vec3 biasedWorldPos = worldPos + normal * dynamicBias;
 
     // Transform biased world position to light space
     vec4 lightSpacePos = u_ShadowMatrix * vec4(biasedWorldPos, 1.0);

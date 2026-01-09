@@ -54,6 +54,9 @@ namespace Editor.Inspector
             DrawFogSection(weather);
             ImGui.Spacing();
 
+            DrawCloudSection(weather);
+            ImGui.Spacing();
+
             /*
             DrawMaterialsSection(weather);
             ImGui.Spacing();
@@ -521,6 +524,186 @@ namespace Editor.Inspector
                         weather.FogColor = new System.Numerics.Vector3(color.X, color.Y, color.Z);
                         UpdateWeatherManager(weather);
                         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                }
+            }
+        }
+
+        private static void DrawCloudSection(Engine.Components.WeatherComponent weather)
+        {
+            if (ThemedImGui.CollapsingHeader("☁️ Clouds", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                // Cloud Enabled toggle
+                bool cloudEnabled = weather.CloudEnabled;
+                if (ImGui.Checkbox("Enabled##CloudEnabled", ref cloudEnabled))
+                {
+                    weather.CloudEnabled = cloudEnabled;
+                    UpdateWeatherManager(weather);
+                    Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                }
+
+                if (weather.CloudEnabled)
+                {
+                    // Cloud Type dropdown
+                    string[] typeNames = { "Cirrus", "Cumulus", "Stratus", "Storm" };
+                    int currentType = (int)weather.CloudType;
+                    ImGui.SetNextItemWidth(-120);
+                    if (ImGui.Combo("Type", ref currentType, typeNames, typeNames.Length))
+                    {
+                        weather.CloudType = (Engine.Components.CloudType)currentType;
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Cirrus: Thin wispy / Cumulus: Fluffy puffy / Stratus: Layered / Storm: Dense dark");
+
+                    // Coverage slider
+                    float coverage = weather.CloudCoverage;
+                    ImGui.SetNextItemWidth(-120);
+                    if (ImGui.SliderFloat("Coverage", ref coverage, 0.0f, 1.0f, "%.2f"))
+                    {
+                        weather.CloudCoverage = Math.Clamp(coverage, 0.0f, 1.0f);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("0 = clear sky, 1 = overcast");
+
+                    // Density slider
+                    float density = weather.CloudDensity;
+                    ImGui.SetNextItemWidth(-120);
+                    if (ImGui.SliderFloat("Density", ref density, 0.0f, 1.0f, "%.2f"))
+                    {
+                        weather.CloudDensity = Math.Clamp(density, 0.0f, 1.0f);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("0 = transparent, 1 = opaque");
+
+                    // Advanced cloud parameters
+                    if (ImGui.TreeNode("Advanced Cloud"))
+                    {
+                        float scattering = weather.CloudScattering;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Sun Scattering", ref scattering, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudScattering = Math.Clamp(scattering, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Intensity of sun light scattering through clouds (silver lining effect)");
+
+                        float ambient = weather.CloudAmbient;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Ambient", ref ambient, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudAmbient = Math.Clamp(ambient, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Ambient sky light contribution");
+
+                        float cloudSpeed = weather.CloudSpeed;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Animation Speed", ref cloudSpeed, 0.0f, 3.0f, "%.2f"))
+                        {
+                            weather.CloudSpeed = Math.Clamp(cloudSpeed, 0.0f, 3.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Cloud animation speed multiplier (affected by wind)");
+
+                        float turbulence = weather.CloudTurbulence;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Turbulence", ref turbulence, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudTurbulence = Math.Clamp(turbulence, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Shape distortion and chaos over time");
+
+                        float detailSpeed = weather.CloudDetailSpeed;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Detail Evolution", ref detailSpeed, 0.0f, 2.0f, "%.2f"))
+                        {
+                            weather.CloudDetailSpeed = Math.Clamp(detailSpeed, 0.0f, 2.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Speed of organic shape changes (0 = static, 2 = fast morphing)");
+
+                        ImGui.Spacing();
+                        ImGui.TextColored(new System.Numerics.Vector4(0.7f, 0.9f, 1.0f, 1.0f), "Fine-Tune Controls:");
+                        ImGui.Spacing();
+
+                        // Noise Scale
+                        float noiseScale = weather.CloudNoiseScale;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Noise Scale", ref noiseScale, 0.1f, 5.0f, "%.2f"))
+                        {
+                            weather.CloudNoiseScale = Math.Clamp(noiseScale, 0.1f, 5.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Global scale of noise patterns (lower = larger clouds, higher = smaller details)");
+
+                        // Morph Speed
+                        float morphSpeed = weather.CloudMorphSpeed;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Morph Speed", ref morphSpeed, 0.0f, 2.0f, "%.2f"))
+                        {
+                            weather.CloudMorphSpeed = Math.Clamp(morphSpeed, 0.0f, 2.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Speed of organic morphing animation (0 = frozen, 2 = fast evolution)");
+
+                        // Edge Softness
+                        float edgeSoftness = weather.CloudEdgeSoftness;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Edge Softness", ref edgeSoftness, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudEdgeSoftness = Math.Clamp(edgeSoftness, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Cloud edge appearance (0 = sharp/hard, 1 = soft/fuzzy)");
+
+                        // Billowiness
+                        float billowiness = weather.CloudBillowiness;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Billowiness", ref billowiness, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudBillowiness = Math.Clamp(billowiness, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Cotton/billowy appearance strength (0 = smooth, 1 = fluffy/puffy)");
+
+                        // Detail Strength
+                        float detailStrength = weather.CloudDetailStrength;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Detail Strength", ref detailStrength, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.CloudDetailStrength = Math.Clamp(detailStrength, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Fine detail layer strength (0 = smooth/simple, 1 = highly detailed)");
+
+                        ImGui.TreePop();
                     }
                 }
             }

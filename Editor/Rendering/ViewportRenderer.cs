@@ -2896,6 +2896,20 @@ void main(){
 
                 _pbrShader.Use();
 
+                // Prepare GL-style matrices for other renderers (particles, vegetation) which expect OpenTK.Matrix4
+                var viewMatGL = new OpenTK.Mathematics.Matrix4(
+                    viewMatrix.M11, viewMatrix.M12, viewMatrix.M13, viewMatrix.M14,
+                    viewMatrix.M21, viewMatrix.M22, viewMatrix.M23, viewMatrix.M24,
+                    viewMatrix.M31, viewMatrix.M32, viewMatrix.M33, viewMatrix.M34,
+                    viewMatrix.M41, viewMatrix.M42, viewMatrix.M43, viewMatrix.M44
+                );
+                var projMatGL = new OpenTK.Mathematics.Matrix4(
+                    projMatrix.M11, projMatrix.M12, projMatrix.M13, projMatrix.M14,
+                    projMatrix.M21, projMatrix.M22, projMatrix.M23, projMatrix.M24,
+                    projMatrix.M31, projMatrix.M32, projMatrix.M33, projMatrix.M34,
+                    projMatrix.M41, projMatrix.M42, projMatrix.M43, projMatrix.M44
+                );
+
                 // CRITICAL: Set clipping uniforms directly on shader (UBO clipping not working - driver/OpenGL issue?)
                 _pbrShader.SetInt("u_ClipPlaneEnabled", 1);
                 _pbrShader.SetVec4("u_ClipPlane", new OpenTK.Mathematics.Vector4(
@@ -3161,13 +3175,13 @@ void main(){
                         var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
                         float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
 
-                        var viewMatGL = new OpenTK.Mathematics.Matrix4(
+                        viewMatGL = new OpenTK.Mathematics.Matrix4(
                             viewMatrix.M11, viewMatrix.M12, viewMatrix.M13, viewMatrix.M14,
                             viewMatrix.M21, viewMatrix.M22, viewMatrix.M23, viewMatrix.M24,
                             viewMatrix.M31, viewMatrix.M32, viewMatrix.M33, viewMatrix.M34,
                             viewMatrix.M41, viewMatrix.M42, viewMatrix.M43, viewMatrix.M44
                         );
-                        var projMatGL = new OpenTK.Mathematics.Matrix4(
+                        projMatGL = new OpenTK.Mathematics.Matrix4(
                             projMatrix.M11, projMatrix.M12, projMatrix.M13, projMatrix.M14,
                             projMatrix.M21, projMatrix.M22, projMatrix.M23, projMatrix.M24,
                             projMatrix.M31, projMatrix.M32, projMatrix.M33, projMatrix.M34,
@@ -3230,6 +3244,21 @@ void main(){
                     }
 
                     // Reflection debug logging removed to avoid runtime spam and frame hitches
+                }
+
+                // Render particles (clouds, stars) into the reflection buffer so they appear on water
+                if (_particleRenderer != null && _scene != null)
+                {
+                    try
+                    {
+                        var camPosGL = new OpenTK.Mathematics.Vector3(
+                            _globalUniforms.CameraPosition.X,
+                            _globalUniforms.CameraPosition.Y,
+                            _globalUniforms.CameraPosition.Z
+                        );
+                        _particleRenderer.RenderParticleSystems(_scene, viewMatGL, projMatGL, camPosGL);
+                    }
+                    catch { }
                 }
 
                 // Render skybox last (for proper depth testing)
@@ -4381,6 +4410,167 @@ void main(){
         }
         
     private SkyboxRenderer? _skyboxRenderer;
+    private Engine.Rendering.CloudRenderer? _cloudRenderer;
+    // === Starfield resources ===
+    private int _starVao = 0;
+    private int _starVbo = 0;
+    private int _starCountCached = 0;
+    private Engine.Rendering.ShaderProgram? _starProgram = null;
+    private bool _starsInitialized = false;
+    private readonly Random _starRng = new Random(123456);
+    private bool _starfieldLoggedOnce = false;
+
+    private Engine.Rendering.ShaderProgram CreateStarShader()
+    {
+        if (_starProgram != null) return _starProgram;
+
+        try
+        {
+            _starProgram = Engine.Rendering.ShaderProgram.FromFiles(
+                "Engine/Rendering/Shaders/Effects/starfield.vert",
+                "Engine/Rendering/Shaders/Effects/starfield.frag"
+            );
+            Console.WriteLine("[Starfield] Shaders loaded successfully");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Starfield] Failed to load shaders: {ex.Message}");
+            throw;
+        }
+
+        return _starProgram;
+    }
+
+    private void EnsureStarFieldInitialized(int count, EnvironmentSettings env)
+    {
+        if (_starsInitialized && _starCountCached == count) return;
+
+        // Dispose previous
+        if (_starVao != 0) { GL.DeleteVertexArray(_starVao); _starVao = 0; }
+        if (_starVbo != 0) { GL.DeleteBuffer(_starVbo); _starVbo = 0; }
+
+        _starCountCached = Math.Max(0, count);
+        if (_starCountCached == 0) { _starsInitialized = true; Console.WriteLine("[Starfield] Star count is 0, skipping initialization"); return; }
+
+        Console.WriteLine($"[Starfield] Initializing {_starCountCached} stars");
+
+        // Generate interleaved buffer: vec3 pos, vec3 color
+        float[] data = new float[_starCountCached * 6];
+        for (int i = 0; i < _starCountCached; i++)
+        {
+            // Uniform direction on sphere
+            double z = _starRng.NextDouble() * 2.0 - 1.0;
+            double theta = _starRng.NextDouble() * Math.PI * 2.0;
+            double r = Math.Sqrt(1.0 - z * z);
+            float x = (float)(r * Math.Cos(theta));
+            float y = (float)(r * Math.Sin(theta));
+            float zz = (float)z;
+
+            // Color lerp between two env colors
+            float t = (float)_starRng.NextDouble();
+            var ca = env.StarColorA;
+            var cb = env.StarColorB;
+            float cr = ca.X * (1 - t) + cb.X * t;
+            float cg = ca.Y * (1 - t) + cb.Y * t;
+            float cbv = ca.Z * (1 - t) + cb.Z * t;
+
+            int baseIdx = i * 6;
+            data[baseIdx + 0] = x;
+            data[baseIdx + 1] = y;
+            data[baseIdx + 2] = zz;
+            data[baseIdx + 3] = cr;
+            data[baseIdx + 4] = cg;
+            data[baseIdx + 5] = cbv;
+        }
+
+        _starVao = GL.GenVertexArray();
+        _starVbo = GL.GenBuffer();
+        GL.BindVertexArray(_starVao);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _starVbo);
+        GL.BufferData(BufferTarget.ArrayBuffer, data.Length * sizeof(float), data, BufferUsageHint.StaticDraw);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 6 * sizeof(float), 0);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, 6 * sizeof(float), 3 * sizeof(float));
+        GL.BindVertexArray(0);
+
+        CreateStarShader();
+        _starsInitialized = true;
+    }
+
+    private void RenderStarField(Matrix4 viewMat, Matrix4 projMat, EnvironmentSettings env)
+    {
+        if (env == null || !env.ShowStars) return;
+        EnsureStarFieldInitialized(env.StarCount, env);
+        if (_starCountCached == 0) return;
+
+        // Calculate night fade based on day/night blend (0 = day, 1 = night)
+        float dayNightBlend = env.GetDayNightBlend(env.TimeOfDay);
+        float nightFade = 1.0f - dayNightBlend; // Invert: stars visible at night
+
+        // Debug: Log once when stars should be visible
+        if (!_starfieldLoggedOnce && nightFade > 0.01f)
+        {
+            Console.WriteLine($"[Starfield] Rendering stars: nightFade={nightFade:F3}, timeOfDay={env.TimeOfDay:F2}, count={_starCountCached}");
+            _starfieldLoggedOnce = true;
+        }
+
+        // Early exit if stars are completely invisible (full daylight)
+        if (nightFade < 0.01f) return;
+
+
+        // Render stars similarly to skybox: don't write depth and render at far plane
+        GL.DepthMask(false);
+        GL.DepthFunc(DepthFunction.Lequal);
+        GL.Enable(EnableCap.ProgramPointSize);
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
+        var prog = CreateStarShader();
+        prog.Use();
+
+        // Remove translation first (match SkyboxRenderer), then apply time rotation to sky
+        var v0 = viewMat;
+        var viewNoTranslation = new Matrix4(
+            v0.M11, v0.M12, v0.M13, 0f,
+            v0.M21, v0.M22, v0.M23, 0f,
+            v0.M31, v0.M32, v0.M33, 0f,
+            0f,    0f,    0f,    1f
+        );
+
+        // Compute star angle and send to shader; rotation will be applied in the vertex shader
+        float starAngle = 0f;
+        if (env.StarRotation)
+        {
+            if (env.StarFollowTime)
+            {
+                starAngle = (env.TimeOfDay / 24.0f) * 360.0f;
+            }
+            else
+            {
+                starAngle = (float)(_timeStopwatch.Elapsed.TotalSeconds * 2.0) % 360f;
+            }
+        }
+
+        prog.SetMat4("uView", viewNoTranslation);
+        prog.SetFloat("uStarAngle", starAngle);
+        prog.SetMat4("uProj", projMat);
+        prog.SetFloat("uPointSize", env.StarSize);
+        prog.SetFloat("uTime", (float)_timeStopwatch.Elapsed.TotalSeconds);
+        prog.SetFloat("uTwinkle", env.StarTwinkle);
+        prog.SetFloat("uNightFade", nightFade);
+
+        GL.BindVertexArray(_starVao);
+        GL.DrawArrays(PrimitiveType.Points, 0, _starCountCached);
+        GL.BindVertexArray(0);
+
+        GL.UseProgram(0);
+        GL.Disable(EnableCap.Blend);
+        GL.Disable(EnableCap.ProgramPointSize);
+        // Restore depth state
+        GL.DepthMask(true);
+        GL.DepthFunc(DepthFunction.Less);
+    }
     
     private void RenderSkybox()
     {
@@ -4388,6 +4578,8 @@ void main(){
         try
         {
             _skyboxRenderer ??= new SkyboxRenderer();
+            _cloudRenderer ??= new Engine.Rendering.CloudRenderer();
+            _cloudRenderer.Initialize();
             var viewMat = _viewGL; // already LH->GL converted
             var projMat = _projGL;
 
@@ -4478,7 +4670,15 @@ void main(){
                             try
                             {
                                 var sky = SkyboxMaterialAsset.Load(rec.Path);
-                                _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                                if (sky.Type == Engine.Assets.SkyboxType.Procedural && env != null)
+                                {
+                                    var proc = env.GetProceduralSkyboxParameters();
+                                    _skyboxRenderer.RenderProceduralWithParams(viewMat, projMat, proc, envTint, env.SkyboxExposure);
+                                }
+                                else
+                                {
+                                    _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                                }
                                 skyboxRendered = true;
                             }
                             catch (Exception)
@@ -4495,7 +4695,15 @@ void main(){
                         try
                         {
                             var sky = SkyboxMaterialAsset.Load(env.SkyboxMaterialPath);
-                            _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                            if (sky.Type == Engine.Assets.SkyboxType.Procedural && env != null)
+                            {
+                                var proc = env.GetProceduralSkyboxParameters();
+                                _skyboxRenderer.RenderProceduralWithParams(viewMat, projMat, proc, envTint, env.SkyboxExposure);
+                            }
+                            else
+                            {
+                                _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                            }
                             skyboxRendered = true;
                         }
                         catch (Exception)
@@ -4522,6 +4730,56 @@ void main(){
                     new OpenTK.Mathematics.Vector3(0.2f, 0.3f, 0.4f)  // Darker blue
                 );
                 _skyboxRenderer.Render(viewMat, projMat, OpenTK.Mathematics.Vector3.One, 1.0f);
+                // Render procedural starfield (if enabled in environment settings)
+                try
+                {
+                    var envEntity2 = envEntity; // capture
+                    var env2 = envEntity2?.GetComponent<EnvironmentSettings>();
+                    if (env2 != null)
+                    {
+                        RenderStarField(viewMat, projMat, env2);
+                    }
+                }
+                catch { }
+
+                // Render clouds after skybox and stars
+                try
+                {
+                    if (_cloudRenderer != null && _scene != null)
+                    {
+                        _cloudRenderer.Render(_scene, _globalUniforms.CameraPosition, viewMat, projMat);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportRenderer] Cloud rendering error: {ex.Message}");
+                }
+            }
+            else
+            {
+                // Skybox was rendered from material/params — render stars as well
+                try
+                {
+                    var env2 = envEntity?.GetComponent<EnvironmentSettings>();
+                    if (env2 != null)
+                    {
+                        RenderStarField(viewMat, projMat, env2);
+                    }
+                }
+                catch { }
+
+                // Render clouds after skybox and stars
+                try
+                {
+                    if (_cloudRenderer != null && _scene != null)
+                    {
+                        _cloudRenderer.Render(_scene, _globalUniforms.CameraPosition, viewMat, projMat);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportRenderer] Cloud rendering error: {ex.Message}");
+                }
             }
         }
         catch (Exception)
@@ -4804,12 +5062,24 @@ void main(){
                         if (terrain == null) continue;
 
                         entity.GetModelAndNormalMatrix(out var model, out _);
-
                         _shadowDepthShader.SetMat4("u_Model", model);
 
-                        // Render terrain mesh to shadow map
-                        var camPos = CameraPosition();
-                        terrain.Render(new System.Numerics.Vector3(camPos.X, camPos.Y, camPos.Z));
+                        // Handle different terrain modes
+                        if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                        {
+                            // INFINITE STREAMING: Use TerrainRenderer to render tiles
+                            if (_terrainRenderer != null)
+                            {
+                                var camPos = CameraPosition();
+                                _terrainRenderer.RenderShadowPass(_shadowDepthShader, new System.Numerics.Vector3(camPos.X, camPos.Y, camPos.Z));
+                            }
+                        }
+                        else
+                        {
+                            // SINGLE TERRAIN: Render terrain mesh directly
+                            var camPos = CameraPosition();
+                            terrain.Render(new System.Numerics.Vector3(camPos.X, camPos.Y, camPos.Z));
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -9976,6 +10246,7 @@ void main(){
             _materialUniformBuffers.Clear();
             _grid?.Dispose();
             _skyboxRenderer?.Dispose();
+            _cloudRenderer?.Dispose();
             _terrainRenderer?.Dispose();
             _particleRenderer?.Dispose();
             _vegetationRenderer?.Dispose();
