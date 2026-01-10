@@ -136,8 +136,7 @@ namespace Engine.Rendering
         {
             string key = $"{terrainGuid}_{layerIndex}";
 
-            bool isNew = !_rockLayers.TryGetValue(key, out var layer);
-            if (isNew)
+            if (!_rockLayers.TryGetValue(key, out var layer) || layer == null)
             {
                 layer = new RockLayer
                 {
@@ -188,8 +187,8 @@ namespace Engine.Rendering
             // Enable depth testing, disable blending for solid rocks
             GL.Enable(EnableCap.DepthTest);
             GL.DepthMask(true);
-            GL.Enable(EnableCap.CullFace);
-            GL.CullFace(CullFaceMode.Back);
+            // Disable culling - procedural rocks have inconsistent winding
+            GL.Disable(EnableCap.CullFace);
 
             // Use shader
             _rockShader.Use();
@@ -271,10 +270,12 @@ namespace Engine.Rendering
 
                 // Draw using terrain geometry
                 GL.BindVertexArray(layer.TerrainVAO);
-                GL.DrawElements(PrimitiveType.Triangles, layer.TerrainIndexCount, DrawElementsType.UnsignedInt, 0);
+                GL.DrawElements(PrimitiveType.Triangles, layer.TerrainIndexCount, DrawElementsType.UnsignedInt, IntPtr.Zero);
             }
 
+            // Restore state
             GL.BindVertexArray(0);
+            GL.UseProgram(0);
         }
 
         public void Dispose()

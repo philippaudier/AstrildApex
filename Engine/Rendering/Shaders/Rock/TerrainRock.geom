@@ -1,7 +1,7 @@
 #version 420 core
 
 layout(triangles) in;
-layout(triangle_strip, max_vertices = 60) out; // Max ~2 rocks per triangle, ~30 vertices each
+layout(triangle_strip, max_vertices = 48) out; // 1 rock per triangle, max 8 faces * 3 vertices = 24 + margin
 
 #include "../Includes/Common.glsl"
 
@@ -12,14 +12,12 @@ in VS_OUT {
     vec2 uv;
 } gs_in[];
 
-// Output to fragment shader
+// Output to fragment shader - simplified to reduce per-vertex data
 out GS_OUT {
     vec3 worldPos;
     vec3 normal;
-    vec3 localPos;      // Position in rock-local space for texturing
-    float aoFactor;     // Ambient occlusion hint
-    vec3 rockColor;     // Per-rock color variation
-    float mossBlend;    // Moss coverage factor
+    float aoFactor;     // AO + height packed
+    vec3 rockColor;     // Per-rock color variation includes moss
 } gs_out;
 
 // === UNIFORMS ===
@@ -159,30 +157,38 @@ vec2 voronoi(vec3 p) {
 // ROCK GENERATION
 // ============================================
 
-// Octahedron base vertices (8 faces, good for rocks)
-const vec3 octaVerts[6] = vec3[6](
-    vec3( 1.0,  0.0,  0.0),
-    vec3(-1.0,  0.0,  0.0),
-    vec3( 0.0,  1.0,  0.0),
-    vec3( 0.0, -1.0,  0.0),
-    vec3( 0.0,  0.0,  1.0),
-    vec3( 0.0,  0.0, -1.0)
+// Octahedron - 6 vertices, 8 complete faces - CLOSED shape
+const vec3 baseVerts[6] = vec3[6](
+    vec3( 1.0,  0.0,  0.0),  // +X
+    vec3(-1.0,  0.0,  0.0),  // -X
+    vec3( 0.0,  1.0,  0.0),  // +Y (top)
+    vec3( 0.0, -1.0,  0.0),  // -Y (bottom)
+    vec3( 0.0,  0.0,  1.0),  // +Z
+    vec3( 0.0,  0.0, -1.0)   // -Z
 );
 
-// Octahedron triangles (8 faces)
-const int octaTris[24] = int[24](
-    0, 2, 4,  // +X +Y +Z
-    0, 4, 3,  // +X -Y +Z
-    0, 3, 5,  // +X -Y -Z
-    0, 5, 2,  // +X +Y -Z
-    1, 4, 2,  // -X +Y +Z
-    1, 3, 4,  // -X -Y +Z
-    1, 5, 3,  // -X -Y -Z
-    1, 2, 5   // -X +Y -Z
+// 8 triangular faces - complete closed octahedron with correct CCW winding (viewed from outside)
+const int rockTris[24] = int[24](
+    // Top 4 faces (connecting to +Y vertex)
+    2, 4, 0,  // top-front-right
+    2, 0, 5,  // top-right-back  
+    2, 5, 1,  // top-back-left
+    2, 1, 4,  // top-left-front
+    // Bottom 4 faces (connecting to -Y vertex)
+    3, 0, 4,  // bottom-front-right
+    3, 5, 0,  // bottom-right-back
+    3, 1, 5,  // bottom-back-left
+    3, 4, 1   // bottom-left-front
 );
 
-// Apply noise displacement to a rock vertex
-vec3 displaceRockVertex(vec3 localPos, vec3 rockSeed, float size) {
+// Randomize a base vertex position for more organic shapes
+vec3 randomizeVertex(vec3 v, vec3 seed, float amount) {
+    vec3 rand = hash3(seed + v * 7.3) * 2.0 - 1.0;
+    return normalize(v + rand * amount);
+}
+
+// Apply noise displacement to a rock vertex - more organic version
+vec3 displaceRockVertex(vec3 localPos, vec3 rockSeed, float size, float roundness) {
     // Scale position for noise sampling
     vec3 noisePos = localPos * u_NoiseFrequency + rockSeed;
     
@@ -190,16 +196,22 @@ vec3 displaceRockVertex(vec3 localPos, vec3 rockSeed, float size) {
     float fbmDisp = fbm(noisePos, u_NoiseOctaves, u_NoiseLacunarity, u_NoisePersistence);
     fbmDisp = fbmDisp * 2.0 - 1.0; // Remap to [-1, 1]
     
-    // Voronoi for cracks/crevices
+    // Voronoi for cracks/crevices - reduced for rounder rocks
     vec2 vor = voronoi(noisePos * u_CrackScale);
-    float crackFactor = smoothstep(0.0, 0.15, vor.y - vor.x); // Edge detection
-    float crackDisp = -u_CrackDepth * (1.0 - crackFactor);
+    float crackFactor = smoothstep(0.0, 0.15, vor.y - vor.x);
+    float crackDisp = -u_CrackDepth * (1.0 - crackFactor) * (1.0 - roundness);
     
-    // Sharp edges using abs noise
-    float sharpNoise = abs(fbm(noisePos * 1.5, 2, 2.0, 0.5)) * u_Sharpness;
+    // Sharp edges - reduced based on roundness
+    float sharpNoise = abs(fbm(noisePos * 1.5, 2, 2.0, 0.5)) * u_Sharpness * (1.0 - roundness);
+    
+    // Smooth bulging noise for rounded rocks
+    float bulgeNoise = sin(noisePos.x * 2.0) * sin(noisePos.y * 2.0) * sin(noisePos.z * 2.0) * 0.3 * roundness;
     
     // Combine displacements
-    float totalDisp = fbmDisp * u_NoiseAmplitude + crackDisp + sharpNoise * 0.2;
+    float totalDisp = fbmDisp * u_NoiseAmplitude + crackDisp + sharpNoise * 0.2 + bulgeNoise;
+    
+    // Soften displacement for roundness
+    totalDisp *= mix(1.0, 0.5, roundness);
     
     // Apply along surface normal (outward from center)
     vec3 normal = normalize(localPos);
@@ -207,14 +219,14 @@ vec3 displaceRockVertex(vec3 localPos, vec3 rockSeed, float size) {
 }
 
 // Calculate normal from displaced position
-vec3 calcRockNormal(vec3 localPos, vec3 rockSeed, float size) {
+vec3 calcRockNormal(vec3 localPos, vec3 rockSeed, float size, float roundness) {
     float eps = 0.02;
-    vec3 dx = displaceRockVertex(localPos + vec3(eps, 0, 0), rockSeed, size) -
-              displaceRockVertex(localPos - vec3(eps, 0, 0), rockSeed, size);
-    vec3 dy = displaceRockVertex(localPos + vec3(0, eps, 0), rockSeed, size) -
-              displaceRockVertex(localPos - vec3(0, eps, 0), rockSeed, size);
-    vec3 dz = displaceRockVertex(localPos + vec3(0, 0, eps), rockSeed, size) -
-              displaceRockVertex(localPos - vec3(0, 0, eps), rockSeed, size);
+    vec3 dx = displaceRockVertex(localPos + vec3(eps, 0, 0), rockSeed, size, roundness) -
+              displaceRockVertex(localPos - vec3(eps, 0, 0), rockSeed, size, roundness);
+    vec3 dy = displaceRockVertex(localPos + vec3(0, eps, 0), rockSeed, size, roundness) -
+              displaceRockVertex(localPos - vec3(0, eps, 0), rockSeed, size, roundness);
+    vec3 dz = displaceRockVertex(localPos + vec3(0, 0, eps), rockSeed, size, roundness) -
+              displaceRockVertex(localPos - vec3(0, 0, eps), rockSeed, size, roundness);
     
     // Cross products for normal
     vec3 normal = cross(dy, dx) + cross(dx, dz) + cross(dz, dy);
@@ -256,48 +268,60 @@ void GenerateRock(vec3 basePos, vec3 terrainNormal, vec3 rockSeed, float rockSiz
     int numFaces = int(8.0 * lodDetail);
     numFaces = max(numFaces, 4); // Minimum 4 faces
     
+    // Per-rock randomness for shape variety
+    float rockRand = hash(rockSeed);
+    float roundness = rockRand * 0.7 + 0.3; // 0.3 to 1.0 - more rounded variety
+    float asymmetry = hash(rockSeed.yx) * 0.5; // Random asymmetric stretching
+    
     // Build rock transform
     float randomAngle = hash(rockSeed.xy) * 6.28318 * u_RotationRandomness;
     mat3 rotation = buildRotationMatrix(terrainNormal, randomAngle, u_AlignToTerrain);
     
-    // Apply size and flattening
-    vec3 scale = vec3(rockSize, rockSize * (1.0 - u_FlattenY * 0.5), rockSize);
+    // Apply size with random asymmetric scaling for variety
+    vec3 asymScale = vec3(
+        1.0 + (hash(rockSeed + 0.1) - 0.5) * asymmetry,
+        1.0 + (hash(rockSeed + 0.2) - 0.5) * asymmetry,
+        1.0 + (hash(rockSeed + 0.3) - 0.5) * asymmetry
+    );
+    vec3 scale = vec3(rockSize) * asymScale;
+    scale.y *= (1.0 - u_FlattenY * 0.5);
     
     // Embed rock into ground
     vec3 embedOffset = vec3(0.0, -rockSize * u_EmbedDepth, 0.0);
     embedOffset = rotation * embedOffset;
     basePos += embedOffset;
     
-    // Generate rock triangles (octahedron with displacement)
+    // Generate rock triangles with more organic base shape
     for (int face = 0; face < numFaces; face++)
     {
         int idx = face * 3;
         
-        // Get triangle vertices
-        vec3 v0 = octaVerts[octaTris[idx + 0]];
-        vec3 v1 = octaVerts[octaTris[idx + 1]];
-        vec3 v2 = octaVerts[octaTris[idx + 2]];
+        // Get base vertices and randomize them for organic shape
+        vec3 v0 = randomizeVertex(baseVerts[rockTris[idx + 0]], rockSeed, asymmetry);
+        vec3 v1 = randomizeVertex(baseVerts[rockTris[idx + 1]], rockSeed, asymmetry);
+        vec3 v2 = randomizeVertex(baseVerts[rockTris[idx + 2]], rockSeed, asymmetry);
         
         // Apply scale
         v0 *= scale;
         v1 *= scale;
         v2 *= scale;
         
-        // Displace for rock detail
-        vec3 d0 = displaceRockVertex(v0, rockSeed, rockSize);
-        vec3 d1 = displaceRockVertex(v1, rockSeed, rockSize);
-        vec3 d2 = displaceRockVertex(v2, rockSeed, rockSize);
+        // Displace for rock detail with roundness
+        vec3 d0 = displaceRockVertex(v0, rockSeed, rockSize, roundness);
+        vec3 d1 = displaceRockVertex(v1, rockSeed, rockSize, roundness);
+        vec3 d2 = displaceRockVertex(v2, rockSeed, rockSize, roundness);
         
         // Calculate normals
-        vec3 n0 = calcRockNormal(v0, rockSeed, rockSize);
-        vec3 n1 = calcRockNormal(v1, rockSeed, rockSize);
-        vec3 n2 = calcRockNormal(v2, rockSeed, rockSize);
+        vec3 n0 = calcRockNormal(v0, rockSeed, rockSize, roundness);
+        vec3 n1 = calcRockNormal(v1, rockSeed, rockSize, roundness);
+        vec3 n2 = calcRockNormal(v2, rockSeed, rockSize, roundness);
         
-        // Apply faceting (flat shading effect)
+        // Apply faceting (reduced for rounder rocks)
         vec3 faceNormal = normalize(cross(d1 - d0, d2 - d0));
-        n0 = normalize(mix(n0, faceNormal, u_FacetStrength));
-        n1 = normalize(mix(n1, faceNormal, u_FacetStrength));
-        n2 = normalize(mix(n2, faceNormal, u_FacetStrength));
+        float facetAmount = u_FacetStrength * (1.0 - roundness * 0.7); // Less faceting for round rocks
+        n0 = normalize(mix(n0, faceNormal, facetAmount));
+        n1 = normalize(mix(n1, faceNormal, facetAmount));
+        n2 = normalize(mix(n2, faceNormal, facetAmount));
         
         // Transform to world space
         vec3 w0 = basePos + rotation * d0;
@@ -309,40 +333,41 @@ void GenerateRock(vec3 basePos, vec3 terrainNormal, vec3 rockSeed, float rockSiz
         vec3 wn2 = normalize(rotation * n2);
         
         // Calculate moss based on upward-facing
+        // Moss blended into color
         float moss0 = u_MossAmount * smoothstep(u_MossTopBias - 0.3, u_MossTopBias + 0.3, wn0.y);
         float moss1 = u_MossAmount * smoothstep(u_MossTopBias - 0.3, u_MossTopBias + 0.3, wn1.y);
         float moss2 = u_MossAmount * smoothstep(u_MossTopBias - 0.3, u_MossTopBias + 0.3, wn2.y);
+        
+        // Blend moss into rock color directly
+        vec3 mossCol = u_MossColor.rgb;
+        vec3 color0 = mix(rockColor, mossCol, moss0);
+        vec3 color1 = mix(rockColor, mossCol, moss1);
+        vec3 color2 = mix(rockColor, mossCol, moss2);
         
         // AO hint based on crevices (lower areas darker)
         float ao0 = 0.5 + 0.5 * clamp(dot(n0, normalize(v0)), 0.0, 1.0);
         float ao1 = 0.5 + 0.5 * clamp(dot(n1, normalize(v1)), 0.0, 1.0);
         float ao2 = 0.5 + 0.5 * clamp(dot(n2, normalize(v2)), 0.0, 1.0);
         
-        // Emit triangle
+        // Emit triangle - simplified output
         gs_out.worldPos = w0;
         gs_out.normal = wn0;
-        gs_out.localPos = v0;
         gs_out.aoFactor = ao0;
-        gs_out.rockColor = rockColor;
-        gs_out.mossBlend = moss0;
+        gs_out.rockColor = color0;
         gl_Position = uViewProj * vec4(w0, 1.0);
         EmitVertex();
         
         gs_out.worldPos = w1;
         gs_out.normal = wn1;
-        gs_out.localPos = v1;
         gs_out.aoFactor = ao1;
-        gs_out.rockColor = rockColor;
-        gs_out.mossBlend = moss1;
+        gs_out.rockColor = color1;
         gl_Position = uViewProj * vec4(w1, 1.0);
         EmitVertex();
         
         gs_out.worldPos = w2;
         gs_out.normal = wn2;
-        gs_out.localPos = v2;
         gs_out.aoFactor = ao2;
-        gs_out.rockColor = rockColor;
-        gs_out.mossBlend = moss2;
+        gs_out.rockColor = color2;
         gl_Position = uViewProj * vec4(w2, 1.0);
         EmitVertex();
         
@@ -374,50 +399,86 @@ void main()
     float distToCamera = length(triCenter - uCameraPos);
     if (distToCamera > u_MaxRenderDistance) return;
     
-    // Clustering noise for natural distribution
-    float clusterNoise = fbm(triCenter * u_ClusterNoiseScale, 2, 2.0, 0.5);
+    // === IMPROVED PLACEMENT - avoid grid patterns ===
+    // Use a unique hash based on ALL vertex positions, not just center
+    // This ensures each triangle has a truly unique seed
+    float triHash = hash(v0 + v1 * 0.7 + v2 * 0.3);
+    vec3 triSeed = vec3(
+        hash(vec3(v0.x, v1.z, v2.y)),
+        hash(vec3(v1.x, v2.z, v0.y)),
+        hash(vec3(v2.x, v0.z, v1.y))
+    );
+    
+    // Clustering noise - sample at world position with offset to break grid
+    vec3 clusterSamplePos = triCenter + triSeed * 10.0;
+    float clusterNoise = fbm(clusterSamplePos * u_ClusterNoiseScale, 2, 2.0, 0.5);
     float placementChance = mix(1.0, clusterNoise, u_ClusteringStrength);
     
-    // Placement threshold
-    if (placementChance < u_PlacementThreshold) return;
+    // Placement threshold with CUBIC curve for extreme low-density control
+    // density 0.01 -> 0.001, density 0.1 -> 0.01, density 0.5 -> 0.125
+    float placementRand = hash(triSeed.xy + triSeed.z);
+    float effectiveDensity = u_Density * u_Density * u_Density; // Cubic for very low densities
+    effectiveDensity *= placementChance;
+    
+    // Also apply sparseness (PlacementThreshold) - higher = fewer rocks
+    effectiveDensity *= (1.0 - u_PlacementThreshold * 0.99);
+    
+    if (placementRand > effectiveDensity) return;
     
     // Calculate triangle area
     vec3 edge1 = v1 - v0;
     vec3 edge2 = v2 - v0;
     float triArea = length(cross(edge1, edge2)) * 0.5;
     
-    // Number of rocks based on density and area
-    float baseRockCount = u_Density * (triArea / 10.0); // Normalize around 10 sqm
-    int numRocks = int(baseRockCount * placementChance);
-    numRocks = clamp(numRocks, 0, 2); // Max 2 rocks per triangle
+    // Skip very tiny triangles
+    if (triArea < 0.01) return;
     
-    // Generate rocks
-    for (int i = 0; i < numRocks; i++)
-    {
-        // Random barycentric coords for placement
-        vec2 seed = triCenter.xz + vec2(float(i) * 17.3, float(i) * 31.7);
-        vec2 r = hash2(seed);
-        float sqrtR1 = sqrt(r.x);
-        float u = 1.0 - sqrtR1;
-        float v = r.y * sqrtR1;
-        float w = 1.0 - u - v;
-        
-        vec3 rockPos = v0 * u + v1 * v + v2 * w;
-        vec3 rockNormal = normalize(gs_in[0].normal * u + gs_in[1].normal * v + gs_in[2].normal * w);
-        
-        // Random size
-        float sizeRand = hash(seed + 0.5);
-        float rockSize = mix(u_MinSize, u_MaxSize, sizeRand);
-        rockSize *= mix(1.0 - u_SizeVariation, 1.0 + u_SizeVariation, hash(seed + 1.0));
-        
-        // Per-rock seed for unique shape
-        vec3 rockSeed = vec3(seed, hash(seed));
-        
-        // Color variation
-        float colorVar = (hash(seed + 2.0) - 0.5) * u_ColorVariation;
-        vec3 rockColor = u_BaseColor.rgb + vec3(colorVar);
-        
-        // Generate the rock
-        GenerateRock(rockPos, rockNormal, rockSeed, rockSize, rockColor);
-    }
+    // Generate ONE rock per qualifying triangle (cleaner distribution)
+    // The density is handled by the placement threshold above
+    
+    // === BARYCENTRIC PLACEMENT - well inside triangle, not on edges ===
+    // Use improved random that avoids edges
+    float r1 = hash(triSeed.xz);
+    float r2 = hash(triSeed.yz);
+    
+    // Shrink towards center to avoid edge placement
+    // Map [0,1] to [0.2, 0.8] range to stay away from edges
+    r1 = 0.2 + r1 * 0.6;
+    r2 = 0.2 + r2 * 0.6;
+    
+    // Barycentric coordinates using square root for uniform distribution
+    float sqrtR1 = sqrt(r1);
+    float baryU = 1.0 - sqrtR1;
+    float baryV = r2 * sqrtR1;
+    float baryW = 1.0 - baryU - baryV;
+    
+    // Ensure we're inside triangle (normalize barycentric coords)
+    float total = baryU + baryV + baryW;
+    baryU /= total;
+    baryV /= total;
+    baryW /= total;
+    
+    // Additional pull towards center to avoid edges
+    float centerPull = 0.25;
+    baryU = mix(baryU, 0.333, centerPull);
+    baryV = mix(baryV, 0.333, centerPull);
+    baryW = mix(baryW, 0.333, centerPull);
+    
+    vec3 rockPos = v0 * baryU + v1 * baryV + v2 * baryW;
+    vec3 rockNormal = normalize(gs_in[0].normal * baryU + gs_in[1].normal * baryV + gs_in[2].normal * baryW);
+    
+    // Random size using unique seed
+    float sizeRand = hash(triSeed + 0.5);
+    float rockSize = mix(u_MinSize, u_MaxSize, sizeRand);
+    rockSize *= mix(1.0 - u_SizeVariation, 1.0 + u_SizeVariation, hash(triSeed.xy + 1.0));
+    
+    // Per-rock seed for unique shape - use full triangle vertex info
+    vec3 rockSeed = triSeed * 100.0 + vec3(triHash * 50.0);
+    
+    // Color variation
+    float colorVar = (hash(triSeed + 2.0) - 0.5) * u_ColorVariation;
+    vec3 rockColor = u_BaseColor.rgb + vec3(colorVar);
+    
+    // Generate the rock
+    GenerateRock(rockPos, rockNormal, rockSeed, rockSize, rockColor);
 }

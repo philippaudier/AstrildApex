@@ -334,7 +334,7 @@ namespace Engine.Assets
     {
         // === DENSITY & DISTRIBUTION ===
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 0.3f; // Rocks per triangle (0.1-2)
+        public float Density { get; set; } = 0.8f; // Rocks per triangle (0.1-2)
 
         [Engine.Serialization.SerializableAttribute("clusteringStrength")]
         public float ClusteringStrength { get; set; } = 0.5f; // 0 = uniform, 1 = highly clustered
@@ -343,7 +343,7 @@ namespace Engine.Assets
         public float ClusterNoiseScale { get; set; } = 0.02f; // World-space scale for clustering noise
 
         [Engine.Serialization.SerializableAttribute("placementThreshold")]
-        public float PlacementThreshold { get; set; } = 0.3f; // Higher = sparser placement
+        public float PlacementThreshold { get; set; } = 0.15f; // Higher = sparser placement
 
         // === SLOPE & HEIGHT CONSTRAINTS ===
         [Engine.Serialization.SerializableAttribute("minSlope")]

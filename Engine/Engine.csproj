@@ -127,6 +127,19 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Grass\TerrainGrass.frag</Link>
     </None>
+    <!-- GPU Rock Shaders -->
+    <None Update="Rendering\Shaders\Rock\TerrainRock.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Rock\TerrainRock.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Rock\TerrainRock.geom">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Rock\TerrainRock.geom</Link>
+    </None>
+    <None Update="Rendering\Shaders\Rock\TerrainRock.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Rock\TerrainRock.frag</Link>
+    </None>
     <!-- NOTE: SSAO.glsl include removed - SSAO is now a post-processing effect -->
     <!-- AO Shaders (GTAO only, SSAO removed) -->
     <None Update="Rendering\Shaders\AO\Prefilter.vert">

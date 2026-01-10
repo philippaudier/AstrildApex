@@ -137,8 +137,7 @@ namespace Engine.Rendering
             string key = $"{terrainGuid}_{layerIndex}";
 
             // Only log when creating new layers (avoid spam)
-            bool isNew = !_grassLayers.TryGetValue(key, out var layer);
-            if (isNew)
+            if (!_grassLayers.TryGetValue(key, out var layer) || layer == null)
             {
                 layer = new GrassLayer
                 {

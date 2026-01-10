@@ -2,14 +2,12 @@
 
 #include "../Includes/Common.glsl"
 
-// Input from geometry shader
+// Input from geometry shader (simplified - moss pre-blended in GS)
 in GS_OUT {
     vec3 worldPos;
     vec3 normal;
-    vec3 localPos;
     float aoFactor;
-    vec3 rockColor;
-    float mossBlend;
+    vec3 rockColor;  // Already includes moss blend
 } fs_in;
 
 // Uniforms
@@ -58,20 +56,19 @@ void main()
     
     // === BASE COLOR ===
     
-    // Local position noise for surface variation
-    float surfaceNoise = noise3D(fs_in.localPos * 8.0) * 0.2;
+    // Simple surface noise based on world position
+    float surfaceNoise = noise3D(fs_in.worldPos * 2.0) * 0.15;
     
-    // Mix between dark (crevices) and highlight (exposed edges)
-    float heightFactor = (fs_in.localPos.y + 1.0) * 0.5; // Normalize Y to 0-1
+    // Mix between dark (crevices via AO) and rock color
     vec3 baseColor = mix(u_DarkColor.rgb, fs_in.rockColor, fs_in.aoFactor);
-    baseColor = mix(baseColor, u_HighlightColor.rgb, pow(max(0.0, fs_in.localPos.y), 2.0) * 0.3);
+    baseColor = mix(baseColor, u_HighlightColor.rgb, pow(fs_in.aoFactor, 3.0) * 0.2);
     
     // Add surface noise variation
-    baseColor += vec3(surfaceNoise - 0.1);
+    baseColor += vec3(surfaceNoise - 0.075);
     
-    // === MOSS BLENDING ===
-    vec3 finalColor = mix(baseColor, u_MossColor.rgb, fs_in.mossBlend);
-    float finalRoughness = mix(u_Roughness, 0.9, fs_in.mossBlend); // Moss is rougher
+    // fs_in.rockColor already includes moss blend from geometry shader
+    vec3 finalColor = baseColor;
+    float finalRoughness = u_Roughness;
     
     // === LIGHTING ===
     
