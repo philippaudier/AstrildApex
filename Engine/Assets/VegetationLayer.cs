@@ -179,6 +179,14 @@ namespace Engine.Assets
 
         [Engine.Serialization.SerializableAttribute("grassProperties")]
         public GrassProperties? GrassProperties { get; set; } = null;
+
+        // === GPU ROCK LAYER (optional) ===
+        // When enabled, generates procedural rocks on the terrain using geometry shaders.
+        [Engine.Serialization.SerializableAttribute("isRockLayer")]
+        public bool IsRockLayer { get; set; } = false;
+
+        [Engine.Serialization.SerializableAttribute("rockProperties")]
+        public RockProperties? RockProperties { get; set; } = null;
         // === WIND & ANIMATION ===
 
         // Wind and LOD-related properties removed: global weather/wind system and
@@ -314,5 +322,131 @@ namespace Engine.Assets
 
         [Engine.Serialization.SerializableAttribute("fadeRange")]
         public float FadeRange { get; set; } = 30f; // Distance over which grass fades
+    }
+
+    /// <summary>
+    /// GPU-generated procedural rock properties for vegetation layers.
+    /// Uses geometry shader to generate realistic rock meshes directly from terrain vertices.
+    /// Rocks are created using deformed polyhedra with noise-based displacement.
+    /// </summary>
+    [System.Serializable]
+    public sealed class RockProperties
+    {
+        // === DENSITY & DISTRIBUTION ===
+        [Engine.Serialization.SerializableAttribute("density")]
+        public float Density { get; set; } = 0.3f; // Rocks per triangle (0.1-2)
+
+        [Engine.Serialization.SerializableAttribute("clusteringStrength")]
+        public float ClusteringStrength { get; set; } = 0.5f; // 0 = uniform, 1 = highly clustered
+
+        [Engine.Serialization.SerializableAttribute("clusterNoiseScale")]
+        public float ClusterNoiseScale { get; set; } = 0.02f; // World-space scale for clustering noise
+
+        [Engine.Serialization.SerializableAttribute("placementThreshold")]
+        public float PlacementThreshold { get; set; } = 0.3f; // Higher = sparser placement
+
+        // === SLOPE & HEIGHT CONSTRAINTS ===
+        [Engine.Serialization.SerializableAttribute("minSlope")]
+        public float MinSlope { get; set; } = 0.0f; // Min slope angle (degrees)
+
+        [Engine.Serialization.SerializableAttribute("maxSlope")]
+        public float MaxSlope { get; set; } = 70.0f; // Max slope angle (degrees) - rocks can be on steeper terrain
+
+        [Engine.Serialization.SerializableAttribute("minHeight")]
+        public float MinHeight { get; set; } = -1000.0f; // Min world height
+
+        [Engine.Serialization.SerializableAttribute("maxHeight")]
+        public float MaxHeight { get; set; } = 1000.0f; // Max world height
+
+        // === ROCK SIZE ===
+        [Engine.Serialization.SerializableAttribute("minSize")]
+        public float MinSize { get; set; } = 0.3f; // Minimum rock radius
+
+        [Engine.Serialization.SerializableAttribute("maxSize")]
+        public float MaxSize { get; set; } = 1.5f; // Maximum rock radius
+
+        [Engine.Serialization.SerializableAttribute("sizeVariation")]
+        public float SizeVariation { get; set; } = 0.6f; // Random size variation (0-1)
+
+        [Engine.Serialization.SerializableAttribute("flattenY")]
+        public float FlattenY { get; set; } = 0.3f; // Vertical squash factor (0=sphere, 1=very flat)
+
+        // === ROCK SHAPE - NOISE DISPLACEMENT ===
+        [Engine.Serialization.SerializableAttribute("noiseFrequency")]
+        public float NoiseFrequency { get; set; } = 2.5f; // Base noise frequency for shape
+
+        [Engine.Serialization.SerializableAttribute("noiseAmplitude")]
+        public float NoiseAmplitude { get; set; } = 0.35f; // Displacement amount (0-1)
+
+        [Engine.Serialization.SerializableAttribute("noiseOctaves")]
+        public int NoiseOctaves { get; set; } = 3; // FBM octaves for detail (1-5)
+
+        [Engine.Serialization.SerializableAttribute("noiseLacunarity")]
+        public float NoiseLacunarity { get; set; } = 2.2f; // Frequency multiplier per octave
+
+        [Engine.Serialization.SerializableAttribute("noisePersistence")]
+        public float NoisePersistence { get; set; } = 0.5f; // Amplitude multiplier per octave
+
+        // === ROCK SHAPE - FEATURES ===
+        [Engine.Serialization.SerializableAttribute("sharpness")]
+        public float Sharpness { get; set; } = 0.4f; // Edge sharpness (0=smooth, 1=jagged)
+
+        [Engine.Serialization.SerializableAttribute("facetStrength")]
+        public float FacetStrength { get; set; } = 0.3f; // Flat face emphasis (0=round, 1=very faceted)
+
+        [Engine.Serialization.SerializableAttribute("crackDepth")]
+        public float CrackDepth { get; set; } = 0.15f; // Voronoi crack/crevice depth
+
+        [Engine.Serialization.SerializableAttribute("crackScale")]
+        public float CrackScale { get; set; } = 3.0f; // Voronoi cell scale for cracks
+
+        // === ROCK APPEARANCE ===
+        [Engine.Serialization.SerializableAttribute("baseColor")]
+        public float[] BaseColor { get; set; } = new float[] { 0.45f, 0.42f, 0.38f, 1.0f }; // Gray-brown
+
+        [Engine.Serialization.SerializableAttribute("darkColor")]
+        public float[] DarkColor { get; set; } = new float[] { 0.25f, 0.23f, 0.2f, 1.0f }; // Darker crevices
+
+        [Engine.Serialization.SerializableAttribute("highlightColor")]
+        public float[] HighlightColor { get; set; } = new float[] { 0.6f, 0.58f, 0.55f, 1.0f }; // Lighter edges
+
+        [Engine.Serialization.SerializableAttribute("colorVariation")]
+        public float ColorVariation { get; set; } = 0.15f; // Per-rock color randomness
+
+        [Engine.Serialization.SerializableAttribute("roughness")]
+        public float Roughness { get; set; } = 0.85f; // PBR roughness (0-1)
+
+        [Engine.Serialization.SerializableAttribute("metallic")]
+        public float Metallic { get; set; } = 0.0f; // PBR metallic (usually 0 for rocks)
+
+        // === MOSS/LICHEN (optional) ===
+        [Engine.Serialization.SerializableAttribute("mossAmount")]
+        public float MossAmount { get; set; } = 0.0f; // Coverage of moss (0-1)
+
+        [Engine.Serialization.SerializableAttribute("mossColor")]
+        public float[] MossColor { get; set; } = new float[] { 0.2f, 0.4f, 0.15f, 1.0f }; // Green moss
+
+        [Engine.Serialization.SerializableAttribute("mossTopBias")]
+        public float MossTopBias { get; set; } = 0.7f; // Moss prefers upward-facing surfaces
+
+        // === EMBEDDING & ORIENTATION ===
+        [Engine.Serialization.SerializableAttribute("embedDepth")]
+        public float EmbedDepth { get; set; } = 0.3f; // How deep rocks sink into terrain (0-1)
+
+        [Engine.Serialization.SerializableAttribute("alignToTerrain")]
+        public float AlignToTerrain { get; set; } = 0.5f; // Alignment to terrain normal (0-1)
+
+        [Engine.Serialization.SerializableAttribute("rotationRandomness")]
+        public float RotationRandomness { get; set; } = 1.0f; // Random rotation amount (0-1)
+
+        // === LOD & CULLING ===
+        [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
+        public float MaxRenderDistance { get; set; } = 200f; // Distance fade-out
+
+        [Engine.Serialization.SerializableAttribute("fadeRange")]
+        public float FadeRange { get; set; } = 40f; // Distance over which rocks fade
+
+        [Engine.Serialization.SerializableAttribute("lodBias")]
+        public float LodBias { get; set; } = 1.0f; // Detail level multiplier
     }
 }

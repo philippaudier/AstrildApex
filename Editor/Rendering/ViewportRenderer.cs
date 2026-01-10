@@ -1466,6 +1466,9 @@ namespace Editor.Rendering
         // Grass Renderer (GPU-generated grass)
         private Engine.Rendering.GrassRenderer? _grassRenderer = null;
 
+        // Rock Renderer (GPU-generated procedural rocks)
+        private Engine.Rendering.RockRenderer? _rockRenderer = null;
+
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
             get => _taaSettings;
@@ -1817,6 +1820,20 @@ namespace Editor.Rendering
                 {
                     Console.WriteLine($"[ViewportRenderer] Failed to initialize GrassRenderer: {ex.Message}");
                     _grassRenderer = null;
+                }
+            }
+
+            // Initialize Rock renderer
+            if (_rockRenderer == null)
+            {
+                try
+                {
+                    _rockRenderer = new Engine.Rendering.RockRenderer();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportRenderer] Failed to initialize RockRenderer: {ex.Message}");
+                    _rockRenderer = null;
                 }
             }
 
@@ -6953,6 +6970,85 @@ void main(){
                                     1.0f // Ambient intensity
                                 );
                             }
+
+                            // === ROCK RENDERING (GPU-generated procedural rocks from terrain mesh) ===
+                            if (_rockRenderer != null && terrain.VegetationLayers != null)
+                            {
+                                // Compute normal matrix from terrain model matrix
+                                Matrix3 rockNormalMat;
+                                try
+                                {
+                                    var invTranspose = Matrix4.Transpose(Matrix4.Invert(terrainModel));
+                                    rockNormalMat = new Matrix3(
+                                        invTranspose.M11, invTranspose.M12, invTranspose.M13,
+                                        invTranspose.M21, invTranspose.M22, invTranspose.M23,
+                                        invTranspose.M31, invTranspose.M32, invTranspose.M33);
+                                }
+                                catch { rockNormalMat = Matrix3.Identity; }
+
+                                // Check for rock-enabled vegetation layers
+                                for (int vIdx = 0; vIdx < terrain.VegetationLayers.Length; vIdx++)
+                                {
+                                    var vLayer = terrain.VegetationLayers[vIdx];
+                                    if (vLayer == null || !vLayer.IsRockLayer || vLayer.RockProperties == null)
+                                        continue;
+
+                                    // Handle streaming terrain mode (multiple tiles)
+                                    if (terrain.Mode == TerrainMode.InfiniteStreaming && _terrainRenderer != null && _terrainRenderer.HasActiveTiles)
+                                    {
+                                        float tileSize = terrain.StreamingTileSize;
+                                        _terrainRenderer.ForEachRenderableTile((tileVao, tileIndexCount, tileX, tileY, tileSz) =>
+                                        {
+                                            int regIndex = -(vIdx + 1) * 10000 + tileX * 100 + tileY;
+                                            _rockRenderer.RegisterRockLayer(entity.Guid, regIndex, vLayer.RockProperties,
+                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity);
+                                        }, tileSize);
+                                    }
+                                    else
+                                    {
+                                        // Handle single terrain mode
+                                        int terrainVAO = terrain.VAO;
+                                        int terrainIndexCount = terrain.IndexCount;
+                                        
+                                        if (terrainVAO > 0 && terrainIndexCount > 0)
+                                        {
+                                            int regIndex = -(vIdx + 1);
+                                            _rockRenderer.RegisterRockLayer(entity.Guid, regIndex, vLayer.RockProperties,
+                                                terrainVAO, terrainIndexCount, terrainModel, rockNormalMat);
+                                        }
+                                    }
+                                }
+
+                                // Render all rock layers
+                                float rockTime = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                                var rockAmbientColor = new OpenTK.Mathematics.Vector3(
+                                    _globalUniforms.AmbientColor.X,
+                                    _globalUniforms.AmbientColor.Y,
+                                    _globalUniforms.AmbientColor.Z
+                                );
+
+                                // Get sun direction and color
+                                var sunDir = new OpenTK.Mathematics.Vector3(
+                                    _globalUniforms.DirLightDirection.X,
+                                    _globalUniforms.DirLightDirection.Y,
+                                    _globalUniforms.DirLightDirection.Z
+                                );
+                                var sunColor = new OpenTK.Mathematics.Vector3(
+                                    _globalUniforms.DirLightColor.X,
+                                    _globalUniforms.DirLightColor.Y,
+                                    _globalUniforms.DirLightColor.Z
+                                );
+
+                                _rockRenderer.Render(
+                                    new OpenTK.Mathematics.Vector3(viewPos.X, viewPos.Y, viewPos.Z),
+                                    rockTime,
+                                    rockAmbientColor,
+                                    1.0f, // Ambient intensity
+                                    sunDir,
+                                    sunColor,
+                                    _globalUniforms.DirLightIntensity
+                                );
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -10477,6 +10573,7 @@ void main(){
             _skyboxRenderer?.Dispose();
             _cloudRenderer?.Dispose();
             _grassRenderer?.Dispose();
+            _rockRenderer?.Dispose();
             _terrainRenderer?.Dispose();
             _particleRenderer?.Dispose();
             _vegetationRenderer?.Dispose();

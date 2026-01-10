@@ -539,6 +539,376 @@ namespace Editor.Inspector
                 ImGui.Separator();
             }
 
+            // === GPU Rock Layer (optional) ===
+            bool isRockLayer = layer.IsRockLayer;
+            if (ImGui.Checkbox("Enable Rock Coverage (GPU)", ref isRockLayer))
+            {
+                layer.IsRockLayer = isRockLayer;
+                if (isRockLayer && layer.RockProperties == null)
+                {
+                    layer.RockProperties = new Engine.Assets.RockProperties();
+                }
+                else if (!isRockLayer)
+                {
+                    layer.RockProperties = null;
+                }
+                RegenerateVegetation(terrain);
+            }
+
+            if (layer.IsRockLayer && layer.RockProperties != null)
+            {
+                ImGui.Indent();
+                ImGui.TextDisabled("GPU-generated procedural rocks from terrain mesh");
+
+                var rock = layer.RockProperties;
+                bool rockChanged = false;
+
+                // Density & Distribution
+                if (ImGui.TreeNode("Distribution##rock"))
+                {
+                    float rDensity = rock.Density;
+                    if (ImGui.SliderFloat("Density##rock", ref rDensity, 0.05f, 2.0f))
+                    {
+                        rock.Density = rDensity;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Rocks per terrain triangle (0.05-2)");
+
+                    float clustering = rock.ClusteringStrength;
+                    if (ImGui.SliderFloat("Clustering", ref clustering, 0.0f, 1.0f))
+                    {
+                        rock.ClusteringStrength = clustering;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("0 = uniform, 1 = highly clustered");
+
+                    float clusterScale = rock.ClusterNoiseScale;
+                    if (ImGui.SliderFloat("Cluster Scale", ref clusterScale, 0.001f, 0.1f, "%.3f"))
+                    {
+                        rock.ClusterNoiseScale = clusterScale;
+                        rockChanged = true;
+                    }
+
+                    float threshold = rock.PlacementThreshold;
+                    if (ImGui.SliderFloat("Sparseness", ref threshold, 0.0f, 0.8f))
+                    {
+                        rock.PlacementThreshold = threshold;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Higher = sparser rock placement");
+
+                    ImGui.TreePop();
+                }
+
+                // Slope & Height
+                if (ImGui.TreeNode("Slope & Height##rock"))
+                {
+                    float rMinSlope = rock.MinSlope;
+                    if (ImGui.SliderFloat("Min Slope##rock", ref rMinSlope, 0.0f, 89.0f))
+                    {
+                        rock.MinSlope = rMinSlope;
+                        if (rock.MaxSlope < rMinSlope) rock.MaxSlope = rMinSlope;
+                        rockChanged = true;
+                    }
+
+                    float rMaxSlope = rock.MaxSlope;
+                    if (ImGui.SliderFloat("Max Slope##rock", ref rMaxSlope, 0.0f, 89.0f))
+                    {
+                        rock.MaxSlope = rMaxSlope;
+                        if (rock.MinSlope > rMaxSlope) rock.MinSlope = rMaxSlope;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Rocks can appear on steeper slopes than grass");
+
+                    ImGui.Separator();
+
+                    float rMinHeight = rock.MinHeight;
+                    if (ImGui.DragFloat("Min Height##rock", ref rMinHeight, 1.0f, -1000.0f, 1000.0f))
+                    {
+                        rock.MinHeight = rMinHeight;
+                        rockChanged = true;
+                    }
+
+                    float rMaxHeight = rock.MaxHeight;
+                    if (ImGui.DragFloat("Max Height##rock", ref rMaxHeight, 1.0f, -1000.0f, 1000.0f))
+                    {
+                        rock.MaxHeight = rMaxHeight;
+                        rockChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Rock Size
+                if (ImGui.TreeNode("Size##rock"))
+                {
+                    float minSize = rock.MinSize;
+                    if (ImGui.SliderFloat("Min Size", ref minSize, 0.1f, 5.0f))
+                    {
+                        rock.MinSize = minSize;
+                        if (rock.MaxSize < minSize) rock.MaxSize = minSize;
+                        rockChanged = true;
+                    }
+
+                    float maxSize = rock.MaxSize;
+                    if (ImGui.SliderFloat("Max Size", ref maxSize, 0.1f, 5.0f))
+                    {
+                        rock.MaxSize = maxSize;
+                        if (rock.MinSize > maxSize) rock.MinSize = maxSize;
+                        rockChanged = true;
+                    }
+
+                    float sizeVar = rock.SizeVariation;
+                    if (ImGui.SliderFloat("Size Variation", ref sizeVar, 0.0f, 1.0f))
+                    {
+                        rock.SizeVariation = sizeVar;
+                        rockChanged = true;
+                    }
+
+                    float flatten = rock.FlattenY;
+                    if (ImGui.SliderFloat("Flatten (Y)", ref flatten, 0.0f, 0.8f))
+                    {
+                        rock.FlattenY = flatten;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Squash rocks vertically (0=round, 0.8=flat boulders)");
+
+                    ImGui.TreePop();
+                }
+
+                // Rock Shape - Noise
+                if (ImGui.TreeNode("Shape (Noise)##rock"))
+                {
+                    float noiseFreq = rock.NoiseFrequency;
+                    if (ImGui.SliderFloat("Noise Frequency", ref noiseFreq, 0.5f, 8.0f))
+                    {
+                        rock.NoiseFrequency = noiseFreq;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Higher = more bumpy detail");
+
+                    float noiseAmp = rock.NoiseAmplitude;
+                    if (ImGui.SliderFloat("Noise Amplitude", ref noiseAmp, 0.0f, 0.8f))
+                    {
+                        rock.NoiseAmplitude = noiseAmp;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Displacement strength");
+
+                    int octaves = rock.NoiseOctaves;
+                    if (ImGui.SliderInt("Octaves", ref octaves, 1, 5))
+                    {
+                        rock.NoiseOctaves = octaves;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("FBM detail layers (more = finer detail)");
+
+                    float lacunarity = rock.NoiseLacunarity;
+                    if (ImGui.SliderFloat("Lacunarity", ref lacunarity, 1.5f, 4.0f))
+                    {
+                        rock.NoiseLacunarity = lacunarity;
+                        rockChanged = true;
+                    }
+
+                    float persistence = rock.NoisePersistence;
+                    if (ImGui.SliderFloat("Persistence", ref persistence, 0.2f, 0.8f))
+                    {
+                        rock.NoisePersistence = persistence;
+                        rockChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Rock Shape - Features
+                if (ImGui.TreeNode("Shape (Features)##rock"))
+                {
+                    float sharpness = rock.Sharpness;
+                    if (ImGui.SliderFloat("Sharpness", ref sharpness, 0.0f, 1.0f))
+                    {
+                        rock.Sharpness = sharpness;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Edge sharpness (0=smooth, 1=jagged)");
+
+                    float facet = rock.FacetStrength;
+                    if (ImGui.SliderFloat("Facet Strength", ref facet, 0.0f, 1.0f))
+                    {
+                        rock.FacetStrength = facet;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Flat faces emphasis (0=round, 1=very faceted)");
+
+                    float crackDepth = rock.CrackDepth;
+                    if (ImGui.SliderFloat("Crack Depth", ref crackDepth, 0.0f, 0.5f))
+                    {
+                        rock.CrackDepth = crackDepth;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Voronoi-based crevice depth");
+
+                    float crackScale = rock.CrackScale;
+                    if (ImGui.SliderFloat("Crack Scale", ref crackScale, 0.5f, 8.0f))
+                    {
+                        rock.CrackScale = crackScale;
+                        rockChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Colors
+                if (ImGui.TreeNode("Colors##rock"))
+                {
+                    var baseCol = new System.Numerics.Vector3(rock.BaseColor[0], rock.BaseColor[1], rock.BaseColor[2]);
+                    if (ImGui.ColorEdit3("Base Color##rock", ref baseCol))
+                    {
+                        rock.BaseColor = new float[] { baseCol.X, baseCol.Y, baseCol.Z, 1.0f };
+                        rockChanged = true;
+                    }
+
+                    var darkCol = new System.Numerics.Vector3(rock.DarkColor[0], rock.DarkColor[1], rock.DarkColor[2]);
+                    if (ImGui.ColorEdit3("Dark Color (Crevices)", ref darkCol))
+                    {
+                        rock.DarkColor = new float[] { darkCol.X, darkCol.Y, darkCol.Z, 1.0f };
+                        rockChanged = true;
+                    }
+
+                    var highlightCol = new System.Numerics.Vector3(rock.HighlightColor[0], rock.HighlightColor[1], rock.HighlightColor[2]);
+                    if (ImGui.ColorEdit3("Highlight Color", ref highlightCol))
+                    {
+                        rock.HighlightColor = new float[] { highlightCol.X, highlightCol.Y, highlightCol.Z, 1.0f };
+                        rockChanged = true;
+                    }
+
+                    float colorVar = rock.ColorVariation;
+                    if (ImGui.SliderFloat("Color Variation##rock", ref colorVar, 0.0f, 0.4f))
+                    {
+                        rock.ColorVariation = colorVar;
+                        rockChanged = true;
+                    }
+
+                    ImGui.Separator();
+
+                    float roughness = rock.Roughness;
+                    if (ImGui.SliderFloat("Roughness##rock", ref roughness, 0.0f, 1.0f))
+                    {
+                        rock.Roughness = roughness;
+                        rockChanged = true;
+                    }
+
+                    float metallic = rock.Metallic;
+                    if (ImGui.SliderFloat("Metallic##rock", ref metallic, 0.0f, 1.0f))
+                    {
+                        rock.Metallic = metallic;
+                        rockChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Moss
+                if (ImGui.TreeNode("Moss/Lichen##rock"))
+                {
+                    float mossAmt = rock.MossAmount;
+                    if (ImGui.SliderFloat("Moss Amount", ref mossAmt, 0.0f, 1.0f))
+                    {
+                        rock.MossAmount = mossAmt;
+                        rockChanged = true;
+                    }
+
+                    var mossCol = new System.Numerics.Vector3(rock.MossColor[0], rock.MossColor[1], rock.MossColor[2]);
+                    if (ImGui.ColorEdit3("Moss Color", ref mossCol))
+                    {
+                        rock.MossColor = new float[] { mossCol.X, mossCol.Y, mossCol.Z, 1.0f };
+                        rockChanged = true;
+                    }
+
+                    float mossBias = rock.MossTopBias;
+                    if (ImGui.SliderFloat("Top Bias", ref mossBias, 0.0f, 1.0f))
+                    {
+                        rock.MossTopBias = mossBias;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Moss prefers upward-facing surfaces");
+
+                    ImGui.TreePop();
+                }
+
+                // Embedding & Orientation
+                if (ImGui.TreeNode("Placement##rock"))
+                {
+                    float embed = rock.EmbedDepth;
+                    if (ImGui.SliderFloat("Embed Depth", ref embed, 0.0f, 0.8f))
+                    {
+                        rock.EmbedDepth = embed;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("How deep rocks sink into terrain");
+
+                    float align = rock.AlignToTerrain;
+                    if (ImGui.SliderFloat("Align To Terrain", ref align, 0.0f, 1.0f))
+                    {
+                        rock.AlignToTerrain = align;
+                        rockChanged = true;
+                    }
+
+                    float rotRand = rock.RotationRandomness;
+                    if (ImGui.SliderFloat("Rotation Random", ref rotRand, 0.0f, 1.0f))
+                    {
+                        rock.RotationRandomness = rotRand;
+                        rockChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // LOD & Culling
+                if (ImGui.TreeNode("LOD & Culling##rock"))
+                {
+                    float maxDist = rock.MaxRenderDistance;
+                    if (ImGui.SliderFloat("Max Distance##rock", ref maxDist, 50f, 500f))
+                    {
+                        rock.MaxRenderDistance = maxDist;
+                        rockChanged = true;
+                    }
+
+                    float fadeRange = rock.FadeRange;
+                    if (ImGui.SliderFloat("Fade Range##rock", ref fadeRange, 10f, 100f))
+                    {
+                        rock.FadeRange = fadeRange;
+                        rockChanged = true;
+                    }
+
+                    float lodBias = rock.LodBias;
+                    if (ImGui.SliderFloat("LOD Bias", ref lodBias, 0.3f, 2.0f))
+                    {
+                        rock.LodBias = lodBias;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Detail level multiplier");
+
+                    ImGui.TreePop();
+                }
+
+                // Action buttons
+                ImGui.Spacing();
+                if (ImGui.Button("🗑️ Disable Rock Layer", new Vector2(-1, 0)))
+                {
+                    layer.IsRockLayer = false;
+                    layer.RockProperties = null;
+                    rockChanged = true;
+                }
+
+                if (rockChanged)
+                {
+                    // GPU rock parameters are updated every frame
+                }
+
+                ImGui.Unindent();
+                ImGui.Separator();
+            }
+
             // === DENSITY ===
             ImGui.Text("Density");
             float density = layer.Density;
