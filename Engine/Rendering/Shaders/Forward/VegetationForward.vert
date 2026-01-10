@@ -52,6 +52,11 @@ uniform float u_TrunkBendAmount_Local = 0.3;
 uniform float u_LeafFlutter_Local = 0.6;
 uniform float u_LeafFlutterSpeed_Local = 8.0;
 
+// === NORMAL ALIGNMENT CONTROL ===
+// Enable preserving terrain normal alignment (prevents wind from breaking grass coverage on slopes)
+uniform float u_AlignToNormal = 0.0; // 0 = disabled, 1 = enabled
+uniform float u_AlignmentStrength = 1.0; // 0-1, strength of normal preservation
+
 // === HELPER FUNCTIONS: Get effective parameter value ===
 float getWindStrength() {
     if (u_WindMode == 0) return u_WindStrength;  // Global
@@ -295,6 +300,22 @@ void main()
     if (snowAccumulation > 0.0)
     {
         weatherOffset.y -= snowAccumulation * vWindFactor * 0.02; // Much lighter effect
+    }
+
+    // === NORMAL ALIGNMENT PRESERVATION ===
+    // When enabled, project wind offset into tangent plane to preserve terrain normal alignment
+    // This keeps grass "glued" to slopes instead of breaking away
+    if (u_AlignToNormal > 0.5)
+    {
+        // Extract instance "up" vector from model matrix (Y column)
+        vec3 instanceUp = normalize(vec3(aInstanceModel[0][1], aInstanceModel[1][1], aInstanceModel[2][1]));
+        
+        // Project wind offset onto tangent plane (perpendicular to instance up)
+        // This removes any component that would pull away from the surface
+        float upComponent = dot(weatherOffset, instanceUp);
+        vec3 tangentOffset = weatherOffset - instanceUp * upComponent * u_AlignmentStrength;
+        
+        weatherOffset = tangentOffset;
     }
 
     // Transform vertex position with per-instance model matrix and weather effects

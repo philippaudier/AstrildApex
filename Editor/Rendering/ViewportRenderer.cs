@@ -865,21 +865,21 @@ namespace Editor.Rendering
                                 catch { }
 
                                 try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={s}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
-                                _vegetationRenderer.UpdateBatch(modelGuid.Value, s, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                                _vegetationRenderer.UpdateBatch(modelGuid.Value, s, transforms, cullMode, layer.MaxRenderDistance, layer.CullingSphereRadius, layer.AlignToNormal, layer.AlignmentStrength / 100f);
                             }
                         }
                         else
                         {
                             // Fallback to submesh 0
                             try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
-                            _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                            _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius, layer.AlignToNormal, layer.AlignmentStrength / 100f);
                         }
                     }
                     catch (Exception ex)
                     {
                         try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Failed to load mesh for multi-submesh update: {ex.Message}"); } catch { }
                         try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh=0, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius})"); } catch { }
-                        _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                        _vegetationRenderer.UpdateBatch(modelGuid.Value, 0, transforms, Engine.Components.CullingMode.Back, layer.MaxRenderDistance, layer.CullingSphereRadius, layer.AlignToNormal, layer.AlignmentStrength / 100f);
                     }
                 }
                 else
@@ -920,7 +920,7 @@ namespace Editor.Rendering
                     catch { }
 
                     try { if (Engine.Utils.DebugLogger.EnableVerbose) Engine.Utils.DebugLogger.Log($"[ViewportRenderer] Layer {layerIndex}: ✅ UpdateBatch({modelGuid.Value}, submesh={submeshIndex}, instances={transforms.Count}, maxDist={layer.MaxRenderDistance}, cullingRadius={layer.CullingSphereRadius}, cull={submeshCull})"); } catch { }
-                    _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, submeshCull, layer.MaxRenderDistance, layer.CullingSphereRadius);
+                    _vegetationRenderer.UpdateBatch(modelGuid.Value, submeshIndex, transforms, submeshCull, layer.MaxRenderDistance, layer.CullingSphereRadius, layer.AlignToNormal, layer.AlignmentStrength / 100f);
                 }
             }
             // Ensure GPU buffers are (re)uploaded after updating batches so changes

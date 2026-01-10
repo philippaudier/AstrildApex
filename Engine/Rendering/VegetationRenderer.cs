@@ -77,6 +77,10 @@ namespace Engine.Rendering
             public float MaxRenderDistance = 500f;
             public float CullingSphereRadius = 5f;
 
+            // Normal alignment (for grass/ground cover on slopes)
+            public bool AlignToNormal = false;
+            public float AlignmentStrength = 1.0f;
+
             // Track if data needs GPU update
             public bool NeedsGPUUpdate = true;
             public int LastTransformCount = 0;
@@ -311,7 +315,8 @@ namespace Engine.Rendering
         /// </summary>
         public void UpdateBatch(Guid modelGuid, int submeshIndex, List<Matrix4>? transforms,
                                Engine.Components.CullingMode cullingMode = Engine.Components.CullingMode.Back,
-                               float maxRenderDistance = 500f, float cullingSphereRadius = 5f)
+                               float maxRenderDistance = 500f, float cullingSphereRadius = 5f,
+                               bool alignToNormal = false, float alignmentStrength = 1.0f)
         {
             // Treat a null transforms list as empty to avoid callers needing to allocate an empty list
             transforms ??= new List<Matrix4>();
@@ -327,7 +332,9 @@ namespace Engine.Rendering
                     SubmeshIndex = submeshIndex,
                     CullingMode = cullingMode,
                     MaxRenderDistance = maxRenderDistance,
-                    CullingSphereRadius = cullingSphereRadius
+                    CullingSphereRadius = cullingSphereRadius,
+                    AlignToNormal = alignToNormal,
+                    AlignmentStrength = alignmentStrength
                 };
                 _batches[batchKey] = batch;
             }
@@ -337,6 +344,8 @@ namespace Engine.Rendering
                 batch.CullingMode = cullingMode;
                 batch.MaxRenderDistance = maxRenderDistance;
                 batch.CullingSphereRadius = cullingSphereRadius;
+                batch.AlignToNormal = alignToNormal;
+                batch.AlignmentStrength = alignmentStrength;
 
                 // DEBUG: Log culling mode updates
                 if (_renderCallCounter % 120 == 0)
@@ -821,6 +830,10 @@ namespace Engine.Rendering
                 // Fade range is 20% of max distance (configurable later if needed)
                 float ditherFadeRange = batch.MaxRenderDistance > 0 ? batch.MaxRenderDistance * 0.2f : 0f;
                 shToUse.SetFloat("u_DitherFadeRange", ditherFadeRange);
+
+                // Set normal alignment parameters (for grass/ground cover on slopes)
+                shToUse.SetFloat("u_AlignToNormal", batch.AlignToNormal ? 1.0f : 0.0f);
+                shToUse.SetFloat("u_AlignmentStrength", batch.AlignmentStrength);
 
                 // Draw instanced
                 GL.BindVertexArray(batch.VAO);
