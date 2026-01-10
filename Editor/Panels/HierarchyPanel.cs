@@ -454,6 +454,21 @@ namespace Editor.Panels
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();
                         }
+                        if (ImGui.MenuItem("Water Plane (Ocean)"))
+                        {
+                            var entity = new Engine.Scene.Entity
+                            {
+                                Id = scene.GetNextEntityId(),
+                                Name = "Water Plane"
+                            };
+                            scene.Entities.Add(entity);
+                            scene.Cache?.Invalidate();
+                            // Add TransformComponent first (required for rendering)
+                            entity.AddComponent<Engine.Components.TransformComponent>();
+                            entity.AddComponent<Engine.Components.WaterPlaneComponent>();
+                            Selection.SetSingle(entity.Id);
+                            EditorUI.MainViewport.UpdateGizmoPivot();
+                        }
 
                         ImGui.EndMenu();
                     }

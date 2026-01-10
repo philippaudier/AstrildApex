@@ -64,6 +64,23 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\WaterForward.frag</Link>
     </None>
+    <!-- WaterOcean shader - Realistic ocean water with tessellation and Gerstner waves -->
+    <None Update="Rendering\Shaders\Forward\WaterOcean.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterOcean.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterOcean.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterOcean.frag</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterOcean.tesc">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterOcean.tesc</Link>
+    </None>
+    <None Update="Rendering\Shaders\Forward\WaterOcean.tese">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Forward\WaterOcean.tese</Link>
+    </None>
     <None Update="Rendering\Shaders\Forward\Glass.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Forward\Glass.vert</Link>

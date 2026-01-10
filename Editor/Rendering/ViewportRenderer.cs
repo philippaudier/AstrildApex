@@ -1448,6 +1448,9 @@ namespace Editor.Rendering
     private Engine.Rendering.VegetationRenderer? _vegetationRenderer = null;
     private float _lastVegetationUpdateTime = 0f; // Throttle vegetation batch updates
 
+    // Water Plane Renderer (for WaterPlaneComponent ocean with tessellation)
+    private Engine.Rendering.WaterPlaneRenderer? _waterPlaneRenderer = null;
+
         // Public accessor for UI
         public int GBufferDebugMode
         {
@@ -1814,6 +1817,24 @@ namespace Editor.Rendering
                     if (Engine.Utils.DebugLogger.EnableVerbose)
                         Editor.Logging.LogManager.LogWarning($"Failed to create VegetationRenderer in Resize: {ex.Message}", "Renderer");
                     _vegetationRenderer = null;
+                }
+            }
+
+            // Initialize WaterPlaneRenderer for ocean water with tessellation
+            if (_waterPlaneRenderer == null)
+            {
+                try
+                {
+                    _waterPlaneRenderer = new Engine.Rendering.WaterPlaneRenderer();
+                    _waterPlaneRenderer.Initialize();
+                    if (Engine.Utils.DebugLogger.EnableVerbose)
+                        Editor.Logging.LogManager.LogInfo("WaterPlaneRenderer initialized", "Renderer");
+                }
+                catch (Exception ex)
+                {
+                    if (Engine.Utils.DebugLogger.EnableVerbose)
+                        Editor.Logging.LogManager.LogWarning($"Failed to create WaterPlaneRenderer: {ex.Message}", "Renderer");
+                    _waterPlaneRenderer = null;
                 }
             }
 
@@ -3397,6 +3418,29 @@ void main(){
         }
 
         /// <summary>
+        /// Find the height of any water plane in the scene (WaterPlaneComponent or WaterForward material)
+        /// </summary>
+        private float FindWaterPlaneHeight(Engine.Scene.Scene scene)
+        {
+            if (scene?.Entities == null) return 0f;
+
+            // Check for WaterPlaneComponent first
+            foreach (var entity in scene.Entities)
+            {
+                if (!entity.Active) continue;
+                var waterPlane = entity.GetComponent<Engine.Components.WaterPlaneComponent>();
+                if (waterPlane != null && waterPlane.Enabled)
+                {
+                    var worldPos = entity.Transform.GetWorldPosition();
+                    return worldPos.Y;
+                }
+            }
+
+            // Fall back to checking for WaterForward material
+            return GetWaterPlaneHeight();
+        }
+
+        /// <summary>
         /// NEW: Render planar reflection - simple and clean implementation
         /// </summary>
         private void RenderReflectionPass(float waterLevel = 0f)
@@ -4264,6 +4308,47 @@ void main(){
             {
                 if (Engine.Utils.DebugLogger.EnableVerbose)
                     LogManager.LogWarning($"Transparent rendering error: {ex3.Message}", "ViewportRenderer");
+            }
+
+            // === WATER PLANE COMPONENT RENDERING (tessellated ocean) ===
+            try
+            {
+                if (_waterPlaneRenderer != null && Scene != null)
+                {
+                    // Find weather component for wave integration
+                    Engine.Components.WeatherComponent? weatherComp = null;
+                    foreach (var entity in Scene.Entities)
+                    {
+                        weatherComp = entity.GetComponent<Engine.Components.WeatherComponent>();
+                        if (weatherComp != null) break;
+                    }
+
+                    // Calculate time for wave animation
+                    float waterTime = (float)_timeStopwatch.Elapsed.TotalSeconds;
+
+                    // Get camera position
+                    var waterCamPos = CameraPosition();
+
+                    // Note: ReflectionViewProj is now obtained from ReflectionBuffer.ReflectionViewProj
+                    // inside WaterPlaneRenderer, same as WaterForward does.
+
+                    _waterPlaneRenderer.Render(
+                        Scene,
+                        _viewGL,
+                        _projGL,
+                        waterCamPos,
+                        waterTime,
+                        weatherComp,
+                        _depthTex,
+                        _sceneColorTex,
+                        _reflectionTex
+                    );
+                }
+            }
+            catch (Exception ex4)
+            {
+                if (Engine.Utils.DebugLogger.EnableVerbose)
+                    LogManager.LogWarning($"WaterPlane rendering error: {ex4.Message}", "ViewportRenderer");
             }
 
             // === QUEUE 3500: ATMOSPHERIC PARTICLES (rendered AFTER transparents, BEFORE post-process) ===
@@ -10261,6 +10346,7 @@ void main(){
             _terrainRenderer?.Dispose();
             _particleRenderer?.Dispose();
             _vegetationRenderer?.Dispose();
+            _waterPlaneRenderer?.Dispose();
             _outlineRenderer?.Dispose();
             _taaRenderer?.Dispose();
             _msaaRenderer?.Dispose();

@@ -778,6 +778,9 @@ namespace Editor.Panels
                 case Engine.Components.WeatherComponent weather:
                     Editor.Inspector.WeatherInspector.Draw(weather);
                     break;
+                case Engine.Components.WaterPlaneComponent waterPlane:
+                    Editor.Inspector.WaterPlaneInspector.Draw(waterPlane);
+                    break;
                 case Engine.Components.GlobalEffects globalEffects:
                     Editor.Inspector.GlobalEffectsInspector.DrawInspector(globalEffects);
                     break;
@@ -926,6 +929,12 @@ namespace Editor.Panels
                     if (ImGui.MenuItem("Weather") && !entity.HasComponent<Engine.Components.WeatherComponent>())
                     {
                         entity.AddComponent<Engine.Components.WeatherComponent>();
+                        InvalidateComponentCache();
+                        ImGui.CloseCurrentPopup();
+                    }
+                    if (ImGui.MenuItem("Water Plane (Ocean)") && !entity.HasComponent<Engine.Components.WaterPlaneComponent>())
+                    {
+                        entity.AddComponent<Engine.Components.WaterPlaneComponent>();
                         InvalidateComponentCache();
                         ImGui.CloseCurrentPopup();
                     }
