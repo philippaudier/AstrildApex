@@ -36,6 +36,26 @@ uniform float uCloudEdgeSoftness;  // Edge softness/hardness
 uniform float uCloudBillowiness;   // Cotton/billowy appearance strength
 uniform float uCloudDetailStrength;// Fine detail strength
 
+// === DUAL-LAYER SCROLLING NOISE PARAMETERS ===
+// Layer 1: Primary noise layer (large-scale cloud shapes)
+uniform float uNoiseLayer1Speed;   // Speed multiplier for layer 1 scrolling
+uniform vec2 uNoiseLayer1Direction; // Direction of layer 1 scrolling (normalized)
+uniform float uNoiseLayer1Scale;    // Scale multiplier for layer 1
+
+// Layer 2: Secondary noise layer (detail/erosion)
+uniform float uNoiseLayer2Speed;   // Speed multiplier for layer 2 scrolling
+uniform vec2 uNoiseLayer2Direction; // Direction of layer 2 scrolling (normalized)
+uniform float uNoiseLayer2Scale;    // Scale multiplier for layer 2
+
+// === FBM PARAMETERS (Per-Type Customizable) ===
+uniform int uFBMOctaves;           // Number of FBM octaves (2-8)
+uniform float uFBMLacunarity;      // Frequency multiplier per octave (1.5-3.0)
+uniform float uFBMGain;            // Amplitude multiplier per octave (0.3-0.7)
+uniform float uFBMStrength;        // Overall FBM contribution (0.0-1.0)
+uniform float uWorleyWeight;       // Worley noise weight in hybrid mixing (0.0-1.0)
+uniform float uErosion;            // Erosion strength (creates holes/tears) (0.0-1.0)
+uniform float uSharpness;          // Edge sharpness (0.0-1.0)
+
 // Layer configuration (3 altitude layers for parallax)
 const int NUM_LAYERS = 3;
 const vec3 LAYER_ALTITUDES = vec3(10000.0, 4000.0, 1500.0); // High, mid, low (in meters)
@@ -73,7 +93,7 @@ float fastScattering(float cosTheta, float strength) {
 // ============================================================================
 // CLOUD LIGHTING
 // Calculate lighting contribution from sun and ambient
-// Takes light intensity into account for day/night variation
+// Takes light intensity into account for day/night variation (like WaterOcean)
 // ============================================================================
 vec3 calculateCloudLighting(vec3 viewDir, vec3 baseColor, float density) {
     // Sun direction dot product
@@ -82,33 +102,38 @@ vec3 calculateCloudLighting(vec3 viewDir, vec3 baseColor, float density) {
     // Forward scattering (silver lining effect)
     float scatter = fastScattering(sunDot, uCloudScattering);
 
-    // === LIGHT INTENSITY MODULATION ===
-    // Scale lighting by sun/moon intensity (much darker at night)
-    float lightIntensity = uCloudSunIntensity;
+    // === ENVIRONMENT BRIGHTNESS (like WaterOcean) ===
+    // Calculate overall scene brightness for physically correct cloud response
+    // Clouds should be dark at night, bright during day
+    // Minimum 0.05 ensures clouds aren't completely black at night
+    float environmentBrightness = saturate(uDirLightIntensity + 0.05);
+    
+    // Scale lighting by environment brightness (much darker at night)
+    float lightIntensity = uCloudSunIntensity * environmentBrightness;
 
     // Ambient term (sky color contribution) - reduced at night
-    vec3 ambient = baseColor * uCloudAmbient * lightIntensity;
+    vec3 ambient = baseColor * uCloudAmbient * environmentBrightness;
 
-    // Sun contribution (more visible when looking towards sun) - scaled by intensity
-    vec3 sunContribution = uCloudSunColor * scatter * lightIntensity;
+    // Sun contribution (more visible when looking towards sun) - scaled by environment brightness
+    vec3 sunContribution = uCloudSunColor * scatter * environmentBrightness;
 
     // Direct illumination from sun (diffuse-like term)
     // Clouds facing the sun are brighter
     float sunFacing = saturate(dot(vec3(0, 1, 0), uCloudSunDir)); // Assume clouds face up
-    vec3 directLight = uCloudSunColor * sunFacing * lightIntensity;
+    vec3 directLight = uCloudSunColor * sunFacing * environmentBrightness;
 
-    // Combine lighting
-    vec3 finalColor = baseColor * lightIntensity * 0.3 + // Base color with light
-                      directLight * 0.5 +                  // Direct illumination
-                      sunContribution +                    // Scattering
-                      ambient;                             // Ambient
+    // Combine lighting with environment brightness modulation
+    vec3 finalColor = baseColor * environmentBrightness * 0.3 + // Base color with light
+                      directLight * 0.5 +                          // Direct illumination
+                      sunContribution +                            // Scattering
+                      ambient;                                     // Ambient
 
     // Darken dense clouds (self-shadowing approximation)
     float darkening = mix(1.0, 0.7, density * 0.5);
     finalColor *= darkening;
 
     // Minimum brightness for night (moonlight/starlight) - very subtle
-    vec3 nightMinimum = baseColor * 0.02; // 2% minimum visibility
+    vec3 nightMinimum = baseColor * 0.02 * environmentBrightness; // 2% minimum visibility, scaled by brightness
     finalColor = max(finalColor, nightMinimum);
 
     return finalColor;
@@ -155,38 +180,95 @@ void main() {
             break;
         }
 
-        // Calculate UV with wind offset, parallax, and global noise scale
+        // === DUAL-LAYER SCROLLING NOISE SYSTEM ===
+        // Calculate base UV with parallax and global noise scale
         vec2 baseUV = sphereToUV(dir) * LAYER_SCALES[i] * uCloudNoiseScale;
-        vec2 windOffset = uCloudWindOffset.xy * LAYER_SPEEDS[i];
-        vec2 uv = baseUV + windOffset;
+
+        // === LAYER 1: PRIMARY NOISE (Large-scale cloud shapes) ===
+        // Calculate scrolling offset for layer 1 with independent speed and direction
+        vec2 layer1Offset = uCloudWindOffset.xy * LAYER_SPEEDS[i] * uNoiseLayer1Speed;
+        layer1Offset += uNoiseLayer1Direction * uTime * uCloudSpeed * uNoiseLayer1Speed * 0.1;
+        vec2 uv1 = baseUV * uNoiseLayer1Scale + layer1Offset;
+
+        // === LAYER 2: SECONDARY NOISE (Detail/erosion/morphing) ===
+        // Calculate scrolling offset for layer 2 with independent speed and direction
+        vec2 layer2Offset = uCloudWindOffset.xy * LAYER_SPEEDS[i] * uNoiseLayer2Speed;
+        layer2Offset += uNoiseLayer2Direction * uTime * uCloudSpeed * uNoiseLayer2Speed * 0.15;
+        vec2 uv2 = baseUV * uNoiseLayer2Scale + layer2Offset;
 
         // === ORGANIC SHAPE EVOLUTION ===
-        // Add time-based distortion for evolving cloud shapes
+        // Add time-based distortion for evolving cloud shapes on both layers
         float timeOffset = uTime * uCloudMorphSpeed * 0.1;
 
-        // Distort UV coordinates with animated noise for organic movement
-        // Strength controlled by morph speed
-        float distortionStrength = 0.15 * uCloudMorphSpeed;
-        vec2 distortion = vec2(
-            perlinNoise2D(uv * 0.5 + vec2(timeOffset * 0.3, timeOffset * 0.2), 2.0),
-            perlinNoise2D(uv * 0.5 + vec2(timeOffset * 0.2, -timeOffset * 0.3), 2.0)
+        // Distort UV1 (primary layer) with animated noise for organic movement
+        float distortionStrength1 = 0.15 * uCloudMorphSpeed;
+        vec2 distortion1 = vec2(
+            perlinNoise2D(uv1 * 0.5 + vec2(timeOffset * 0.3, timeOffset * 0.2), 2.0),
+            perlinNoise2D(uv1 * 0.5 + vec2(timeOffset * 0.2, -timeOffset * 0.3), 2.0)
         );
-        distortion = (distortion - 0.5) * distortionStrength;
-        vec2 animatedUV = uv + distortion;
+        distortion1 = (distortion1 - 0.5) * distortionStrength1;
+        vec2 animatedUV1 = uv1 + distortion1;
 
-        // Generate cloud shape from procedural noise with animated UV
-        // Use uCloudDetailStrength instead of hardcoded 0.5
-        float noise = cloudShape(animatedUV, uCloudType, uCloudCoverage, uCloudDetailStrength);
+        // Distort UV2 (secondary layer) with different parameters for independent motion
+        float distortionStrength2 = 0.2 * uCloudMorphSpeed;
+        vec2 distortion2 = vec2(
+            perlinNoise2D(uv2 * 0.6 + vec2(timeOffset * 0.4, -timeOffset * 0.25), 2.5),
+            perlinNoise2D(uv2 * 0.6 + vec2(-timeOffset * 0.35, timeOffset * 0.3), 2.5)
+        );
+        distortion2 = (distortion2 - 0.5) * distortionStrength2;
+        vec2 animatedUV2 = uv2 + distortion2;
 
-        // Add temporal variation to the noise itself (breathing effect)
-        float breathe = perlinNoise2D(uv * 0.2, 1.0) * sin(timeOffset * 0.5) * 0.1 * uCloudMorphSpeed;
-        noise = saturate(noise + breathe);
+        // === ADVANCED FBM WITH CONFIGURABLE PARAMETERS ===
+        // Prepare noise parameters struct for advanced cloud generation
+        CloudNoiseParams noiseParams;
+        noiseParams.fbmOctaves = uFBMOctaves;
+        noiseParams.fbmLacunarity = uFBMLacunarity;
+        noiseParams.fbmGain = uFBMGain;
+        noiseParams.fbmStrength = uFBMStrength;
+        noiseParams.worleyWeight = uWorleyWeight;
+        noiseParams.perlinWeight = 1.0 - uWorleyWeight;
+        noiseParams.erosion = uErosion;
+        noiseParams.sharpness = uSharpness;
 
-        // Coverage remapping (creates soft edges) - controlled by edge softness
-        float edgeRange = mix(0.1, 0.5, uCloudEdgeSoftness); // Softness range
-        float threshold = uCloudCoverage - edgeRange;
-        float softness = uCloudCoverage + edgeRange * 0.3;
-        float alpha = smoothstep(threshold, softness, noise);
+        // Generate primary cloud shape using layer 1 UV
+        float baseNoise = cloudShapeAdvanced(animatedUV1, uCloudType, uCloudCoverage, noiseParams);
+        
+        // Generate secondary detail/erosion layer using layer 2 UV
+        // This creates independent motion and evolution for fine details
+        float detailNoise = cloudShapeAdvanced(animatedUV2, uCloudType, uCloudCoverage * 0.8, noiseParams);
+        
+        // === DUAL-LAYER COMPOSITION ===
+        // Combine primary and secondary layers for organic morphing
+        // Primary layer defines main shape, secondary adds detail and erosion
+        float noise = baseNoise;
+        
+        // Apply secondary layer as detail/erosion based on erosion parameter
+        // Low erosion = additive detail (more fluffy)
+        // High erosion = subtractive detail (creates breaks/tears)
+        float detailContribution = detailNoise * uCloudDetailStrength;
+        noise = mix(
+            noise * (0.7 + detailContribution * 0.3),  // Additive detail
+            noise * detailNoise,                        // Multiplicative erosion
+            uErosion
+        );
+        
+        // Add temporal variation (breathing/morphing effect)
+        float breathe = perlinNoise2D(animatedUV1 * 0.2 + vec2(timeOffset * 0.1), 1.0) * 
+                       sin(timeOffset * 0.5) * 0.1 * uCloudMorphSpeed;
+        noise += breathe;
+
+        // Clamp and ensure valid range
+        noise = saturate(noise);
+
+        // === EDGE SOFTNESS ===
+        // Apply edge softness for smooth cloud boundaries
+        float alpha = noise;
+        
+        // Apply edge softness: fade edges more gradually with higher softness
+        if (uCloudEdgeSoftness > 0.01) {
+            float edgeRange = mix(0.05, 0.25, uCloudEdgeSoftness);
+            alpha = smoothstep(edgeRange, 1.0 - edgeRange, noise);
+        }
 
         // Modulate alpha by layer weight
         alpha *= LAYER_WEIGHTS[i];
@@ -197,18 +279,6 @@ void main() {
 
         // Apply overall density control
         alpha *= uCloudDensity;
-
-        // === VOLUMETRIC DITHERING EFFECT (DISABLED) ===
-        // Disabled for now - can be re-enabled later if needed
-        /*
-        float ditherPattern = texture(uDitheringTex, vScreenPos * 10.0 + uv * 3.0).r;
-        if (alpha < 0.3) {
-            float volumetricThreshold = alpha * 0.95;
-            if (ditherPattern > volumetricThreshold) {
-                continue;
-            }
-        }
-        */
 
         // Skip if this layer contributes nothing
         if (alpha < 0.01) {

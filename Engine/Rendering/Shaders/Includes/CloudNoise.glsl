@@ -195,93 +195,144 @@ float turbulence(vec2 uv, int octaves, float lacunarity, float gain) {
 }
 
 // ============================================================================
-// CLOUD SHAPE GENERATOR
-// Main function that generates cloud patterns based on type
+// ADVANCED CLOUD SHAPE GENERATOR WITH DUAL-LAYER SCROLLING NOISE
+// Main function that generates cloud patterns based on type with configurable FBM
 // Returns density value in [0, 1] range
+// Parameters:
+// - fbmOctaves: Number of FBM layers (more = more detail)
+// - fbmLacunarity: Frequency multiplier per octave (typically 2.0)
+// - fbmGain: Amplitude multiplier per octave (typically 0.5)
+// - fbmStrength: Overall FBM contribution strength
 // ============================================================================
-float cloudShape(vec2 uv, int cloudType, float coverage, float detail) {
+struct CloudNoiseParams {
+    int fbmOctaves;
+    float fbmLacunarity;
+    float fbmGain;
+    float fbmStrength;
+    float worleyWeight;
+    float perlinWeight;
+    float erosion;         // How much detail erodes the base shape (creates holes/tears)
+    float sharpness;       // Edge sharpness (low = soft, high = defined edges)
+};
+
+float cloudShapeAdvanced(vec2 uv, int cloudType, float coverage, CloudNoiseParams params) {
     float noise = 0.0;
 
     // ========== CIRRUS (Type 0) ==========
-    // Thin, wispy, high-altitude clouds
-    // Characteristics: High frequency, streaky, low coverage
+    // Thin, wispy, high-altitude clouds with fine streaks
     if (cloudType == 0) {
         // Base: Worley cells for wispy structure
         float base = worleyNoise2D(uv, 8.0);
 
-        // Detail: High-frequency perlin for streaks
-        float streaks = perlinNoise2D(uv, 32.0) * detail * 0.3;
+        // Detail: Multi-octave FBM for fine streaks
+        float streaks = fbm(uv * 16.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        
+        // Additional turbulence for wispy appearance
+        float turb = turbulence(uv * 12.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
 
-        // Combine
-        noise = base + streaks;
+        // Combine with configurable weights
+        noise = base * 0.5 + streaks * params.fbmStrength * 0.3 + turb * params.fbmStrength * 0.2;
 
-        // Power curve for thin, wispy edges
-        noise = pow(saturate(noise), 2.5);
+        // Apply erosion (creates breaks/tears in cirrus)
+        float erosionMask = fbm(uv * 20.0, 3, 2.3, 0.6);
+        noise *= mix(1.0, erosionMask, params.erosion * 0.5);
+
+        // Power curve for thin, wispy edges with configurable sharpness
+        noise = pow(saturate(noise), mix(1.5, 3.5, params.sharpness));
     }
 
     // ========== CUMULUS (Type 1) ==========
-    // Fluffy, puffy clouds with defined edges
-    // Characteristics: Billowy, medium coverage, cotton-like (UE4-style)
+    // Fluffy, puffy clouds with billowy edges and fine detail
     else if (cloudType == 1) {
         // Base: Hybrid FBM combining Perlin smoothness with Worley billowiness
-        // Higher worleyMix (0.6) for more cotton/billowy appearance
-        float base = fbmHybrid(uv, 4, 2.0, 0.5, 0.6);
+        float basePerlin = fbm(uv, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        float baseWorley = fbmBillowy(uv, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        float base = mix(basePerlin, baseWorley, params.worleyWeight);
 
-        // Detail: Billowy Worley FBM for fluffy edges and cotton texture
-        float billows = fbmBillowy(uv * 2.0, 3, 2.2, 0.55) * detail;
+        // Detail: Billowy Worley FBM for fluffy cotton texture
+        float billows = fbmBillowy(uv * 2.5, params.fbmOctaves, params.fbmLacunarity * 1.1, params.fbmGain * 0.9);
+
+        // Fine detail layer for realistic texture
+        float fineDetail = worleyBillowy(uv, 8.0) * params.fbmStrength * 0.3;
 
         // Combine with stronger billowy contribution
-        noise = base * 0.6 + billows * 0.4;
+        noise = base * (1.0 - params.fbmStrength * 0.3) + billows * params.fbmStrength * 0.5 + fineDetail;
 
-        // Add multi-scale detail for organic look
-        float fineDetail = worleyBillowy(uv, 8.0) * detail * 0.2;
-        noise += fineDetail;
+        // Apply erosion to create realistic cloud breaks
+        float erosionMask = fbmBillowy(uv * 3.0, 3, 2.2, 0.55);
+        noise *= mix(1.0, erosionMask, params.erosion);
 
-        // Power curve for defined, puffy edges (like cotton balls)
-        noise = pow(saturate(noise), 0.8);
+        // Power curve for defined, puffy edges with configurable sharpness
+        noise = pow(saturate(noise), mix(0.6, 1.2, params.sharpness));
     }
 
     // ========== STRATUS (Type 2) ==========
-    // Layered, uniform, low-altitude clouds
-    // Characteristics: Smooth, widespread, continuous layer
+    // Layered, uniform, low-altitude clouds with subtle variation
     else if (cloudType == 2) {
         // Base: Low-frequency perlin for smooth layer
-        float base = perlinNoise2D(uv, 2.0);
+        float base = fbm(uv * 2.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
 
-        // Detail: Subtle FBM for texture variation
-        float texture = fbm(uv * 8.0, 2, 2.0, 0.5) * detail * 0.2;
+        // Detail: FBM for texture variation
+        float texture = fbm(uv * 8.0, params.fbmOctaves, params.fbmLacunarity * 1.2, params.fbmGain * 0.8);
 
-        // Combine
-        noise = base + texture;
+        // Combine with gentle blending
+        noise = base * (1.0 - params.fbmStrength * 0.2) + texture * params.fbmStrength * 0.3;
+
+        // Minimal erosion for stratus (they're generally continuous)
+        float erosionMask = perlinNoise2D(uv * 6.0, 1.0);
+        noise *= mix(1.0, erosionMask, params.erosion * 0.3);
 
         // Smooth out for continuous layer
-        noise = smoothstep(0.3, 0.7, noise);
+        noise = smoothstep(mix(0.2, 0.4, params.sharpness), mix(0.7, 0.9, params.sharpness), noise);
     }
 
     // ========== STORM/CUMULONIMBUS (Type 3) ==========
-    // Dense, dark, turbulent storm clouds
-    // Characteristics: Very thick, high coverage, chaotic
+    // Dense, dark, turbulent storm clouds with chaotic detail
     else if (cloudType == 3) {
         // Base: Mix of Worley and Perlin for dense structure
-        float worley = worleyNoiseInv(uv, 4.0);
-        float perlin = perlinNoise2D(uv, 3.0);
-        float base = worley * 0.6 + perlin * 0.4;
+        float worley = fbmWorley(uv * 3.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        float perlin = fbm(uv * 3.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        float base = mix(perlin, worley, params.worleyWeight);
 
         // Detail: Heavy turbulence for chaotic storm look
-        float chaos = fbm(uv * 6.0, 4, 2.0, 0.5) * detail * 0.5;
+        float chaos = turbulence(uv * 6.0, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
+        
+        // Additional FBM for anvil-like structure
+        float anvilShape = fbmBillowy(uv * 1.5, params.fbmOctaves, params.fbmLacunarity, params.fbmGain);
 
-        // Combine
-        noise = base + chaos;
+        // Combine with strong FBM contribution
+        noise = base * 0.5 + chaos * params.fbmStrength * 0.3 + anvilShape * params.fbmStrength * 0.3;
 
-        // Boost density for dark, heavy clouds
-        noise = saturate(noise * 1.2);
+        // Erosion creates dramatic breaks in storm clouds
+        float erosionMask = turbulence(uv * 8.0, 3, 2.1, 0.6);
+        noise *= mix(1.0, erosionMask, params.erosion * 0.7);
+
+        // Boost density and contrast for dark, heavy clouds
+        noise = saturate(noise * 1.3);
+        noise = pow(noise, mix(0.7, 1.0, params.sharpness));
     }
 
     // Apply coverage remapping
-    // This controls how much of the sky is covered by clouds
-    noise = smoothstep(coverage - 0.3, coverage + 0.1, noise);
+    // Coverage controls how much of the sky is covered: higher coverage = more clouds
+    float coverageThreshold = 1.0 - coverage;
+    noise = smoothstep(coverageThreshold - 0.3, coverageThreshold + 0.1, noise);
 
     return saturate(noise);
+}
+
+// Legacy wrapper for backward compatibility
+float cloudShape(vec2 uv, int cloudType, float coverage, float detail) {
+    CloudNoiseParams params;
+    params.fbmOctaves = 4;
+    params.fbmLacunarity = 2.0;
+    params.fbmGain = 0.5;
+    params.fbmStrength = detail;
+    params.worleyWeight = 0.6;
+    params.perlinWeight = 0.4;
+    params.erosion = 0.3;
+    params.sharpness = 0.5;
+    
+    return cloudShapeAdvanced(uv, cloudType, coverage, params);
 }
 
 // ============================================================================

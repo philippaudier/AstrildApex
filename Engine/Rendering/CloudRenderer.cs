@@ -114,6 +114,28 @@ namespace Engine.Rendering
             _cloudShader.SetFloat("uCloudBillowiness", weather.CloudBillowiness);
             _cloudShader.SetFloat("uCloudDetailStrength", weather.CloudDetailStrength);
 
+            // === SET DUAL-LAYER SCROLLING NOISE PARAMETERS ===
+            // Layer 1: Primary noise layer
+            _cloudShader.SetFloat("uNoiseLayer1Speed", weather.NoiseLayer1Speed);
+            var layer1Dir = weather.GetNoiseLayer1Direction();
+            _cloudShader.SetVec2("uNoiseLayer1Direction", layer1Dir);
+            _cloudShader.SetFloat("uNoiseLayer1Scale", weather.NoiseLayer1Scale);
+
+            // Layer 2: Secondary noise layer
+            _cloudShader.SetFloat("uNoiseLayer2Speed", weather.NoiseLayer2Speed);
+            var layer2Dir = weather.GetNoiseLayer2Direction();
+            _cloudShader.SetVec2("uNoiseLayer2Direction", layer2Dir);
+            _cloudShader.SetFloat("uNoiseLayer2Scale", weather.NoiseLayer2Scale);
+
+            // === SET FBM PARAMETERS ===
+            _cloudShader.SetInt("uFBMOctaves", weather.FBMOctaves);
+            _cloudShader.SetFloat("uFBMLacunarity", weather.FBMLacunarity);
+            _cloudShader.SetFloat("uFBMGain", weather.FBMGain);
+            _cloudShader.SetFloat("uFBMStrength", weather.FBMStrength);
+            _cloudShader.SetFloat("uWorleyWeight", weather.WorleyWeight);
+            _cloudShader.SetFloat("uErosion", weather.Erosion);
+            _cloudShader.SetFloat("uSharpness", weather.Sharpness);
+
             // Set sun direction and color from environment settings
             SetSunParameters(scene);
 
@@ -147,8 +169,8 @@ namespace Engine.Rendering
             // Calculate wind velocity
             float windSpeed = weather.WindSpeed * weather.CloudSpeed;
 
-            // Accumulate offset over time (deltaTime from Time class or frame time)
-            float deltaTime = 0.016f; // Approximate for now, should come from engine time
+            // Accumulate offset over time using engine deltaTime
+            float deltaTime = Engine.Core.Time.DeltaTime;
             _windOffset.X += windDir.X * windSpeed * deltaTime;
             _windOffset.Z += windDir.Y * windSpeed * deltaTime;
         }

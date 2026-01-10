@@ -413,6 +413,7 @@ void main()
     float depthDiff = 0.0; // Default: no geometry below (water surface)
 
     // Only calculate depth if there's geometry below the water (like WaterForward)
+    // Note: Depth test OpenGL handles objects in front of water automatically
     if (sceneDepth > waterDepth)
     {
         float linearSceneDepth = linearizeDepth(sceneDepth, near, far);

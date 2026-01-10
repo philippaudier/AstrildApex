@@ -4292,6 +4292,10 @@ void main(){
             // This ensures glass can refract the SSAO correctly
             ApplySSAOBeforeTransparents();
 
+            // CRITICAL: Restore GL state after SSAO (depth test may have been disabled)
+            GL.Enable(EnableCap.DepthTest);
+            GL.DepthFunc(DepthFunction.Lequal);
+
             // Capture the complete opaque scene (including vegetation and particles) before rendering transparents
             // This texture will be used by glass shader for refraction
             // NOTE: _sceneColorTex is already populated by ApplySSAOBeforeTransparents() if SSAO is enabled
@@ -4329,6 +4333,10 @@ void main(){
             }
 
             // === WATER PLANE COMPONENT RENDERING (tessellated ocean) ===
+            // CRITICAL: Ensure depth test is properly configured before water rendering
+            // The depth buffer should contain opaque objects only (transparent objects don't write depth)
+            GL.Enable(EnableCap.DepthTest);
+            GL.DepthFunc(DepthFunction.Less); // Use Less to prevent water from rendering over ForwardBase objects
             try
             {
                 if (_waterPlaneRenderer != null && Scene != null)

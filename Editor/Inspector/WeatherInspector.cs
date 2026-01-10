@@ -557,7 +557,7 @@ namespace Editor.Inspector
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Cirrus: Thin wispy / Cumulus: Fluffy puffy / Stratus: Layered / Storm: Dense dark");
 
-                    // Coverage slider
+                    // Coverage slider (CORRECTED: higher value = more clouds)
                     float coverage = weather.CloudCoverage;
                     ImGui.SetNextItemWidth(-120);
                     if (ImGui.SliderFloat("Coverage", ref coverage, 0.0f, 1.0f, "%.2f"))
@@ -567,7 +567,7 @@ namespace Editor.Inspector
                         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
                     if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("0 = clear sky, 1 = overcast");
+                        ImGui.SetTooltip("Cloud coverage: 0 = clear sky, 1 = overcast (FIXED: now correctly increases clouds)");
 
                     // Density slider
                     float density = weather.CloudDensity;
@@ -593,7 +593,7 @@ namespace Editor.Inspector
                             Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                         }
                         if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip("Intensity of sun light scattering through clouds (silver lining effect)");
+                            ImGui.SetTooltip("Intensity of sun light scattering through clouds (silver lining effect).\nClouds automatically dim at night based on light intensity (like WaterOcean).");
 
                         float ambient = weather.CloudAmbient;
                         ImGui.SetNextItemWidth(-120);
@@ -604,7 +604,7 @@ namespace Editor.Inspector
                             Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                         }
                         if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip("Ambient sky light contribution");
+                            ImGui.SetTooltip("Ambient sky light contribution.\nAutomatically reduced at night based on environment brightness.");
 
                         float cloudSpeed = weather.CloudSpeed;
                         ImGui.SetNextItemWidth(-120);
@@ -637,7 +637,7 @@ namespace Editor.Inspector
                             Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                         }
                         if (ImGui.IsItemHovered())
-                            ImGui.SetTooltip("Speed of organic shape changes (0 = static, 2 = fast morphing)");
+                            ImGui.SetTooltip("Speed of organic shape changes using FBM evolution (0 = static, 2 = fast morphing).\nControls how fast cloud details evolve over time.");
 
                         ImGui.Spacing();
                         ImGui.TextColored(new System.Numerics.Vector4(0.7f, 0.9f, 1.0f, 1.0f), "Fine-Tune Controls:");
@@ -702,6 +702,194 @@ namespace Editor.Inspector
                         }
                         if (ImGui.IsItemHovered())
                             ImGui.SetTooltip("Fine detail layer strength (0 = smooth/simple, 1 = highly detailed)");
+
+                        // === DUAL-LAYER SCROLLING NOISE ===
+                        if (ImGui.TreeNode("🌪️ Dual-Layer Scrolling Noise"))
+                        {
+                            ImGui.TextColored(new System.Numerics.Vector4(0.9f, 0.7f, 0.4f, 1.0f), "Layer 1 (Primary - Large Shapes):");
+                            ImGui.Spacing();
+
+                            // Layer 1 Speed
+                            float layer1Speed = weather.NoiseLayer1Speed;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Speed##Layer1", ref layer1Speed, 0.0f, 3.0f, "%.2f"))
+                            {
+                                weather.NoiseLayer1Speed = Math.Clamp(layer1Speed, 0.0f, 3.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Scrolling speed multiplier for primary noise layer");
+
+                            // Layer 1 Direction
+                            float layer1Angle = MathF.Atan2(weather.NoiseLayer1DirectionY, weather.NoiseLayer1DirectionX) * (180.0f / MathF.PI);
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Direction##Layer1", ref layer1Angle, -180.0f, 180.0f, "%.0f°"))
+                            {
+                                float rad = layer1Angle * (MathF.PI / 180.0f);
+                                weather.NoiseLayer1DirectionX = MathF.Cos(rad);
+                                weather.NoiseLayer1DirectionY = MathF.Sin(rad);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Scrolling direction for primary noise layer (0° = East, 90° = North)");
+
+                            // Layer 1 Scale
+                            float layer1Scale = weather.NoiseLayer1Scale;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Scale##Layer1", ref layer1Scale, 0.1f, 5.0f, "%.2f"))
+                            {
+                                weather.NoiseLayer1Scale = Math.Clamp(layer1Scale, 0.1f, 5.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Noise scale for primary layer (lower = larger patterns)");
+
+                            ImGui.Spacing();
+                            ImGui.Separator();
+                            ImGui.Spacing();
+                            ImGui.TextColored(new System.Numerics.Vector4(0.4f, 0.9f, 0.7f, 1.0f), "Layer 2 (Detail - Fine Erosion):");
+                            ImGui.Spacing();
+
+                            // Layer 2 Speed
+                            float layer2Speed = weather.NoiseLayer2Speed;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Speed##Layer2", ref layer2Speed, 0.0f, 3.0f, "%.2f"))
+                            {
+                                weather.NoiseLayer2Speed = Math.Clamp(layer2Speed, 0.0f, 3.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Scrolling speed multiplier for detail noise layer");
+
+                            // Layer 2 Direction
+                            float layer2Angle = MathF.Atan2(weather.NoiseLayer2DirectionY, weather.NoiseLayer2DirectionX) * (180.0f / MathF.PI);
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Direction##Layer2", ref layer2Angle, -180.0f, 180.0f, "%.0f°"))
+                            {
+                                float rad = layer2Angle * (MathF.PI / 180.0f);
+                                weather.NoiseLayer2DirectionX = MathF.Cos(rad);
+                                weather.NoiseLayer2DirectionY = MathF.Sin(rad);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Scrolling direction for detail noise layer (0° = East, 90° = North)");
+
+                            // Layer 2 Scale
+                            float layer2Scale = weather.NoiseLayer2Scale;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Scale##Layer2", ref layer2Scale, 0.1f, 5.0f, "%.2f"))
+                            {
+                                weather.NoiseLayer2Scale = Math.Clamp(layer2Scale, 0.1f, 5.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Noise scale for detail layer (higher = finer details and erosion)");
+
+                            ImGui.TreePop();
+                        }
+
+                        // === FBM PARAMETERS ===
+                        if (ImGui.TreeNode("🔬 FBM (Fractal Brownian Motion)"))
+                        {
+                            ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.8f, 0.3f, 1.0f), "Advanced Noise Configuration:");
+                            ImGui.Spacing();
+
+                            // FBM Octaves
+                            int fbmOctaves = weather.FBMOctaves;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderInt("Octaves", ref fbmOctaves, 2, 8))
+                            {
+                                weather.FBMOctaves = Math.Clamp(fbmOctaves, 2, 8);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Number of noise layers (more = more detail but slower)");
+
+                            // FBM Lacunarity
+                            float fbmLacunarity = weather.FBMLacunarity;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Lacunarity", ref fbmLacunarity, 1.5f, 3.0f, "%.2f"))
+                            {
+                                weather.FBMLacunarity = Math.Clamp(fbmLacunarity, 1.5f, 3.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Frequency multiplier per octave (higher = faster frequency increase)");
+
+                            // FBM Gain
+                            float fbmGain = weather.FBMGain;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Gain", ref fbmGain, 0.3f, 0.7f, "%.2f"))
+                            {
+                                weather.FBMGain = Math.Clamp(fbmGain, 0.3f, 0.7f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Amplitude multiplier per octave (higher = stronger detail layers)");
+
+                            // FBM Strength
+                            float fbmStrength = weather.FBMStrength;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Strength", ref fbmStrength, 0.0f, 1.0f, "%.2f"))
+                            {
+                                weather.FBMStrength = Math.Clamp(fbmStrength, 0.0f, 1.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Overall FBM contribution (0 = simple noise, 1 = full fractal detail)");
+
+                            ImGui.Spacing();
+                            ImGui.Separator();
+                            ImGui.Spacing();
+
+                            // Worley Weight
+                            float worleyWeight = weather.WorleyWeight;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Worley Weight", ref worleyWeight, 0.0f, 1.0f, "%.2f"))
+                            {
+                                weather.WorleyWeight = Math.Clamp(worleyWeight, 0.0f, 1.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Cellular noise weight (0 = Perlin smooth, 1 = Worley cellular/billowy)");
+
+                            // Erosion
+                            float erosion = weather.Erosion;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Erosion", ref erosion, 0.0f, 1.0f, "%.2f"))
+                            {
+                                weather.Erosion = Math.Clamp(erosion, 0.0f, 1.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Creates holes and tears in clouds (0 = solid, 1 = highly eroded/torn)");
+
+                            // Sharpness
+                            float sharpness = weather.Sharpness;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Sharpness", ref sharpness, 0.0f, 1.0f, "%.2f"))
+                            {
+                                weather.Sharpness = Math.Clamp(sharpness, 0.0f, 1.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Edge definition (0 = very soft/fuzzy edges, 1 = sharp/defined edges)");
+
+                            ImGui.TreePop();
+                        }
 
                         ImGui.TreePop();
                     }

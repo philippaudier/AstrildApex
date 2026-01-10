@@ -245,7 +245,7 @@ namespace Engine.Rendering
                 GL.Enable(EnableCap.Blend);
                 GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
                 GL.Enable(EnableCap.DepthTest);
-                GL.DepthFunc(DepthFunction.Lequal);
+                GL.DepthFunc(DepthFunction.Less); // Use Less instead of Lequal to prevent water from rendering over ForwardBase objects
                 GL.DepthMask(false); // Don't write to depth for transparent water
                 GL.Disable(EnableCap.CullFace); // Double-sided rendering (visible from below and above)
 
@@ -267,6 +267,7 @@ namespace Engine.Rendering
 
                 // Restore GL state
                 GL.DepthMask(true);
+                GL.DepthFunc(DepthFunction.Lequal); // Restore depth function to default
                 GL.Disable(EnableCap.Blend);
             }
         }
