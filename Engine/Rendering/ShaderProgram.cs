@@ -21,6 +21,14 @@ namespace Engine.Rendering
         private ShaderProgram(int handle) { Handle = handle; }
 
         /// <summary>
+        /// Create a ShaderProgram wrapper from an existing OpenGL program handle (for custom shader compilation).
+        /// </summary>
+        public static ShaderProgram FromHandle(int programHandle)
+        {
+            return new ShaderProgram(programHandle);
+        }
+
+        /// <summary>
         /// Create a shader program from vertex/fragment files and optional tessellation control/eval files.
         /// If tessellation shader compilation fails, the program will fall back to a VS/FS-only program.
         /// </summary>

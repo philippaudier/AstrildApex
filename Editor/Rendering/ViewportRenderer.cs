@@ -1463,6 +1463,9 @@ namespace Editor.Rendering
         private Engine.Rendering.Terrain.TerrainRenderer? _terrainRenderer = null;
         public Engine.Rendering.Terrain.TerrainRenderer? TerrainRenderer => _terrainRenderer;
 
+        // Grass Renderer (GPU-generated grass)
+        private Engine.Rendering.GrassRenderer? _grassRenderer = null;
+
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
             get => _taaSettings;
@@ -1800,6 +1803,20 @@ namespace Editor.Rendering
                 catch (Exception)
                 {
                     _terrainRenderer = null;
+                }
+            }
+
+            // Initialize Grass renderer
+            if (_grassRenderer == null)
+            {
+                try
+                {
+                    _grassRenderer = new Engine.Rendering.GrassRenderer();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ViewportRenderer] Failed to initialize GrassRenderer: {ex.Message}");
+                    _grassRenderer = null;
                 }
             }
 
@@ -6870,6 +6887,72 @@ void main(){
                                 _globalUBO,  // Pass globalUBO for clip plane support
                                 entity.Id  // Pass entity ID for selection outline
                             );
+
+                            // === GRASS RENDERING (GPU-generated grass from terrain mesh) ===
+                            if (_grassRenderer != null && terrain.VegetationLayers != null)
+                            {
+                                // Compute normal matrix from terrain model matrix
+                                Matrix3 grassNormalMat;
+                                try
+                                {
+                                    var invTranspose = Matrix4.Transpose(Matrix4.Invert(terrainModel));
+                                    grassNormalMat = new Matrix3(
+                                        invTranspose.M11, invTranspose.M12, invTranspose.M13,
+                                        invTranspose.M21, invTranspose.M22, invTranspose.M23,
+                                        invTranspose.M31, invTranspose.M32, invTranspose.M33);
+                                }
+                                catch { grassNormalMat = Matrix3.Identity; }
+
+                                // Check for grass-enabled vegetation layers
+                                for (int vIdx = 0; vIdx < terrain.VegetationLayers.Length; vIdx++)
+                                {
+                                    var vLayer = terrain.VegetationLayers[vIdx];
+                                    if (vLayer == null || !vLayer.IsGrassLayer || vLayer.GrassProperties == null)
+                                        continue;
+
+                                    // Handle streaming terrain mode (multiple tiles)
+                                    if (terrain.Mode == TerrainMode.InfiniteStreaming && _terrainRenderer != null && _terrainRenderer.HasActiveTiles)
+                                    {
+                                        float tileSize = terrain.StreamingTileSize;
+                                        _terrainRenderer.ForEachRenderableTile((tileVao, tileIndexCount, tileX, tileY, tileSz) =>
+                                        {
+                                            // Tile vertices are already in world coordinates, no offset needed
+                                            // Use tile-specific layer index to avoid collisions
+                                            int regIndex = -(vIdx + 1) * 10000 + tileX * 100 + tileY;
+                                            _grassRenderer.RegisterGrassLayer(entity.Guid, regIndex, vLayer.GrassProperties,
+                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity);
+                                        }, tileSize);
+                                    }
+                                    else
+                                    {
+                                        // Handle single terrain mode
+                                        int terrainVAO = terrain.VAO;
+                                        int terrainIndexCount = terrain.IndexCount;
+                                        
+                                        if (terrainVAO > 0 && terrainIndexCount > 0)
+                                        {
+                                            int regIndex = -(vIdx + 1);
+                                            _grassRenderer.RegisterGrassLayer(entity.Guid, regIndex, vLayer.GrassProperties,
+                                                terrainVAO, terrainIndexCount, terrainModel, grassNormalMat);
+                                        }
+                                    }
+                                }
+
+                                // Render all grass layers
+                                float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                                var ambientColor = new OpenTK.Mathematics.Vector3(
+                                    _globalUniforms.AmbientColor.X,
+                                    _globalUniforms.AmbientColor.Y,
+                                    _globalUniforms.AmbientColor.Z
+                                );
+
+                                _grassRenderer.Render(
+                                    new OpenTK.Mathematics.Vector3(viewPos.X, viewPos.Y, viewPos.Z),
+                                    time,
+                                    ambientColor,
+                                    1.0f // Ambient intensity
+                                );
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -10393,6 +10476,7 @@ void main(){
             _grid?.Dispose();
             _skyboxRenderer?.Dispose();
             _cloudRenderer?.Dispose();
+            _grassRenderer?.Dispose();
             _terrainRenderer?.Dispose();
             _particleRenderer?.Dispose();
             _vegetationRenderer?.Dispose();

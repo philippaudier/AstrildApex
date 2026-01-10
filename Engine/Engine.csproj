@@ -114,6 +114,19 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Engine\Rendering\Shaders\Includes\CloudNoise.glsl</Link>
     </None>
+    <!-- GPU Grass Shaders -->
+    <None Update="Rendering\Shaders\Grass\TerrainGrass.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Grass\TerrainGrass.vert</Link>
+    </None>
+    <None Update="Rendering\Shaders\Grass\TerrainGrass.geom">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Grass\TerrainGrass.geom</Link>
+    </None>
+    <None Update="Rendering\Shaders\Grass\TerrainGrass.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Engine\Rendering\Shaders\Grass\TerrainGrass.frag</Link>
+    </None>
     <!-- NOTE: SSAO.glsl include removed - SSAO is now a post-processing effect -->
     <!-- AO Shaders (GTAO only, SSAO removed) -->
     <None Update="Rendering\Shaders\AO\Prefilter.vert">

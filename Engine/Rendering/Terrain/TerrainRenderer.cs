@@ -1358,5 +1358,27 @@ namespace Engine.Rendering.Terrain
             if (_tileManager == null) return null;
             return (_tileManager.LoadedTiles, _tileManager.RenderableTiles, _tileManager.LoadingTiles, _tileManager.GetMemoryUsageMB());
         }
+
+        /// <summary>
+        /// Iterate over all renderable tiles (for grass rendering, etc.)
+        /// Each tile provides its VAO, IndexCount, and world position (X, Y are tile coordinates).
+        /// </summary>
+        /// <param name="action">Action receiving (VAO, IndexCount, tileX, tileY, tileSize)</param>
+        public void ForEachRenderableTile(Action<int, int, int, int, float> action, float tileSize)
+        {
+            if (_tileManager == null) return;
+            _tileManager.ForEachRenderable(tile =>
+            {
+                if (tile.Vao != 0 && tile.IndexCount > 0)
+                {
+                    action(tile.Vao, tile.IndexCount, tile.X, tile.Y, tileSize);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Check if the terrain is in streaming mode and has active tiles.
+        /// </summary>
+        public bool HasActiveTiles => _tileManager != null && _tileManager.RenderableTiles > 0;
     }
 }

@@ -282,6 +282,8 @@ namespace Editor.Inspector
                         ImGui.Unindent();
                     }
 
+                    // GPU grass controls were moved to TerrainVegetationUI (per-vegetation-layer)
+
                     ImGui.TreePop();
                 }
 

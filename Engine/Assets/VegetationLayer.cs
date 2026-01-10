@@ -170,7 +170,15 @@ namespace Engine.Assets
         /// </summary>
         [Engine.Serialization.SerializableAttribute("cullingSphereRadius")]
         public float CullingSphereRadius { get; set; } = 5f;
+        
+        // === GPU GRASS LAYER (optional) ===
+        // When enabled on a vegetation layer, this layer will be treated as a GPU-generated
+        // grass coverage layer. Uses geometry shader to generate dense grass from terrain mesh.
+        [Engine.Serialization.SerializableAttribute("isGrassLayer")]
+        public bool IsGrassLayer { get; set; } = false;
 
+        [Engine.Serialization.SerializableAttribute("grassProperties")]
+        public GrassProperties? GrassProperties { get; set; } = null;
         // === WIND & ANIMATION ===
 
         // Wind and LOD-related properties removed: global weather/wind system and
@@ -222,5 +230,76 @@ namespace Engine.Assets
                 CullingSphereRadius = CullingSphereRadius
             };
         }
+    }
+
+    /// <summary>
+    /// GPU-generated grass properties for vegetation layers.
+    /// Uses geometry shader to generate dense grass coverage directly from terrain vertices.
+    /// </summary>
+    [System.Serializable]
+    public sealed class GrassProperties
+    {
+        // === DENSITY & COVERAGE ===
+        [Engine.Serialization.SerializableAttribute("density")]
+        public float Density { get; set; } = 1.5f; // Multiplier for blade count (0.5-3)
+
+        [Engine.Serialization.SerializableAttribute("coverageNoiseScale")]
+        public float CoverageNoiseScale { get; set; } = 0.05f; // Noise scale for patchy grass (world-space)
+
+        [Engine.Serialization.SerializableAttribute("coverageThreshold")]
+        public float CoverageThreshold { get; set; } = 0.2f; // 0-1, lower = fuller coverage, higher = sparser patches
+
+        // === GRASS BLADE GEOMETRY ===
+        [Engine.Serialization.SerializableAttribute("bladeHeight")]
+        public float BladeHeight { get; set; } = 0.4f; // Height of grass blades in world units
+
+        [Engine.Serialization.SerializableAttribute("bladeHeightVariation")]
+        public float BladeHeightVariation { get; set; } = 0.4f; // Random height variation (0-1)
+
+        [Engine.Serialization.SerializableAttribute("bladeWidth")]
+        public float BladeWidth { get; set; } = 0.05f; // Width of grass blades
+
+        [Engine.Serialization.SerializableAttribute("bladeCurvature")]
+        public float BladeCurvature { get; set; } = 0.4f; // Bend amount (0-1)
+
+        [Engine.Serialization.SerializableAttribute("bladesPerVertex")]
+        public int BladesPerVertex { get; set; } = 6; // Base number of grass blades per triangle (1-10)
+
+        // === APPEARANCE ===
+        [Engine.Serialization.SerializableAttribute("colorTop")]
+        public float[] ColorTop { get; set; } = new float[] { 0.45f, 0.75f, 0.25f, 1.0f }; // RGBA - brighter green
+
+        [Engine.Serialization.SerializableAttribute("colorBottom")]
+        public float[] ColorBottom { get; set; } = new float[] { 0.2f, 0.4f, 0.15f, 1.0f }; // RGBA
+
+        [Engine.Serialization.SerializableAttribute("colorVariation")]
+        public float ColorVariation { get; set; } = 0.15f; // Color randomness (0-1)
+
+        [Engine.Serialization.SerializableAttribute("albedoTexture")]
+        public Guid? AlbedoTexture { get; set; } = null; // Optional grass blade texture
+
+        // === DENSITY MAP (for painted grass coverage) ===
+        [Engine.Serialization.SerializableAttribute("densityMap")]
+        public Guid? DensityMap { get; set; } = null; // Optional R8 texture for painting grass coverage
+
+        [Engine.Serialization.SerializableAttribute("densityMapScale")]
+        public float DensityMapScale { get; set; } = 0.01f; // World-space UV scale for density map
+
+        // === WIND ANIMATION ===
+        [Engine.Serialization.SerializableAttribute("windStrength")]
+        public float WindStrength { get; set; } = 0.5f; // How much wind affects grass
+
+        [Engine.Serialization.SerializableAttribute("windSpeed")]
+        public float WindSpeed { get; set; } = 1.5f; // Wind animation speed
+
+        [Engine.Serialization.SerializableAttribute("windTurbulence")]
+        public float WindTurbulence { get; set; } = 0.6f; // Wind noise/variation
+
+        // === LOD & CULLING ===
+        [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
+        public float MaxRenderDistance { get; set; } = 150f; // Distance fade-out
+
+        [Engine.Serialization.SerializableAttribute("fadeRange")]
+        public float FadeRange { get; set; } = 30f; // Distance over which grass fades
     }
 }

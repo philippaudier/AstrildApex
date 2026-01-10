@@ -271,6 +271,227 @@ namespace Editor.Inspector
             ImGui.Spacing();
             ImGui.Separator();
 
+            // === GPU Grass Layer (optional) ===
+            bool isGrassLayer = layer.IsGrassLayer;
+            if (ImGui.Checkbox("Enable Grass Coverage (GPU)", ref isGrassLayer))
+            {
+                layer.IsGrassLayer = isGrassLayer;
+                if (isGrassLayer && layer.GrassProperties == null)
+                {
+                    layer.GrassProperties = new Engine.Assets.GrassProperties();
+                }
+                else if (!isGrassLayer)
+                {
+                    layer.GrassProperties = null;
+                }
+                // Force regeneration when toggling
+                RegenerateVegetation(terrain);
+            }
+
+            if (layer.IsGrassLayer && layer.GrassProperties != null)
+            {
+                ImGui.Indent();
+                ImGui.TextDisabled("GPU-generated dense grass from terrain mesh");
+
+                var grass = layer.GrassProperties;
+                bool grassChanged = false;
+
+                // Density & Coverage
+                if (ImGui.TreeNode("Density & Coverage"))
+                {
+                    float gDensity = grass.Density;
+                    if (ImGui.SliderFloat("Density##grass", ref gDensity, 0.1f, 3.0f))
+                    {
+                        grass.Density = gDensity;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Multiplier for blade count per triangle");
+
+                    int bladesPerTri = grass.BladesPerVertex;
+                    if (ImGui.SliderInt("Blades Per Triangle", ref bladesPerTri, 1, 10))
+                    {
+                        grass.BladesPerVertex = bladesPerTri;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Base number of grass blades per triangle");
+
+                    float coverageScale = grass.CoverageNoiseScale;
+                    if (ImGui.SliderFloat("Coverage Noise Scale", ref coverageScale, 0.001f, 0.5f, "%.3f"))
+                    {
+                        grass.CoverageNoiseScale = coverageScale;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("World-space noise scale for patchy distribution");
+
+                    float coverageThreshold = grass.CoverageThreshold;
+                    if (ImGui.SliderFloat("Coverage Threshold", ref coverageThreshold, 0.0f, 0.8f))
+                    {
+                        grass.CoverageThreshold = coverageThreshold;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("0 = full coverage, higher = more gaps");
+
+                    ImGui.TreePop();
+                }
+
+                // Blade Geometry
+                if (ImGui.TreeNode("Blade Geometry"))
+                {
+                    float height = grass.BladeHeight;
+                    if (ImGui.SliderFloat("Blade Height", ref height, 0.05f, 2.0f))
+                    {
+                        grass.BladeHeight = height;
+                        grassChanged = true;
+                    }
+
+                    float heightVar = grass.BladeHeightVariation;
+                    if (ImGui.SliderFloat("Height Variation", ref heightVar, 0.0f, 0.8f))
+                    {
+                        grass.BladeHeightVariation = heightVar;
+                        grassChanged = true;
+                    }
+
+                    float width = grass.BladeWidth;
+                    if (ImGui.SliderFloat("Blade Width", ref width, 0.01f, 0.2f))
+                    {
+                        grass.BladeWidth = width;
+                        grassChanged = true;
+                    }
+
+                    float curvature = grass.BladeCurvature;
+                    if (ImGui.SliderFloat("Curvature", ref curvature, 0.0f, 1.0f))
+                    {
+                        grass.BladeCurvature = curvature;
+                        grassChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Colors & Texture
+                if (ImGui.TreeNode("Colors"))
+                {
+                    var colorTop = new System.Numerics.Vector4(
+                        grass.ColorTop[0], grass.ColorTop[1], grass.ColorTop[2], grass.ColorTop[3]);
+                    if (ImGui.ColorEdit4("Top Color", ref colorTop))
+                    {
+                        grass.ColorTop = new float[] { colorTop.X, colorTop.Y, colorTop.Z, colorTop.W };
+                        grassChanged = true;
+                    }
+
+                    var colorBottom = new System.Numerics.Vector4(
+                        grass.ColorBottom[0], grass.ColorBottom[1], grass.ColorBottom[2], grass.ColorBottom[3]);
+                    if (ImGui.ColorEdit4("Bottom Color", ref colorBottom))
+                    {
+                        grass.ColorBottom = new float[] { colorBottom.X, colorBottom.Y, colorBottom.Z, colorBottom.W };
+                        grassChanged = true;
+                    }
+
+                    float colorVar = grass.ColorVariation;
+                    if (ImGui.SliderFloat("Color Variation", ref colorVar, 0.0f, 0.5f))
+                    {
+                        grass.ColorVariation = colorVar;
+                        grassChanged = true;
+                    }
+
+                    var newTex = EditorWidgets.AssetField("Albedo Texture", grass.AlbedoTexture, "Texture", "Optional blade texture", showPreview: true);
+                    if (newTex != grass.AlbedoTexture)
+                    {
+                        grass.AlbedoTexture = newTex;
+                        grassChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Density Map (for painted coverage)
+                if (ImGui.TreeNode("Density Map (Painted)"))
+                {
+                    ImGui.TextDisabled("Use a grayscale texture to paint grass coverage");
+                    
+                    var densityTex = EditorWidgets.AssetField("Density Map", grass.DensityMap, "Texture", "R8 texture for coverage painting", showPreview: true);
+                    if (densityTex != grass.DensityMap)
+                    {
+                        grass.DensityMap = densityTex;
+                        grassChanged = true;
+                    }
+
+                    float densityScale = grass.DensityMapScale;
+                    if (ImGui.SliderFloat("Density Map Scale", ref densityScale, 0.001f, 0.1f, "%.4f"))
+                    {
+                        grass.DensityMapScale = densityScale;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("World-space UV scale for density map");
+
+                    ImGui.TreePop();
+                }
+
+                // Wind Animation
+                if (ImGui.TreeNode("Wind Animation"))
+                {
+                    float windStrength = grass.WindStrength;
+                    if (ImGui.SliderFloat("Wind Strength", ref windStrength, 0.0f, 1.5f))
+                    {
+                        grass.WindStrength = windStrength;
+                        grassChanged = true;
+                    }
+
+                    float windSpeed = grass.WindSpeed;
+                    if (ImGui.SliderFloat("Wind Speed", ref windSpeed, 0.0f, 4.0f))
+                    {
+                        grass.WindSpeed = windSpeed;
+                        grassChanged = true;
+                    }
+
+                    float windTurb = grass.WindTurbulence;
+                    if (ImGui.SliderFloat("Wind Turbulence", ref windTurb, 0.0f, 1.5f))
+                    {
+                        grass.WindTurbulence = windTurb;
+                        grassChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // LOD & Culling
+                if (ImGui.TreeNode("LOD & Culling"))
+                {
+                    float maxDist = grass.MaxRenderDistance;
+                    if (ImGui.SliderFloat("Max Render Distance", ref maxDist, 20f, 500f))
+                    {
+                        grass.MaxRenderDistance = maxDist;
+                        grassChanged = true;
+                    }
+
+                    float fadeRange = grass.FadeRange;
+                    if (ImGui.SliderFloat("Fade Range", ref fadeRange, 5f, 100f))
+                    {
+                        grass.FadeRange = fadeRange;
+                        grassChanged = true;
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Action buttons
+                ImGui.Spacing();
+                if (ImGui.Button("🗑️ Disable Grass Layer", new Vector2(-1, 0)))
+                {
+                    layer.IsGrassLayer = false;
+                    layer.GrassProperties = null;
+                    grassChanged = true;
+                }
+
+                if (grassChanged)
+                {
+                    // GPU grass parameters are updated every frame, no regeneration needed
+                }
+
+                ImGui.Unindent();
+                ImGui.Separator();
+            }
+
             // === DENSITY ===
             ImGui.Text("Density");
             float density = layer.Density;

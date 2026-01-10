@@ -109,6 +109,7 @@ namespace Engine.Assets
         [Editable]
         public float UnderwaterBlendWithOthers { get; set; } = 0f; // 0 = full underwater, 1 = full blend with others
 
+        // === GRASS LAYER (GPU-GENERATED GRASS COVERAGE) ===
         /// <summary>
         /// Calculate the blend weight for this layer at a given world position
         /// </summary>
@@ -253,4 +254,5 @@ namespace Engine.Assets
         HeightAndSlope, // Blend based on both height AND slope (multiplicative)
         HeightOrSlope   // Blend based on height OR slope (maximum)
     }
+
 }
