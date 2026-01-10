@@ -38,6 +38,9 @@ uniform int u_DebugShowNormals;
 uniform int u_DebugShowAO;  // Debug: show AO texture
 // Shadow debugging uniforms (optional)
 uniform vec4  u_AlbedoColor;
+
+// === LOD TRANSITION (Unreal-style dithered fade) ===
+uniform float u_LodTransition; // 0.0 = fully transparent, 1.0 = fully opaque
 uniform int u_TransparencyMode; // 0 = opaque, 1 = transparent
 uniform float u_NormalStrength;
 
@@ -757,6 +760,31 @@ void main(){
         float dbgFactor = 0.12; // subtle by default
         if (inside) {
             color = mix(color, debugRgb, dbgFactor);
+        }
+    }
+
+    // === LOD TRANSITION DITHERING (Unreal-style) ===
+    // Apply dithered alpha test for smooth LOD transitions
+    // Uses Bayer matrix pattern for temporal stability
+    if (u_LodTransition < 1.0) {
+        vec2 screenUV = gl_FragCoord.xy;
+
+        // 4x4 Bayer matrix dithering (used by Unreal/Unity for LOD transitions)
+        float dither4x4[16] = float[](
+            0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
+            12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
+            3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
+            15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
+        );
+
+        int x = int(mod(screenUV.x, 4.0));
+        int y = int(mod(screenUV.y, 4.0));
+        float ditherThreshold = dither4x4[y * 4 + x];
+
+        // Discard fragments based on transition factor
+        // transition=0 -> all discarded, transition=1 -> none discarded
+        if (u_LodTransition < ditherThreshold) {
+            discard;
         }
     }
 

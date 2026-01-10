@@ -1202,7 +1202,7 @@ namespace Editor.Rendering
     private int _reflectionFbo = 0, _reflectionTex = 0, _reflectionDepthRbo = 0;
     private int _reflectionPostFbo = 0, _reflectionPostTex = 0; // For post-processing ping-pong
     private int _reflectionW = 512, _reflectionH = 512;
-    private float _reflectionResolutionScale = 0.5f; // 0.5 = half resolution for performance
+    private float _reflectionResolutionScale = 1.0f; // 1.0 = full resolution to prevent edge stretching in Play Mode
     private float _cachedWaterPlaneHeight = 0f;
     private float _cachedClipPlaneOffset = 0.05f;
     private int _cachedReflectionResolution = 1024;
@@ -3460,12 +3460,23 @@ void main(){
             var reflectedViewLH = LookAtLH(reflectedCamPos, reflectedTarget, Vector3.UnitY);
             var reflectedView = reflectedViewLH * ZFlip;
 
-            // CRITICAL: Use MAIN CAMERA aspect ratio, NOT reflection texture aspect!
-            // The reflection texture can be any size, but the frustum must match the main camera
-            // to properly cover all visible water surface
-            // Use the SAME FOV as main camera - edge fade in shader handles out-of-bounds UVs
-            float mainCameraAspect = _w / Math.Max(1.0f, (float)_h);
-            var reflectedProj = CreateProjectionMatrix(mainCameraAspect);
+            // CRITICAL: Use MAIN CAMERA projection matrix for reflections!
+            // In PlayMode (_useCustomMatrices=true), the game camera provides _projGL with its own
+            // aspect ratio/FOV. In EditMode, we calculate projection from viewport dimensions.
+            // Using the wrong aspect ratio causes stretched reflections at viewport edges.
+            Matrix4 reflectedProj;
+            if (_useCustomMatrices)
+            {
+                // PlayMode: Use the game camera's projection matrix directly
+                // This ensures reflections match the camera's actual field of view
+                reflectedProj = _projGL;
+            }
+            else
+            {
+                // EditMode: Calculate projection from viewport dimensions
+                float mainCameraAspect = _w / Math.Max(1.0f, (float)_h);
+                reflectedProj = CreateProjectionMatrix(mainCameraAspect);
+            }
 
             // Enable clipping to prevent geometry below water from appearing in reflections
             // For reflected camera (below water looking up), we need to clip geometry BELOW the water surface

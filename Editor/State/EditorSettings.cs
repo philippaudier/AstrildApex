@@ -64,12 +64,13 @@ namespace Editor.State
             
             // UI positions (persist overlay HUD positions)
             public UIPositionsData UI { get; set; } = new UIPositionsData();
-            // Viewport resolution presets (Unity-like) - -1 = Use panel size
+            // Viewport resolution presets (Unity-like) - -1 = Use panel size, -2 = Fullscreen
             public int ViewportResolutionPresetIndex { get; set; } = -1;
             public int ViewportCustomWidth { get; set; } = 1280;
             public int ViewportCustomHeight { get; set; } = 720;
             public bool ViewportLockAspect { get; set; } = true;
             public int ViewportAspectIndex { get; set; } = 0; // 0=16:9,1=4:3,2=Custom
+            public bool ViewportFullscreen { get; set; } = false; // Fullscreen mode for Play Mode
             
             // Editor shortcuts (keyboard bindings)
             public EditorShortcutsData Shortcuts { get; set; } = new EditorShortcutsData();
@@ -940,7 +941,25 @@ namespace Editor.State
                 }
             }
         }
-        
+
+        public static bool ViewportFullscreen
+        {
+            get
+            {
+                LoadSettingsIfNeeded();
+                return _currentSettings?.ViewportFullscreen ?? false;
+            }
+            set
+            {
+                LoadSettingsIfNeeded();
+                if (_currentSettings != null)
+                {
+                    _currentSettings.ViewportFullscreen = value;
+                    SaveSettings();
+                }
+            }
+        }
+
         /// <summary>
         /// Auto-detect VS Code installation on Windows
         /// </summary>

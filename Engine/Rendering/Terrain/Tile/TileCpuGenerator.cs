@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Linq;
 
 namespace Engine.Rendering.Terrain.Tile
 {
@@ -11,19 +12,22 @@ namespace Engine.Rendering.Terrain.Tile
     /// </summary>
     public static class TileCpuGenerator
     {
-        // Base tile resolution for LOD0 (vertices per side)
+        // Fallback base tile resolution for LOD0 (vertices per side)
+        // NOTE: Actual resolution is taken from Terrain.MeshResolution if set
         public const int DefaultBaseResolution = 129;
 
         /// <summary>
         /// Generate tile with on-disk caching.
+        /// Skirts are used to hide LOD seams, so neighbor LODs don't affect geometry.
         /// </summary>
-        public static (float[] vertices, uint[] indices) GenerateCachedTile(Engine.Components.Terrain terrain, int tileX, int tileY, int lod)
+        public static (float[] vertices, uint[] indices) GenerateCachedTile(Engine.Components.Terrain terrain, int tileX, int tileY, int lod, System.Collections.Generic.Dictionary<(int x, int y), int>? neighborLods = null)
         {
             try
             {
                 string cacheDir = Path.Combine("Cache", "Terrain", "tiles");
                 Directory.CreateDirectory(cacheDir);
 
+                // Cache key based on tile position, LOD, and terrain params (not neighbors - skirts hide seams)
                 string key = BuildTileCacheKey(terrain, tileX, tileY, lod);
                 string cachePath = Path.Combine(cacheDir, $"tile_{key}.cache");
 
@@ -57,8 +61,8 @@ namespace Engine.Rendering.Terrain.Tile
                     catch { /* Cache corrupted, regenerate */ }
                 }
 
-                // Generate new tile
-                var result = GenerateTileCpu(terrain, tileX, tileY, lod);
+                // Generate new tile (pass neighbor info for stitching-aware generation)
+                var result = GenerateTileCpu(terrain, tileX, tileY, lod, neighborLods);
 
                 // Save to cache
                 try
@@ -92,12 +96,13 @@ namespace Engine.Rendering.Terrain.Tile
         /// </summary>
         private static string BuildTileCacheKey(Engine.Components.Terrain terrain, int tileX, int tileY, int lod)
         {
-            // Hash terrain parameters that affect geometry (including ClosedMesh settings)
+            // Hash terrain parameters that affect geometry (including ClosedMesh settings and MeshResolution)
             string terrainKey = $"w{terrain.TerrainWidth}_l{terrain.TerrainLength}_h{terrain.TerrainHeight}_" +
                                $"proc{terrain.UseProceduralGeneration}_seed{terrain.ProceduralSeed}_" +
                                $"scale{terrain.NoiseScale}_oct{terrain.Octaves}_" +
                                $"hm{terrain.HeightmapTextureGuid}_{terrain.BlendWithTexture}_" +
-                               $"closed{terrain.ClosedMesh}_skirt{terrain.SkirtDepth}";
+                               $"closed{terrain.ClosedMesh}_skirt{terrain.SkirtDepth}_" +
+                               $"res{terrain.MeshResolution}";
 
             using var sha = System.Security.Cryptography.SHA256.Create();
             var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(terrainKey));
@@ -108,36 +113,14 @@ namespace Engine.Rendering.Terrain.Tile
 
         /// <summary>
         /// Generate tile CPU buffers (vertices + indices).
+        /// Uses vertical skirts to hide seams between different LOD levels.
         /// </summary>
-        private static (float[] vertices, uint[] indices) GenerateTileCpu(Engine.Components.Terrain terrain, int tileX, int tileY, int lod)
+        private static (float[] vertices, uint[] indices) GenerateTileCpu(Engine.Components.Terrain terrain, int tileX, int tileY, int lod, System.Collections.Generic.Dictionary<(int x, int y), int>? neighborLods = null)
         {
-            // Calculate resolution for this LOD
-            int baseRes = DefaultBaseResolution;
-            int res = Math.Max(2, baseRes >> lod);  // LOD0=129, LOD1=65, LOD2=33, LOD3=17
-
-            // Calculate buffer sizes (base terrain + optional closed mesh)
-            int baseVertexCount = res * res;
-            int baseIndexCount = (res - 1) * (res - 1) * 6;
-
-            int closedMeshVertexCount = 0;
-            int closedMeshIndexCount = 0;
-
-            if (terrain.ClosedMesh)
-            {
-                // 4 walls: each has res * 2 vertices (top + bottom pairs)
-                // 1 bottom face: res * res vertices
-                closedMeshVertexCount = (4 * res * 2) + (res * res);
-
-                // 4 walls: each has (res-1) * 2 triangles = (res-1) * 6 indices
-                // Bottom face: (res-1) * (res-1) * 6 indices
-                closedMeshIndexCount = (4 * (res - 1) * 6) + ((res - 1) * (res - 1) * 6);
-            }
-
-            int totalVertexCount = baseVertexCount + closedMeshVertexCount;
-            int totalIndexCount = baseIndexCount + closedMeshIndexCount;
-
-            float[] vertices = new float[totalVertexCount * 8];  // pos(3) + normal(3) + uv(2)
-            uint[] indices = new uint[totalIndexCount];
+            // Calculate resolution for this LOD using terrain's MeshResolution setting
+            // DefaultBaseResolution is kept as fallback for backwards compatibility
+            int baseRes = terrain.MeshResolution > 0 ? terrain.MeshResolution : DefaultBaseResolution;
+            int res = Math.Max(2, baseRes >> lod);  // e.g. if baseRes=1024: LOD0=1024, LOD1=512, LOD2=256, LOD3=128
 
             // Calculate world-space bounds for this tile
             float tileWorldSize = terrain.StreamingTileSize;
@@ -148,7 +131,42 @@ namespace Engine.Rendering.Terrain.Tile
             float stepX = tileWorldSize / (res - 1);
             float stepZ = tileWorldSize / (res - 1);
 
-            // Generate vertices
+            // SKIRT GEOMETRY: Add vertical skirts around edges to hide LOD seams
+            // Skirt depth should be enough to cover max height difference between LODs
+            float skirtDepth = terrain.SkirtDepth > 0 ? terrain.SkirtDepth : 10f;
+            
+            // Calculate buffer sizes: main grid + 4 skirt strips
+            // Main grid: res × res vertices
+            // Each skirt strip: res vertices (bottom row duplicated and dropped)
+            int mainVertexCount = res * res;
+            int skirtVertexCount = res * 4;  // 4 edges × res vertices each
+            int totalVertexCount = mainVertexCount + skirtVertexCount;
+            
+            // Main grid indices: (res-1)² × 6
+            // Each skirt strip: (res-1) × 6 indices
+            int mainIndexCount = (res - 1) * (res - 1) * 6;
+            int skirtIndexCount = (res - 1) * 4 * 6;  // 4 edges
+            int totalIndexCount = mainIndexCount + skirtIndexCount;
+
+            // Add closed mesh if enabled
+            int closedMeshVertexCount = 0;
+            int closedMeshIndexCount = 0;
+            if (terrain.ClosedMesh)
+            {
+                closedMeshVertexCount = (4 * res * 2) + (res * res);
+                closedMeshIndexCount = (4 * (res - 1) * 6) + ((res - 1) * (res - 1) * 6);
+            }
+            totalVertexCount += closedMeshVertexCount;
+            totalIndexCount += closedMeshIndexCount;
+
+            // Allocate buffers
+            float[] vertices = Engine.Rendering.Terrain.MeshBufferPool.RentFloat(totalVertexCount * 8);
+            uint[] indices = new uint[totalIndexCount];
+
+            // Height cache for normal computation
+            float[,] heightCache = new float[res, res];
+
+            // === PASS 1: Generate main grid vertices ===
             for (int z = 0; z < res; z++)
             {
                 for (int x = 0; x < res; x++)
@@ -158,29 +176,31 @@ namespace Engine.Rendering.Terrain.Tile
                     float u = x / (float)(res - 1);
                     float v = z / (float)(res - 1);
 
+                    // World positions (no snapping - skirts will hide seams)
                     float worldX = startX + x * stepX;
                     float worldZ = startZ + z * stepZ;
 
-                    // Sample height using infinite terrain generation
-                    float height = SampleHeightInfinite(terrain, worldX, worldZ);
+                    // Snap edges exactly to tile boundaries (avoid FP drift)
+                    if (x == 0) worldX = startX;
+                    if (x == res - 1) worldX = startX + tileWorldSize;
+                    if (z == 0) worldZ = startZ;
+                    if (z == res - 1) worldZ = startZ + tileWorldSize;
 
-                    // Position
+                    float height = SampleHeightInfinite(terrain, worldX, worldZ);
+                    heightCache[x, z] = height;
+
                     vertices[idx + 0] = worldX;
                     vertices[idx + 1] = height;
                     vertices[idx + 2] = worldZ;
-
-                    // Normal (computed later)
-                    vertices[idx + 3] = 0f;
+                    vertices[idx + 3] = 0f;  // Normal (computed later)
                     vertices[idx + 4] = 1f;
                     vertices[idx + 5] = 0f;
-
-                    // UVs (0-1 range across tile)
                     vertices[idx + 6] = u;
                     vertices[idx + 7] = v;
                 }
             }
 
-            // Generate indices (CCW winding)
+            // === PASS 2: Generate main grid indices ===
             int ii = 0;
             for (int z = 0; z < res - 1; z++)
             {
@@ -191,53 +211,220 @@ namespace Engine.Rendering.Terrain.Tile
                     uint bottomLeft = (uint)((z + 1) * res + x);
                     uint bottomRight = (uint)((z + 1) * res + x + 1);
 
-                    // Triangle 1
                     indices[ii++] = topLeft;
                     indices[ii++] = bottomLeft;
                     indices[ii++] = topRight;
 
-                    // Triangle 2
                     indices[ii++] = topRight;
                     indices[ii++] = bottomLeft;
                     indices[ii++] = bottomRight;
                 }
             }
 
-            // Compute normals from neighboring heights
-            ComputeNormals(vertices, res, terrain, startX, startZ, stepX, stepZ);
+            // === PASS 3: Generate skirt vertices and indices ===
+            uint skirtBaseVertex = (uint)mainVertexCount;
+            
+            // TOP edge skirt (z = 0)
+            for (int x = 0; x < res; x++)
+            {
+                int srcIdx = x;  // Top row vertex
+                int dstIdx = (int)(skirtBaseVertex + x) * 8;
+                
+                float worldX = vertices[srcIdx * 8 + 0];
+                float worldZ = vertices[srcIdx * 8 + 2];
+                float height = vertices[srcIdx * 8 + 1] - skirtDepth;  // Drop down
+                
+                vertices[dstIdx + 0] = worldX;
+                vertices[dstIdx + 1] = height;
+                vertices[dstIdx + 2] = worldZ;
+                vertices[dstIdx + 3] = 0f;
+                vertices[dstIdx + 4] = 0f;
+                vertices[dstIdx + 5] = -1f;  // Normal facing outward
+                vertices[dstIdx + 6] = vertices[srcIdx * 8 + 6];
+                vertices[dstIdx + 7] = vertices[srcIdx * 8 + 7];
+            }
+            
+            // Top skirt indices (connect top edge to dropped vertices)
+            for (int x = 0; x < res - 1; x++)
+            {
+                uint topEdge0 = (uint)x;
+                uint topEdge1 = (uint)(x + 1);
+                uint skirt0 = skirtBaseVertex + (uint)x;
+                uint skirt1 = skirtBaseVertex + (uint)(x + 1);
+                
+                indices[ii++] = skirt0;
+                indices[ii++] = topEdge0;
+                indices[ii++] = skirt1;
+                
+                indices[ii++] = skirt1;
+                indices[ii++] = topEdge0;
+                indices[ii++] = topEdge1;
+            }
+            skirtBaseVertex += (uint)res;
+
+            // BOTTOM edge skirt (z = res-1)
+            for (int x = 0; x < res; x++)
+            {
+                int srcIdx = (res - 1) * res + x;  // Bottom row vertex
+                int dstIdx = (int)(skirtBaseVertex + x) * 8;
+                
+                float worldX = vertices[srcIdx * 8 + 0];
+                float worldZ = vertices[srcIdx * 8 + 2];
+                float height = vertices[srcIdx * 8 + 1] - skirtDepth;
+                
+                vertices[dstIdx + 0] = worldX;
+                vertices[dstIdx + 1] = height;
+                vertices[dstIdx + 2] = worldZ;
+                vertices[dstIdx + 3] = 0f;
+                vertices[dstIdx + 4] = 0f;
+                vertices[dstIdx + 5] = 1f;  // Normal facing outward
+                vertices[dstIdx + 6] = vertices[srcIdx * 8 + 6];
+                vertices[dstIdx + 7] = vertices[srcIdx * 8 + 7];
+            }
+            
+            // Bottom skirt indices
+            for (int x = 0; x < res - 1; x++)
+            {
+                uint bottomEdge0 = (uint)((res - 1) * res + x);
+                uint bottomEdge1 = (uint)((res - 1) * res + x + 1);
+                uint skirt0 = skirtBaseVertex + (uint)x;
+                uint skirt1 = skirtBaseVertex + (uint)(x + 1);
+                
+                indices[ii++] = bottomEdge0;
+                indices[ii++] = skirt0;
+                indices[ii++] = bottomEdge1;
+                
+                indices[ii++] = bottomEdge1;
+                indices[ii++] = skirt0;
+                indices[ii++] = skirt1;
+            }
+            skirtBaseVertex += (uint)res;
+
+            // LEFT edge skirt (x = 0)
+            for (int z = 0; z < res; z++)
+            {
+                int srcIdx = z * res;  // Left column vertex
+                int dstIdx = (int)(skirtBaseVertex + z) * 8;
+                
+                float worldX = vertices[srcIdx * 8 + 0];
+                float worldZ = vertices[srcIdx * 8 + 2];
+                float height = vertices[srcIdx * 8 + 1] - skirtDepth;
+                
+                vertices[dstIdx + 0] = worldX;
+                vertices[dstIdx + 1] = height;
+                vertices[dstIdx + 2] = worldZ;
+                vertices[dstIdx + 3] = -1f;  // Normal facing outward
+                vertices[dstIdx + 4] = 0f;
+                vertices[dstIdx + 5] = 0f;
+                vertices[dstIdx + 6] = vertices[srcIdx * 8 + 6];
+                vertices[dstIdx + 7] = vertices[srcIdx * 8 + 7];
+            }
+            
+            // Left skirt indices
+            for (int z = 0; z < res - 1; z++)
+            {
+                uint leftEdge0 = (uint)(z * res);
+                uint leftEdge1 = (uint)((z + 1) * res);
+                uint skirt0 = skirtBaseVertex + (uint)z;
+                uint skirt1 = skirtBaseVertex + (uint)(z + 1);
+                
+                indices[ii++] = leftEdge0;
+                indices[ii++] = skirt0;
+                indices[ii++] = leftEdge1;
+                
+                indices[ii++] = leftEdge1;
+                indices[ii++] = skirt0;
+                indices[ii++] = skirt1;
+            }
+            skirtBaseVertex += (uint)res;
+
+            // RIGHT edge skirt (x = res-1)
+            for (int z = 0; z < res; z++)
+            {
+                int srcIdx = z * res + (res - 1);  // Right column vertex
+                int dstIdx = (int)(skirtBaseVertex + z) * 8;
+                
+                float worldX = vertices[srcIdx * 8 + 0];
+                float worldZ = vertices[srcIdx * 8 + 2];
+                float height = vertices[srcIdx * 8 + 1] - skirtDepth;
+                
+                vertices[dstIdx + 0] = worldX;
+                vertices[dstIdx + 1] = height;
+                vertices[dstIdx + 2] = worldZ;
+                vertices[dstIdx + 3] = 1f;  // Normal facing outward
+                vertices[dstIdx + 4] = 0f;
+                vertices[dstIdx + 5] = 0f;
+                vertices[dstIdx + 6] = vertices[srcIdx * 8 + 6];
+                vertices[dstIdx + 7] = vertices[srcIdx * 8 + 7];
+            }
+            
+            // Right skirt indices
+            for (int z = 0; z < res - 1; z++)
+            {
+                uint rightEdge0 = (uint)(z * res + (res - 1));
+                uint rightEdge1 = (uint)((z + 1) * res + (res - 1));
+                uint skirt0 = skirtBaseVertex + (uint)z;
+                uint skirt1 = skirtBaseVertex + (uint)(z + 1);
+                
+                indices[ii++] = skirt0;
+                indices[ii++] = rightEdge0;
+                indices[ii++] = skirt1;
+                
+                indices[ii++] = skirt1;
+                indices[ii++] = rightEdge0;
+                indices[ii++] = rightEdge1;
+            }
+            skirtBaseVertex += (uint)res;
+
+            // Compute normals for main grid
+            ComputeNormals(vertices, res, heightCache, stepX, stepZ);
 
             // Generate closed mesh if enabled
             if (terrain.ClosedMesh)
             {
                 GenerateClosedMeshForTile(vertices, indices, res, terrain, startX, startZ, stepX, stepZ,
-                    (uint)baseVertexCount, baseIndexCount);
+                    skirtBaseVertex, ii);
             }
 
             return (vertices, indices);
         }
 
         /// <summary>
-        /// Compute smooth normals using finite differences.
+        /// Compute smooth normals using finite differences from cached heights.
+        /// OPTIMIZED: Uses pre-computed height cache instead of re-sampling (80% reduction in noise calls).
+        /// SMOOTH: Uses adaptive sampling radius to reduce faceting visible with SSAO.
         /// </summary>
-        private static void ComputeNormals(float[] vertices, int res, Engine.Components.Terrain terrain, float startX, float startZ, float stepX, float stepZ)
+        private static void ComputeNormals(float[] vertices, int res, float[,] heightCache, float stepX, float stepZ)
         {
+            // Adaptive smoothing radius based on resolution
+            // Higher resolution = larger radius for better smoothing
+            // This prevents faceting visible with SSAO while preserving detail
+            // res=128 -> radius=1, res=256 -> radius=2, res=512 -> radius=4, res=1024 -> radius=8
+            int smoothRadius = Math.Max(1, Math.Min(8, res / 128));
+
             for (int z = 0; z < res; z++)
             {
                 for (int x = 0; x < res; x++)
                 {
                     int idx = (z * res + x) * 8;
-                    float worldX = startX + x * stepX;
-                    float worldZ = startZ + z * stepZ;
 
-                    // Sample neighboring heights
-                    float hL = SampleSafe(terrain, worldX - stepX, worldZ);
-                    float hR = SampleSafe(terrain, worldX + stepX, worldZ);
-                    float hD = SampleSafe(terrain, worldX, worldZ - stepZ);
-                    float hU = SampleSafe(terrain, worldX, worldZ + stepZ);
+                    // Get neighboring heights from cache with adaptive radius
+                    // Larger radius = smoother normals, less faceting
+                    int xL = Math.Max(x - smoothRadius, 0);
+                    int xR = Math.Min(x + smoothRadius, res - 1);
+                    int zD = Math.Max(z - smoothRadius, 0);
+                    int zU = Math.Min(z + smoothRadius, res - 1);
 
-                    // Finite differences
-                    float dHeightDx = (hR - hL) / (2.0f * stepX);
-                    float dHeightDz = (hU - hD) / (2.0f * stepZ);
+                    float hL = heightCache[xL, z];
+                    float hR = heightCache[xR, z];
+                    float hD = heightCache[x, zD];
+                    float hU = heightCache[x, zU];
+
+                    // Finite differences (account for edge cases where neighbor is same vertex)
+                    float dxStep = (xR - xL) * stepX;
+                    float dzStep = (zU - zD) * stepZ;
+                    float dHeightDx = dxStep > 0 ? (hR - hL) / dxStep : 0f;
+                    float dHeightDz = dzStep > 0 ? (hU - hD) / dzStep : 0f;
 
                     // Normal = (-dh/dx, 1, -dh/dz) normalized
                     float nx = -dHeightDx;

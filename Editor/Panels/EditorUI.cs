@@ -617,6 +617,7 @@ public static class EditorUI
         {
             var presets = new string[] {
                 "Panel Size (Auto)",
+                "Fullscreen",
                 "1920 x 1080 (16:9)",
                 "1600 x 900 (16:9)",
                 "1280 x 720 (16:9)",
@@ -627,9 +628,12 @@ public static class EditorUI
             };
 
             // Stored index mapping: EditorSettings.ViewportResolutionPresetIndex
-            // -1 => Panel Size (we'll map to 0 in UI)
+            // -1 => Panel Size, -2 => Fullscreen (we'll map to 0 and 1 in UI)
             int stored = Editor.State.EditorSettings.ViewportResolutionPresetIndex;
-            int uiIndex = stored == -1 ? 0 : stored + 1; // shift by 1 because 0=Panel Size
+            int uiIndex;
+            if (stored == -1) uiIndex = 0; // Panel Size
+            else if (stored == -2) uiIndex = 1; // Fullscreen
+            else uiIndex = stored + 2; // Shift by 2 because 0=Panel Size, 1=Fullscreen
 
             if (ImGui.BeginCombo("##viewport_res", presets[uiIndex]))
             {
@@ -640,9 +644,26 @@ public static class EditorUI
                     {
                         uiIndex = i;
                         // Map back to stored value
-                        if (uiIndex == 0) Editor.State.EditorSettings.ViewportResolutionPresetIndex = -1;
-                        else if (uiIndex == presets.Length - 1) Editor.State.EditorSettings.ViewportResolutionPresetIndex = presets.Length - 2; // custom -> special index (we'll treat last as custom)
-                        else Editor.State.EditorSettings.ViewportResolutionPresetIndex = uiIndex - 1;
+                        if (uiIndex == 0)
+                        {
+                            Editor.State.EditorSettings.ViewportResolutionPresetIndex = -1; // Panel Size
+                            Editor.State.EditorSettings.ViewportFullscreen = false;
+                        }
+                        else if (uiIndex == 1)
+                        {
+                            Editor.State.EditorSettings.ViewportResolutionPresetIndex = -2; // Fullscreen
+                            Editor.State.EditorSettings.ViewportFullscreen = true;
+                        }
+                        else if (uiIndex == presets.Length - 1)
+                        {
+                            Editor.State.EditorSettings.ViewportResolutionPresetIndex = presets.Length - 3; // Custom
+                            Editor.State.EditorSettings.ViewportFullscreen = false;
+                        }
+                        else
+                        {
+                            Editor.State.EditorSettings.ViewportResolutionPresetIndex = uiIndex - 2;
+                            Editor.State.EditorSettings.ViewportFullscreen = false;
+                        }
                     }
                     if (selected) ImGui.SetItemDefaultFocus();
                 }

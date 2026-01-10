@@ -150,6 +150,12 @@ namespace Engine.Rendering
                 tileSizeOffset = sizeVariationAmount * layer.SizeVariation;
             }
 
+            // OPTIMIZATION: Create spatial grid for O(1) neighbor queries (replaces O(n²) IsTooCloseToOthers)
+            // Cell size = minDistance ensures we only check relevant neighbors
+            // Reduces 1,000,000 comparisons to ~20 for typical density
+            float cellSize = Math.Max(layer.MinDistance, tileWorldSize / 10f); // Min 10x10 grid
+            var spatialGrid = new SpatialGrid(cellSize, startX, startZ);
+
             // Generate instances
             for (int i = 0; i < attempts; i++)
             {
@@ -167,13 +173,17 @@ namespace Engine.Rendering
                 if (!IsValidPlacement(terrain, worldX, worldY, worldZ, layer, rng))
                     continue;
 
-                // Enforce minimum distance from other instances in this layer
-                if (layer.MinDistance > 0 && IsTooCloseToOthers(instances, worldX, worldY, worldZ, layer.MinDistance))
+                // OPTIMIZED: Use spatial grid for O(1) distance check (was O(n) linear scan)
+                // Checks only ~20 nearby instances instead of all 1000+
+                if (layer.MinDistance > 0 && spatialGrid.IsTooClose(worldX, worldY, worldZ, layer.MinDistance))
                     continue;
 
                 // Create instance matrix (with per-tile size variation)
                 Matrix4 matrix = CreateVegetationMatrix(terrain, worldX, worldY, worldZ, layer, rng, tileSizeOffset);
                 instances.Add(matrix);
+
+                // Add to spatial grid for future distance checks
+                spatialGrid.Add(matrix);
             }
 
             // === POST-PROCESSING (same as Single Terrain) ===
@@ -559,6 +569,78 @@ namespace Engine.Rendering
 
             // Normalize to [-1, 1]
             return ((hash & 0x7FFFFFFF) / (float)0x7FFFFFFF) * 2f - 1f;
+        }
+    }
+
+    /// <summary>
+    /// Spatial grid for O(1) neighbor queries in vegetation placement.
+    /// Replaces O(n²) distance checks with O(1) cell lookups.
+    /// Reduces 1,000,000 comparisons to ~20 for typical vegetation density.
+    /// </summary>
+    internal class SpatialGrid
+    {
+        private readonly Dictionary<(int, int), List<Matrix4>> _cells = new();
+        private readonly float _cellSize;
+        private readonly float _originX;
+        private readonly float _originZ;
+
+        public SpatialGrid(float cellSize, float originX, float originZ)
+        {
+            _cellSize = cellSize;
+            _originX = originX;
+            _originZ = originZ;
+        }
+
+        private (int, int) GetCellKey(float worldX, float worldZ)
+        {
+            int cx = (int)Math.Floor((worldX - _originX) / _cellSize);
+            int cz = (int)Math.Floor((worldZ - _originZ) / _cellSize);
+            return (cx, cz);
+        }
+
+        public void Add(Matrix4 matrix)
+        {
+            float worldX = matrix.M41;
+            float worldZ = matrix.M43;
+            var key = GetCellKey(worldX, worldZ);
+
+            if (!_cells.TryGetValue(key, out var list))
+            {
+                list = new List<Matrix4>();
+                _cells[key] = list;
+            }
+            list.Add(matrix);
+        }
+
+        public bool IsTooClose(float worldX, float worldY, float worldZ, float minDistance)
+        {
+            float minDistSq = minDistance * minDistance;
+            var key = GetCellKey(worldX, worldZ);
+
+            // Check 3x3 grid of cells (current + 8 neighbors)
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var neighborKey = (key.Item1 + dx, key.Item2 + dz);
+                    if (!_cells.TryGetValue(neighborKey, out var list))
+                        continue;
+
+                    // Check distance to all instances in this cell
+                    foreach (var matrix in list)
+                    {
+                        float dx2 = matrix.M41 - worldX;
+                        float dy2 = matrix.M42 - worldY;
+                        float dz2 = matrix.M43 - worldZ;
+
+                        float distSq = dx2 * dx2 + dy2 * dy2 + dz2 * dz2;
+                        if (distSq < minDistSq)
+                            return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 }

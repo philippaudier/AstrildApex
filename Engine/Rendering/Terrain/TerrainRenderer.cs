@@ -863,8 +863,8 @@ namespace Engine.Rendering.Terrain
                 if (_tileManager == null)
                 {
                     _tileManager = new Tile.TerrainTileManager();
-                    _tileManager.TileGenerator = (tx, ty, lod) =>
-                        Tile.TileCpuGenerator.GenerateCachedTile(terrain, tx, ty, lod);
+                    _tileManager.TileGenerator = (tile) =>
+                        Tile.TileCpuGenerator.GenerateCachedTile(terrain, tile.X, tile.Y, tile.Lod, tile.NeighborLods);
                     _tileManager.VegetationGenerator = (t, tx, ty) =>
                         VegetationGenerator.GenerateVegetationForTile(t, tx, ty, t.StreamingTileSize);
                     _tileManager.StartBackgroundWorker();
@@ -877,7 +877,12 @@ namespace Engine.Rendering.Terrain
                 // Request tiles around camera
                 _tileManager.RequestTilesAround(terrain, viewPos.X, viewPos.Z, terrain.StreamingRadius);
 
-                // Process up to 5 tile GPU uploads per frame for better responsiveness
+                // Process GPU resource deletions from evicted tiles (thread-safe)
+                _tileManager.ProcessGpuDeletions();
+
+                // OPTIMIZED: Process up to 20 tile GPU uploads per frame for faster streaming
+                // At 60fps: 20×60 = 1200 tiles/sec (was 5×60 = 300 tiles/sec)
+                // Prevents visible holes when rotating camera quickly
                 _tileManager.TryProcessUploads(tile =>
                 {
                     if (tile.VerticesCpu == null || tile.IndicesCpu == null) return;
@@ -921,11 +926,23 @@ namespace Engine.Rendering.Terrain
                     tile.OnUploadedToGpu(vao, vbo, ebo);
                 });
 
-                // Render all visible tiles
+                // Use real deltaTime for smooth LOD transitions
+                float deltaTime = Engine.Core.Time.DeltaTime;
+                
+                // Update fading-out tiles (cross-fade cleanup)
+                _tileManager.UpdateFadingTiles(deltaTime);
+
+                // Render all visible tiles with LOD transition animation
                 _tileManager.ForEachRenderable(tile =>
                 {
                     if (tile.Vao != 0 && tile.IndexCount > 0)
                     {
+                        // Update LOD transition (dithered fade-in/fade-out)
+                        tile.UpdateTransition(deltaTime);
+
+                        // Set transition factor for dithered alpha in shader
+                        _shader.SetFloat("u_LodTransition", tile.TransitionFactor);
+
                         GL.BindVertexArray(tile.Vao);
                         GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
                         GL.BindVertexArray(0);
@@ -935,6 +952,8 @@ namespace Engine.Rendering.Terrain
             else
             {
                 // === CLASSIC SINGLE TERRAIN MODE ===
+                // No LOD transition for single terrain (always fully opaque)
+                _shader.SetFloat("u_LodTransition", 1.0f);
                 terrain.Render(new System.Numerics.Vector3(viewPos.X, viewPos.Y, viewPos.Z));
             }
 
@@ -1225,8 +1244,8 @@ namespace Engine.Rendering.Terrain
             if (_tileManager == null)
             {
                 _tileManager = new Tile.TerrainTileManager();
-                _tileManager.TileGenerator = (tx, ty, lod) =>
-                    Tile.TileCpuGenerator.GenerateCachedTile(terrain, tx, ty, lod);
+                _tileManager.TileGenerator = (tile) =>
+                    Tile.TileCpuGenerator.GenerateCachedTile(terrain, tile.X, tile.Y, tile.Lod, tile.NeighborLods);
                 _tileManager.VegetationGenerator = (t, tx, ty) =>
                     VegetationGenerator.GenerateVegetationForTile(t, tx, ty, t.StreamingTileSize);
                 _tileManager.StartBackgroundWorker();
@@ -1250,6 +1269,9 @@ namespace Engine.Rendering.Terrain
         public void ForceProcessTileUploads(Engine.Components.Terrain terrain, int maxTiles = 20)
         {
             if (_tileManager == null) return;
+
+            // Process GPU resource deletions first (thread-safe)
+            _tileManager.ProcessGpuDeletions();
 
             int processed = 0;
             _tileManager.TryProcessUploads(tile =>

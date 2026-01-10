@@ -185,7 +185,8 @@ namespace Engine.Components
         public float StreamingTileSize { get; set; } = 100f;  // World size of each terrain tile (meters)
 
         [Engine.Serialization.SerializableAttribute("streamingRadius")]
-        public int StreamingRadius { get; set; } = 2;  // Radius in tiles around camera (2 = 5x5 grid)
+        public int StreamingRadius { get; set; } = 3;  // Radius in tiles around camera (3 = 7x7 core, expanded for LODs)
+        // OPTIMIZED: Increased from 2 to 3 for better lookahead when camera rotates
 
         [Engine.Serialization.SerializableAttribute("streamingMaxLOD")]
         public int StreamingMaxLOD { get; set; } = 3;  // Maximum LOD level (0 = highest detail)

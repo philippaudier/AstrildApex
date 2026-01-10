@@ -204,10 +204,32 @@ public class ViewportPanelModern
         // Update FPS tracking
         UpdateFpsTracking();
 
-        ImGui.SetNextWindowSize(new Vector2(800, 600), ImGuiCond.FirstUseEver);
+        // Check if Escape key pressed in fullscreen Play Mode (exit fullscreen)
+        if (_isInPlayMode && EditorSettings.ViewportFullscreen && ImGui.IsKeyPressed(ImGuiKey.Escape))
+        {
+            EditorSettings.ViewportFullscreen = false;
+            EditorSettings.ViewportResolutionPresetIndex = -1; // Reset to Panel Size
+        }
+
+        // Fullscreen mode in Play Mode: create borderless fullscreen window
+        bool isFullscreen = _isInPlayMode && EditorSettings.ViewportFullscreen;
+        ImGuiWindowFlags windowFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+
+        if (isFullscreen)
+        {
+            // Fullscreen: no title bar, no resize, no move, covering entire viewport
+            windowFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoCollapse;
+            var viewport = ImGui.GetMainViewport();
+            ImGui.SetNextWindowPos(viewport.Pos);
+            ImGui.SetNextWindowSize(viewport.Size);
+        }
+        else
+        {
+            ImGui.SetNextWindowSize(new Vector2(800, 600), ImGuiCond.FirstUseEver);
+        }
 
         // PERFORMANCE FIX: Skip rendering if window is collapsed/hidden
-        if (!ImGui.Begin("Scene", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+        if (!ImGui.Begin(isFullscreen ? "##SceneFullscreen" : "Scene", windowFlags))
         {
             ImGui.End();
             return;
@@ -274,8 +296,20 @@ public class ViewportPanelModern
         
         // === Resize & Camera ===
         var avail = ImGui.GetContentRegionAvail();
-        int w = Math.Max(1, (int)avail.X);
-        int h = Math.Max(1, (int)avail.Y);
+        int w, h;
+
+        if (_isInPlayMode && !isFullscreen)
+        {
+            // In Play Mode (not fullscreen): use resolution from dropdown
+            GetPlayModeResolution(avail, out w, out h);
+        }
+        else
+        {
+            // Edit Mode OR Fullscreen: use full content region
+            w = Math.Max(1, (int)avail.X);
+            h = Math.Max(1, (int)avail.Y);
+        }
+
         Renderer?.Resize(w, h);
 
         // === Camera Handling ===
@@ -308,10 +342,21 @@ public class ViewportPanelModern
         // === Display Texture ===
         Vector2 itemMin = Vector2.Zero;
         Vector2 itemMax = Vector2.Zero;
-        
+
         if (Renderer != null)
         {
-            ImGui.Image((IntPtr)Renderer.ColorTexture, avail, new Vector2(0, 1), new Vector2(1, 0));
+            // Display rendered texture (centered if resolution is smaller than panel)
+            Vector2 imageSize = new Vector2(w, h);
+
+            // Center the image if it's smaller than the available region
+            if (imageSize.X < avail.X || imageSize.Y < avail.Y)
+            {
+                float offsetX = Math.Max(0, (avail.X - imageSize.X) * 0.5f);
+                float offsetY = Math.Max(0, (avail.Y - imageSize.Y) * 0.5f);
+                ImGui.SetCursorPos(new Vector2(offsetX, offsetY));
+            }
+
+            ImGui.Image((IntPtr)Renderer.ColorTexture, imageSize, new Vector2(0, 1), new Vector2(1, 0));
 
             itemMin = ImGui.GetItemRectMin();
             itemMax = ImGui.GetItemRectMax();
@@ -1356,6 +1401,68 @@ public class ViewportPanelModern
             // Didn't hit anything, place at a default distance from camera
             // Calculate a ray from camera through mouse position and place object 10 units away
             return Vector3.Zero; // Fallback to origin for now
+        }
+    }
+
+    /// <summary>
+    /// Get the resolution for Play Mode based on Editor Settings dropdown selection
+    /// </summary>
+    private void GetPlayModeResolution(Vector2 availableRegion, out int width, out int height)
+    {
+        int presetIndex = EditorSettings.ViewportResolutionPresetIndex;
+
+        // Resolution presets (must match EditorUI.cs dropdown order after "Panel Size" and "Fullscreen")
+        // Index: 0=1920x1080, 1=1600x900, 2=1280x720, 3=1366x768, 4=1024x768, 5=800x600, 6=Custom
+        switch (presetIndex)
+        {
+            case -1: // Panel Size (Auto)
+                width = Math.Max(1, (int)availableRegion.X);
+                height = Math.Max(1, (int)availableRegion.Y);
+                break;
+            case -2: // Fullscreen (shouldn't reach here, handled in Draw)
+                width = Math.Max(1, (int)availableRegion.X);
+                height = Math.Max(1, (int)availableRegion.Y);
+                break;
+            case 0: // 1920 x 1080
+                width = 1920;
+                height = 1080;
+                break;
+            case 1: // 1600 x 900
+                width = 1600;
+                height = 900;
+                break;
+            case 2: // 1280 x 720
+                width = 1280;
+                height = 720;
+                break;
+            case 3: // 1366 x 768
+                width = 1366;
+                height = 768;
+                break;
+            case 4: // 1024 x 768
+                width = 1024;
+                height = 768;
+                break;
+            case 5: // 800 x 600
+                width = 800;
+                height = 600;
+                break;
+            case 6: // Custom
+                width = Math.Max(8, EditorSettings.ViewportCustomWidth);
+                height = Math.Max(8, EditorSettings.ViewportCustomHeight);
+                break;
+            default:
+                width = Math.Max(1, (int)availableRegion.X);
+                height = Math.Max(1, (int)availableRegion.Y);
+                break;
+        }
+
+        // Constrain to available region (don't exceed panel size)
+        if (width > availableRegion.X || height > availableRegion.Y)
+        {
+            float scale = Math.Min(availableRegion.X / width, availableRegion.Y / height);
+            width = Math.Max(1, (int)(width * scale));
+            height = Math.Max(1, (int)(height * scale));
         }
     }
 

@@ -34,9 +34,19 @@ namespace Engine.Rendering.Terrain.Tile
         // Vegetation instances per layer
         public Dictionary<int, List<Matrix4>>? VegetationInstances { get; private set; }
 
+        // Neighbor LODs captured at request time (key = (tx,ty) of neighbor)
+        // Used by CPU generator to stitch borders when neighboring tiles have different LODs
+        public System.Collections.Generic.Dictionary<(int x, int y), int>? NeighborLods { get; set; }
         // World bounds for frustum culling
         public System.Numerics.Vector3 WorldMin { get; private set; }
         public System.Numerics.Vector3 WorldMax { get; private set; }
+
+        // LOD Transition for dithered fade (Unreal-style cross-fade)
+        // For fade-in: 0.0 → 1.0 (new tile appearing)
+        // For fade-out: 1.0 → 0.0 (old tile disappearing)
+        public float TransitionFactor { get; private set; } = 0f;
+        public bool IsFadingOut { get; private set; } = false;
+        private const float _transitionSpeed = 1.0f;  // Slower fade for visible dithering (1 second)
 
         public TileState State { get { lock(_stateLock) { return _state; } } }
 
@@ -53,6 +63,8 @@ namespace Engine.Rendering.Terrain.Tile
                 if (_state == TileState.Unloaded || _state == TileState.Evicted)
                 {
                     _state = TileState.Loading;
+                    // CRITICAL: Reset transition for dithering effect on reload
+                    TransitionFactor = 0f;
                 }
             }
         }
@@ -108,9 +120,15 @@ namespace Engine.Rendering.Terrain.Tile
             {
                 _state = TileState.Renderable;
             }
-            // Free CPU buffers to save memory
-            VerticesCpu = null;
-            IndicesCpu = null;
+            // Start fade-in transition
+            TransitionFactor = 0f;
+            // Return CPU buffers to pool to reduce GC pressure
+            if (VerticesCpu != null)
+            {
+                Engine.Rendering.Terrain.MeshBufferPool.ReturnFloat(VerticesCpu);
+                VerticesCpu = null;
+            }
+            IndicesCpu = null;  // TODO: Return to pool when uint[] support is added
         }
 
         public void AttachVegetation(Dictionary<int, List<Matrix4>> instances)
@@ -124,6 +142,14 @@ namespace Engine.Rendering.Terrain.Tile
             {
                 _state = TileState.Evicted;
             }
+            // Return CPU buffers to pool if still present
+            if (VerticesCpu != null)
+            {
+                Engine.Rendering.Terrain.MeshBufferPool.ReturnFloat(VerticesCpu);
+                VerticesCpu = null;
+            }
+            IndicesCpu = null;  // TODO: Return to pool when uint[] support is added
+
             // Note: GPU resource deletion handled by manager on GL thread
             VegetationInstances?.Clear();
             VegetationInstances = null;
@@ -132,6 +158,49 @@ namespace Engine.Rendering.Terrain.Tile
         public System.Numerics.Vector3 GetCenter()
         {
             return (WorldMin + WorldMax) * 0.5f;
+        }
+
+        /// <summary>
+        /// Update LOD transition animation (call every frame for smooth dithered fade)
+        /// Returns true if tile should still be rendered, false if fade-out complete
+        /// </summary>
+        public bool UpdateTransition(float deltaTime)
+        {
+            if (IsFadingOut)
+            {
+                // Fade out: 1.0 → 0.0
+                TransitionFactor = Math.Max(0f, TransitionFactor - _transitionSpeed * deltaTime);
+                return TransitionFactor > 0.01f;  // Keep rendering until nearly invisible
+            }
+            else if (TransitionFactor < 1f && State == TileState.Renderable)
+            {
+                // Fade in: 0.0 → 1.0
+                TransitionFactor = Math.Min(1f, TransitionFactor + _transitionSpeed * deltaTime);
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Start fade-out transition (for tiles being replaced by different LOD)
+        /// </summary>
+        public void StartFadeOut()
+        {
+            IsFadingOut = true;
+            // Keep current TransitionFactor (usually 1.0) and fade down
+        }
+
+        /// <summary>
+        /// Check if fade-out is complete
+        /// </summary>
+        public bool IsFadeOutComplete => IsFadingOut && TransitionFactor <= 0.01f;
+
+        /// <summary>
+        /// Reset transition factor to 0 (for re-appearing tiles)
+        /// </summary>
+        public void ResetTransition()
+        {
+            TransitionFactor = 0f;
+            IsFadingOut = false;
         }
 
         public float GetRadius()
