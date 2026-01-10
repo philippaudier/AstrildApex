@@ -53,6 +53,9 @@ uniform float u_CrestFoamThreshold = 0.7;
 uniform float u_CrestFoamIntensity = 1.0;
 uniform vec4 u_CrestFoamColor = vec4(1.0, 1.0, 1.0, 0.8);
 uniform float u_CrestFoamScale = 5.0;
+uniform float u_CrestFoamSpeed = 0.1;
+uniform int u_UseFoamTexture = 0;
+uniform sampler2D u_FoamTex;
 
 // === SPECULAR ===
 uniform float u_SpecularIntensity = 2.0;
@@ -83,6 +86,12 @@ uniform int u_CausticsEnabled = 1;
 uniform float u_CausticsIntensity = 0.5;
 uniform float u_CausticsScale = 1.0;
 uniform float u_CausticsSpeed = 1.0;
+uniform int u_CausticsOctaves = 3;
+uniform float u_CausticsBrightness = 1.0;
+uniform float u_CausticsSharpness = 3.0;
+uniform float u_CausticsDistortion = 0.5;
+uniform float u_CausticsDepthFalloff = 0.2;
+uniform float u_CausticsChromatic = 0.05;
 
 // === ABSORPTION ===
 uniform vec3 u_AbsorptionColor = vec3(0.4, 0.1, 0.02);
@@ -232,52 +241,116 @@ vec3 calculateCrestFoam(float waveHeight, vec2 uv) {
     // Foam appears at high points
     float foamFactor = smoothstep(u_CrestFoamThreshold, 1.0, normalizedHeight);
     
-    // Add some noise to foam pattern
-    vec2 foamUV = uv * u_CrestFoamScale + u_Time * 0.1;
-    float foamNoise = hash(floor(foamUV * 20.0)) * 0.3 + 0.7;
-    
-    // Foam texture approximation using noise
+    // Animated foam UV
+    vec2 foamUV = uv * u_CrestFoamScale + u_Time * u_CrestFoamSpeed;
+
+    // Foam pattern: use texture if available, otherwise procedural
     float foamPattern = 0.0;
-    for (int i = 0; i < 3; i++) {
-        float scale = float(i + 1) * 2.0;
-        foamPattern += hash(floor(foamUV * scale * 10.0 + u_Time * 0.5)) / scale;
+    if (u_UseFoamTexture > 0) {
+        // Sample foam texture
+        foamPattern = texture(u_FoamTex, foamUV).r;
+    } else {
+        // Procedural foam noise
+        float foamNoise = hash(floor(foamUV * 20.0)) * 0.3 + 0.7;
+        for (int i = 0; i < 3; i++) {
+            float scale = float(i + 1) * 2.0;
+            foamPattern += hash(floor(foamUV * scale * 10.0 + u_Time * 0.5)) / scale;
+        }
+        foamPattern = saturate(foamPattern * 2.0);
     }
-    foamPattern = saturate(foamPattern * 2.0);
-    
+
     return u_CrestFoamColor.rgb * foamFactor * u_CrestFoamIntensity * foamPattern * u_CrestFoamColor.a;
 }
 
-// Caustics pattern
-vec3 calculateCaustics(vec2 worldPos, float depth) {
+// Improved Caustics (GPU Gems inspired)
+// Simulates refracted light patterns on underwater surfaces
+vec3 calculateCaustics(vec2 worldPos, float depth, vec3 waterNormal) {
     if (u_CausticsEnabled == 0 || depth < 0.01) return vec3(0.0);
-    
+
+    // Base UV coordinates scaled by caustics scale
     vec2 causticsUV = worldPos * u_CausticsScale;
     float time = u_Time * u_CausticsSpeed;
-    
-    // Multiple overlapping caustic patterns with chromatic separation
-    float causticR = 0.0, causticG = 0.0, causticB = 0.0;
-    
-    for (int i = 0; i < 3; i++) {
-        float scale = 1.0 + float(i) * 0.5;
-        float offset = float(i) * 0.1;
-        
-        vec2 uv1 = causticsUV * scale + vec2(time * 0.3, time * 0.2);
-        vec2 uv2 = causticsUV * scale * 1.3 - vec2(time * 0.4, -time * 0.3);
-        
-        float c1 = sin(uv1.x * 10.0 + time) * sin(uv1.y * 10.0 - time * 0.7);
-        float c2 = sin(uv2.x * 8.0 - time * 0.5) * sin(uv2.y * 8.0 + time * 0.8);
-        
-        float c = pow(saturate((c1 + c2) * 0.5 + 0.5), 3.0);
-        
-        if (i == 0) causticR = c;
-        else if (i == 1) causticG = c;
-        else causticB = c;
+
+    // GPU Gems: Use water surface normal to simulate light refraction
+    // Light bends when passing from air (n=1.0) to water (n=1.33)
+    // The XZ components of the normal determine how much the light ray bends
+    // This creates the characteristic focusing/defocusing pattern of caustics
+    const float IOR_WATER = 1.33; // Index of refraction for water
+    const float IOR_AIR = 1.0;
+    float refractionRatio = IOR_AIR / IOR_WATER;
+
+    // Approximate refraction displacement using water normal
+    // Full Snell's law would require more complex ray tracing
+    vec2 refractionOffset = waterNormal.xz * u_CausticsDistortion * refractionRatio;
+
+    // RGB channels with chromatic separation (simulates light dispersion)
+    vec3 caustic = vec3(0.0);
+
+    // Multi-octave caustics for detail (GPU Gems technique)
+    int octaves = clamp(u_CausticsOctaves, 1, 6);
+
+    for (int oct = 0; oct < octaves; oct++) {
+        if (oct >= octaves) break; // Performance: skip unused iterations
+
+        float octaveScale = pow(2.0, float(oct));
+        float octaveWeight = 1.0 / octaveScale; // Lower octaves = more influence
+
+        // Chromatic separation: slight offset per channel
+        vec2 offsetR = vec2(0.0, 0.0);
+        vec2 offsetG = vec2(u_CausticsChromatic * 0.3, u_CausticsChromatic * 0.2);
+        vec2 offsetB = vec2(u_CausticsChromatic * 0.6, u_CausticsChromatic * 0.4);
+
+        // Two layers moving in different directions (GPU Gems technique)
+        for (int layer = 0; layer < 2; layer++) {
+            float layerAngle = float(layer) * 1.571 + float(oct) * 0.5; // π/2 rotation
+            float layerSpeed = (layer == 0) ? 1.0 : -0.7;
+
+            vec2 dir = vec2(cos(layerAngle), sin(layerAngle));
+            vec2 uvBase = causticsUV * octaveScale + dir * time * layerSpeed;
+
+            // Add distortion based on wave normals (GPU Gems: refraction effect)
+            // Combine refraction from water surface with animated procedural distortion
+            vec2 proceduralDistortion = vec2(
+                sin(uvBase.y * 6.0 + time * 0.5),
+                cos(uvBase.x * 6.0 - time * 0.3)
+            ) * 0.1 / octaveScale;
+
+            vec2 distortion = refractionOffset + proceduralDistortion;
+
+            // Sample caustic pattern for each channel with chromatic offset
+            vec2 uvR = uvBase + distortion + offsetR;
+            vec2 uvG = uvBase + distortion + offsetG;
+            vec2 uvB = uvBase + distortion + offsetB;
+
+            // Caustic pattern: based on GPU Gems intersection method
+            // Using trigonometric functions to simulate refracted light focusing
+            float patternR = abs(sin(uvR.x * 10.0) * sin(uvR.y * 10.0));
+            float patternG = abs(sin(uvG.x * 10.0) * sin(uvG.y * 10.0));
+            float patternB = abs(sin(uvB.x * 10.0) * sin(uvB.y * 10.0));
+
+            // Sharpen caustics (GPU Gems: focused light rays)
+            patternR = pow(patternR, u_CausticsSharpness);
+            patternG = pow(patternG, u_CausticsSharpness);
+            patternB = pow(patternB, u_CausticsSharpness);
+
+            // Accumulate with octave weight
+            caustic.r += patternR * octaveWeight;
+            caustic.g += patternG * octaveWeight;
+            caustic.b += patternB * octaveWeight;
+        }
     }
-    
-    // Fade with depth
-    float depthFade = exp(-depth * 0.2);
-    
-    return vec3(causticR, causticG, causticB) * u_CausticsIntensity * depthFade;
+
+    // Normalize by total weight (sum of 1 + 0.5 + 0.25 + ... for N octaves)
+    float totalWeight = (1.0 - pow(0.5, float(octaves))) / 0.5;
+    caustic /= totalWeight;
+
+    // Depth-based attenuation (GPU Gems: light absorption with depth)
+    float depthFade = exp(-depth * u_CausticsDepthFalloff);
+
+    // Apply brightness and intensity
+    caustic *= u_CausticsBrightness * u_CausticsIntensity * depthFade;
+
+    return saturate(caustic);
 }
 
 // Atmosphere approximation for reflection
@@ -309,16 +382,23 @@ void main()
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uCameraPos - vWorldPos);
     vec3 L = normalize(-uDirLightDirection);
-    
+
     // High-quality normal with detail
     if (u_NormalIterations > 0) {
         vec3 detailedN = calculateDetailedNormal(vWorldPos.xz, u_NormalEpsilon, u_NormalIterations);
         N = normalize(mix(N, detailedN, u_NormalStrength));
     }
-    
-    // Smooth normal with distance to reduce high-frequency noise
+
+    // Gentle normal smoothing with distance (reduced from 0.8 to 0.2 to avoid artifacts)
     float distToCamera = length(uCameraPos - vWorldPos);
-    N = mix(N, vec3(0.0, 1.0, 0.0), 0.8 * min(1.0, sqrt(distToCamera * 0.01) * 1.1));
+    float smoothFactor = 0.2 * saturate(distToCamera / 200.0); // Gradually smooth only at far distances
+    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), smoothFactor));
+
+    // Flip normal for back faces (when viewing from below water)
+    // gl_FrontFacing is true for front faces, false for back faces
+    if (!gl_FrontFacing) {
+        N = -N;
+    }
     
     // Screen UV for depth/refraction
     vec2 screenUV = (vScreenPos.xy / vScreenPos.w) * 0.5 + 0.5;
@@ -327,23 +407,41 @@ void main()
     // === DEPTH CALCULATION ===
     float waterDepth = gl_FragCoord.z;
     float sceneDepth = texture(u_DepthTex, screenUV).r;
-    
+
     float near = 0.1;
     float far = 1000.0;
-    float linearSceneDepth = linearizeDepth(sceneDepth, near, far);
-    float linearWaterDepth = linearizeDepth(waterDepth, near, far);
-    float depthDiff = max(0.0, linearSceneDepth - linearWaterDepth);
+    float depthDiff = 0.0; // Default: no geometry below (water surface)
+
+    // Only calculate depth if there's geometry below the water (like WaterForward)
+    if (sceneDepth > waterDepth)
+    {
+        float linearSceneDepth = linearizeDepth(sceneDepth, near, far);
+        float linearWaterDepth = linearizeDepth(waterDepth, near, far);
+        depthDiff = max(0.0, linearSceneDepth - linearWaterDepth);
+    }
     
     // === FRESNEL ===
     float fresnel = calculateFresnel(N, V);
     
+    // === ENVIRONMENT BRIGHTNESS ===
+    // Calculate overall scene brightness for physically correct water response
+    // Water reflections should be dark at night, bright during day
+    // Minimum 0.05 ensures water isn't completely black at night
+    float environmentBrightness = saturate(uDirLightIntensity + 0.05);
+
     // === WATER COLOR ===
     float depthFactor = saturate(depthDiff / u_ColorDepthFade);
     vec3 waterColor = mix(u_ShallowColor.rgb, u_DeepColor.rgb, depthFactor);
-    
+
     // Horizon tinting based on view angle
-    float horizonFactor = pow(1.0 - saturate(dot(V, vec3(0.0, 1.0, 0.0))), 2.0);
-    waterColor = mix(waterColor, u_HorizonColor.rgb, horizonFactor * 0.3);
+    // When looking horizontally at the water (grazing angle), show horizon color
+    // V.y close to 0 = looking horizontally = horizon visible
+    // V.y close to 1 = looking straight down = no horizon
+    float viewAngleY = abs(V.y); // How much looking up/down (0 = horizontal, 1 = straight down/up)
+    float horizonFactor = pow(1.0 - viewAngleY, 2.0); // Power 2 for more visible horizon
+    // Modulate horizon color by environment brightness (dark at night, bright during day)
+    vec3 horizonColor = u_HorizonColor.rgb * environmentBrightness;
+    waterColor = mix(waterColor, horizonColor, horizonFactor);
     
     // Absorption
     float absorptionFactor = exp(-depthDiff * u_AbsorptionStrength);
@@ -391,11 +489,16 @@ void main()
             // IBL reflection only
             reflectionColor = samplePrefilteredEnv(R, u_Roughness);
         }
-        
-        // Add atmosphere
-        vec3 atmosphere = cheapAtmosphere(R, L) * 0.5;
+
+        // Add atmosphere (modulated by light intensity - no atmosphere at night)
+        vec3 atmosphere = cheapAtmosphere(R, L) * 0.5 * uDirLightIntensity;
         reflectionColor += atmosphere;
-        
+
+        // Modulate reflections by environment brightness for physically correct behavior
+        // Reflections are dark at night (reflecting dark sky), bright during day
+        // Use minimum 0.15 to keep subtle night reflections (moon, stars) visible
+        reflectionColor *= saturate(uDirLightIntensity + 0.15);
+
         reflectionColor *= u_ReflectionIntensity;
     }
     
@@ -426,7 +529,24 @@ void main()
     }
     
     // === CAUSTICS ===
-    vec3 caustics = calculateCaustics(vWorldPos.xz, depthDiff);
+    // Reconstruct floor position for proper caustics projection
+    vec2 floorPosXZ = vWorldPos.xz;
+    if (depthDiff > 0.01) {
+        // Project caustics onto the floor, not the water surface
+        // Use view ray to find where the floor is in world space
+        // depthDiff is vertical distance, need to account for view angle
+        vec3 viewRay = -V; // Ray from surface towards floor (opposite of view direction)
+
+        // Distance along view ray to reach the floor
+        // depthDiff is the vertical (Y) distance between water and floor
+        // viewRay.y is the vertical component of the view direction
+        float rayDistance = depthDiff / max(abs(viewRay.y), 0.01); // Avoid division by zero
+
+        // Floor position in 3D world space
+        vec3 floorPos = vWorldPos + viewRay * rayDistance;
+        floorPosXZ = floorPos.xz;
+    }
+    vec3 caustics = calculateCaustics(floorPosXZ, depthDiff, N);
     
     // === CREST FOAM ===
     vec3 crestFoam = calculateCrestFoam(vWaveHeight, vUV);
@@ -441,16 +561,19 @@ void main()
     // === COMBINE ===
     // Base: mix refraction and water color
     vec3 finalColor = mix(refractionColor, waterColor, 0.3);
-    
+
     // Add subsurface scattering
     finalColor += sss * shadow * uDirLightIntensity;
-    
+
     // Add caustics
     finalColor += caustics * shadow;
-    
-    // Mix with reflection based on Fresnel
-    finalColor = mix(finalColor, reflectionColor, fresnel);
-    
+
+    // Mix with reflection based on Fresnel (modulated like WaterForward for realism)
+    // At grazing angles (high fresnel), more reflection visible
+    // At steep angles (low fresnel), less reflection visible (but always at least 20%)
+    float reflectionMix = saturate(fresnel * 0.8 + 0.2);
+    finalColor = mix(finalColor, reflectionColor, reflectionMix);
+
     // Add sun specular
     finalColor += sunColor * shadow;
     
@@ -460,9 +583,17 @@ void main()
     
     // === FOG ===
     finalColor = processFog(finalColor, vWorldPos);
-    
+
     // === OUTPUT ===
-    float alpha = saturate(u_ShallowColor.a + fresnel * 0.5);
+    // Calculate alpha with proper depth handling
+    // depthDiff = 0 when no geometry below (deep water/open ocean) -> should be opaque
+    // depthDiff > 0 when terrain below (shallow water) -> blend based on depth
+    float depthFade = saturate(depthDiff / u_ColorDepthFade);
+
+    // CORRECTED: When depthDiff = 0 (no terrain), use DeepColor.a (should be opaque)
+    // When depthDiff > 0 (terrain below), interpolate from shallow to deep
+    float baseAlpha = mix(u_DeepColor.a, u_ShallowColor.a, 1.0 - depthFade);
+    float alpha = saturate(baseAlpha + fresnel * 0.2); // Fresnel adds slight edge opacity
     
     // DEBUG: Uncomment to test basic rendering
     // outColor = vec4(0.2, 0.5, 0.8, 1.0); // Solid blue

@@ -463,8 +463,7 @@ namespace Editor.Panels
                             };
                             scene.Entities.Add(entity);
                             scene.Cache?.Invalidate();
-                            // Add TransformComponent first (required for rendering)
-                            entity.AddComponent<Engine.Components.TransformComponent>();
+                            // TransformComponent is automatically added by Entity constructor
                             entity.AddComponent<Engine.Components.WaterPlaneComponent>();
                             Selection.SetSingle(entity.Id);
                             EditorUI.MainViewport.UpdateGizmoPivot();

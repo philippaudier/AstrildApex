@@ -1,5 +1,5 @@
 using System;
-using System.Numerics;
+using OpenTK.Mathematics;
 
 namespace Engine.Components
 {
@@ -103,6 +103,12 @@ namespace Engine.Components
         [Serialization.SerializableAttribute("crestFoamScale")]
         public float CrestFoamScale { get; set; } = 5.0f; // Foam texture tiling
 
+        [Serialization.SerializableAttribute("crestFoamTextureGuid")]
+        public Guid? CrestFoamTextureGuid { get; set; } = null; // Foam texture (optional)
+
+        [Serialization.SerializableAttribute("crestFoamSpeed")]
+        public float CrestFoamSpeed { get; set; } = 0.1f; // Foam animation speed
+
         // === SUBSURFACE SCATTERING ===
 
         [Serialization.SerializableAttribute("sssEnabled")]
@@ -197,6 +203,24 @@ namespace Engine.Components
 
         [Serialization.SerializableAttribute("causticsSpeed")]
         public float CausticsSpeed { get; set; } = 1.0f;
+
+        [Serialization.SerializableAttribute("causticsOctaves")]
+        public int CausticsOctaves { get; set; } = 3; // Number of caustic layers (GPU Gems technique)
+
+        [Serialization.SerializableAttribute("causticsBrightness")]
+        public float CausticsBrightness { get; set; } = 1.0f; // Overall brightness multiplier
+
+        [Serialization.SerializableAttribute("causticsSharpness")]
+        public float CausticsSharpness { get; set; } = 3.0f; // Focus/sharpness (power function)
+
+        [Serialization.SerializableAttribute("causticsDistortion")]
+        public float CausticsDistortion { get; set; } = 0.5f; // Distortion based on water normals
+
+        [Serialization.SerializableAttribute("causticsDepthFalloff")]
+        public float CausticsDepthFalloff { get; set; } = 0.2f; // Depth attenuation rate
+
+        [Serialization.SerializableAttribute("causticsChromatic")]
+        public float CausticsChromatic { get; set; } = 0.05f; // RGB color separation
 
         // === REFRACTION ===
 
@@ -423,7 +447,7 @@ namespace Engine.Components
         public Vector2 GetWaveDirection()
         {
             var dir = new Vector2(WaveDirectionX, WaveDirectionZ);
-            float len = dir.Length();
+            float len = dir.Length;
             if (len < 0.001f) return new Vector2(1.0f, 0.0f);
             return dir / len;
         }

@@ -247,8 +247,7 @@ namespace Engine.Rendering
                 GL.Enable(EnableCap.DepthTest);
                 GL.DepthFunc(DepthFunction.Lequal);
                 GL.DepthMask(false); // Don't write to depth for transparent water
-                GL.Enable(EnableCap.CullFace);
-                GL.CullFace(TriangleFace.Back);
+                GL.Disable(EnableCap.CullFace); // Double-sided rendering (visible from below and above)
 
                 // Bind mesh
                 GL.BindVertexArray(mesh.Vao);
@@ -376,6 +375,18 @@ namespace Engine.Rendering
             shader.SetFloat("u_CrestFoamIntensity", water.CrestFoamIntensity);
             shader.SetVec4("u_CrestFoamColor", new Vector4(water.CrestFoamColor.X, water.CrestFoamColor.Y, water.CrestFoamColor.Z, water.CrestFoamColor.W));
             shader.SetFloat("u_CrestFoamScale", water.CrestFoamScale);
+            shader.SetFloat("u_CrestFoamSpeed", water.CrestFoamSpeed);
+
+            // Foam texture (unit 13) - optional
+            int foamTexture = 0;
+            if (water.CrestFoamTextureGuid.HasValue && water.CrestFoamTextureGuid.Value != Guid.Empty)
+            {
+                foamTexture = TextureCache.GetOrLoad(
+                    water.CrestFoamTextureGuid.Value,
+                    guid => Engine.Assets.AssetDatabase.TryGet(guid, out var r) ? r.Path : null
+                );
+            }
+            shader.SetInt("u_UseFoamTexture", foamTexture > 0 ? 1 : 0);
 
             // === SPECULAR ===
             shader.SetFloat("u_SpecularIntensity", water.SpecularIntensity);
@@ -404,6 +415,12 @@ namespace Engine.Rendering
             shader.SetFloat("u_CausticsIntensity", water.CausticsIntensity);
             shader.SetFloat("u_CausticsScale", water.CausticsScale);
             shader.SetFloat("u_CausticsSpeed", water.CausticsSpeed);
+            shader.SetInt("u_CausticsOctaves", water.CausticsOctaves);
+            shader.SetFloat("u_CausticsBrightness", water.CausticsBrightness);
+            shader.SetFloat("u_CausticsSharpness", water.CausticsSharpness);
+            shader.SetFloat("u_CausticsDistortion", water.CausticsDistortion);
+            shader.SetFloat("u_CausticsDepthFalloff", water.CausticsDepthFalloff);
+            shader.SetFloat("u_CausticsChromatic", water.CausticsChromatic);
 
             // === ABSORPTION ===
             shader.SetVec3("u_AbsorptionColor", new Vector3(water.AbsorptionColor.X, water.AbsorptionColor.Y, water.AbsorptionColor.Z));
@@ -429,6 +446,11 @@ namespace Engine.Rendering
             GL.ActiveTexture(TextureUnit.Texture12);
             GL.BindTexture(TextureTarget.Texture2D, reflectionTexture);
             shader.SetInt("u_PlanarReflectionTex", 12);
+
+            // Foam texture (unit 13) - optional
+            GL.ActiveTexture(TextureUnit.Texture13);
+            GL.BindTexture(TextureTarget.Texture2D, foamTexture);
+            shader.SetInt("u_FoamTex", 13);
 
             GL.ActiveTexture(TextureUnit.Texture0);
         }

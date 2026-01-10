@@ -3,6 +3,7 @@ using ImGuiNET;
 using Engine.Components;
 using Editor.UI;
 using Numerics = System.Numerics;
+using OpenTK.Mathematics;
 
 namespace Editor.Inspector
 {
@@ -299,31 +300,31 @@ namespace Editor.Inspector
             if (ThemedImGui.CollapsingHeader("Water Colors", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 var shallowColor = new Numerics.Vector4(
-                    water.ShallowColor.X, water.ShallowColor.Y, 
+                    water.ShallowColor.X, water.ShallowColor.Y,
                     water.ShallowColor.Z, water.ShallowColor.W);
                 if (ImGui.ColorEdit4("Shallow Color", ref shallowColor))
                 {
-                    water.ShallowColor = new System.Numerics.Vector4(
+                    water.ShallowColor = new Vector4(
                         shallowColor.X, shallowColor.Y, shallowColor.Z, shallowColor.W);
                     changed = true;
                 }
 
                 var deepColor = new Numerics.Vector4(
-                    water.DeepColor.X, water.DeepColor.Y, 
+                    water.DeepColor.X, water.DeepColor.Y,
                     water.DeepColor.Z, water.DeepColor.W);
                 if (ImGui.ColorEdit4("Deep Color", ref deepColor))
                 {
-                    water.DeepColor = new System.Numerics.Vector4(
+                    water.DeepColor = new Vector4(
                         deepColor.X, deepColor.Y, deepColor.Z, deepColor.W);
                     changed = true;
                 }
 
                 var horizonColor = new Numerics.Vector4(
-                    water.HorizonColor.X, water.HorizonColor.Y, 
+                    water.HorizonColor.X, water.HorizonColor.Y,
                     water.HorizonColor.Z, water.HorizonColor.W);
                 if (ImGui.ColorEdit4("Horizon Color", ref horizonColor))
                 {
-                    water.HorizonColor = new System.Numerics.Vector4(
+                    water.HorizonColor = new Vector4(
                         horizonColor.X, horizonColor.Y, horizonColor.Z, horizonColor.W);
                     changed = true;
                 }
@@ -378,7 +379,7 @@ namespace Editor.Inspector
                         water.SSSColor.X, water.SSSColor.Y, water.SSSColor.Z);
                     if (ImGui.ColorEdit3("SSS Color", ref sssColor))
                     {
-                        water.SSSColor = new System.Numerics.Vector3(sssColor.X, sssColor.Y, sssColor.Z);
+                        water.SSSColor = new Vector3(sssColor.X, sssColor.Y, sssColor.Z);
                         changed = true;
                     }
 
@@ -433,11 +434,11 @@ namespace Editor.Inspector
                     }
 
                     var foamColor = new Numerics.Vector4(
-                        water.CrestFoamColor.X, water.CrestFoamColor.Y, 
+                        water.CrestFoamColor.X, water.CrestFoamColor.Y,
                         water.CrestFoamColor.Z, water.CrestFoamColor.W);
                     if (ImGui.ColorEdit4("Foam Color", ref foamColor))
                     {
-                        water.CrestFoamColor = new System.Numerics.Vector4(
+                        water.CrestFoamColor = new Vector4(
                             foamColor.X, foamColor.Y, foamColor.Z, foamColor.W);
                         changed = true;
                     }
@@ -446,6 +447,27 @@ namespace Editor.Inspector
                     if (ImGui.DragFloat("Foam Scale", ref foamScale, 0.1f, 0.1f, 20.0f))
                     {
                         water.CrestFoamScale = foamScale;
+                        changed = true;
+                    }
+
+                    float foamSpeed = water.CrestFoamSpeed;
+                    if (ImGui.DragFloat("Foam Speed", ref foamSpeed, 0.01f, 0.0f, 2.0f))
+                    {
+                        water.CrestFoamSpeed = foamSpeed;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Animation speed for foam texture");
+
+                    var newFoamTexture = EditorWidgets.AssetField(
+                        "Foam Texture",
+                        water.CrestFoamTextureGuid,
+                        "Texture",
+                        "Optional foam texture (uses procedural if not set)",
+                        showPreview: true);
+
+                    if (newFoamTexture != water.CrestFoamTextureGuid)
+                    {
+                        water.CrestFoamTextureGuid = newFoamTexture;
                         changed = true;
                     }
                 }
@@ -590,6 +612,59 @@ namespace Editor.Inspector
                         water.CausticsSpeed = causticsSpeed;
                         changed = true;
                     }
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Text("Advanced Caustics (GPU Gems)");
+                    ImGui.Spacing();
+
+                    int causticsOctaves = water.CausticsOctaves;
+                    if (ImGui.SliderInt("Octaves", ref causticsOctaves, 1, 6))
+                    {
+                        water.CausticsOctaves = causticsOctaves;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Number of caustic layers (quality vs performance)");
+
+                    float causticsBrightness = water.CausticsBrightness;
+                    if (ImGui.SliderFloat("Brightness", ref causticsBrightness, 0.0f, 3.0f))
+                    {
+                        water.CausticsBrightness = causticsBrightness;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Overall brightness multiplier");
+
+                    float causticsSharpness = water.CausticsSharpness;
+                    if (ImGui.SliderFloat("Sharpness", ref causticsSharpness, 1.0f, 10.0f))
+                    {
+                        water.CausticsSharpness = causticsSharpness;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Focus/sharpness (higher = sharper caustics)");
+
+                    float causticsDistortion = water.CausticsDistortion;
+                    if (ImGui.SliderFloat("Distortion", ref causticsDistortion, 0.0f, 2.0f))
+                    {
+                        water.CausticsDistortion = causticsDistortion;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Wave-based distortion strength");
+
+                    float causticsDepthFalloff = water.CausticsDepthFalloff;
+                    if (ImGui.SliderFloat("Depth Falloff", ref causticsDepthFalloff, 0.0f, 1.0f))
+                    {
+                        water.CausticsDepthFalloff = causticsDepthFalloff;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("How quickly caustics fade with depth");
+
+                    float causticsChromatic = water.CausticsChromatic;
+                    if (ImGui.SliderFloat("Chromatic Separation", ref causticsChromatic, 0.0f, 0.2f))
+                    {
+                        water.CausticsChromatic = causticsChromatic;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("RGB color separation for realism");
                 }
             }
 
@@ -600,7 +675,7 @@ namespace Editor.Inspector
                     water.AbsorptionColor.X, water.AbsorptionColor.Y, water.AbsorptionColor.Z);
                 if (ImGui.ColorEdit3("Absorption Color", ref absColor))
                 {
-                    water.AbsorptionColor = new System.Numerics.Vector3(absColor.X, absColor.Y, absColor.Z);
+                    water.AbsorptionColor = new Vector3(absColor.X, absColor.Y, absColor.Z);
                     changed = true;
                 }
                 ImGui.TextDisabled("Color absorbed by water with depth");

@@ -3432,6 +3432,24 @@ void main(){
                 if (waterPlane != null && waterPlane.Enabled)
                 {
                     var worldPos = entity.Transform.GetWorldPosition();
+
+                    // Update reflection parameters from WaterPlaneComponent
+                    int newResolution = waterPlane.ReflectionResolution;
+                    float newOffset = 0.05f; // Default offset, WaterPlaneComponent doesn't expose this yet
+
+                    // Check if resolution changed - need to recreate FBO
+                    bool resolutionChanged = (newResolution != _cachedReflectionResolution);
+
+                    _cachedClipPlaneOffset = newOffset;
+                    _cachedReflectionResolution = newResolution;
+                    _cachedWaterPlaneHeight = worldPos.Y;
+
+                    // Recreate reflection FBO if resolution changed
+                    if (resolutionChanged)
+                    {
+                        try { InitReflectionFramebuffer(); } catch { }
+                    }
+
                     return worldPos.Y;
                 }
             }
@@ -7108,8 +7126,8 @@ void main(){
             {
                 if (_reflectionFbo != 0)
                 {
-                    // Find the actual water plane height from the scene
-                    float waterLevel = GetWaterPlaneHeight();
+                    // Find the actual water plane height from the scene (supports both WaterPlaneComponent and WaterForward)
+                    float waterLevel = FindWaterPlaneHeight(_scene);
 
                     // Render every frame for now (could be throttled later)
                     RenderReflectionPass(waterLevel);
@@ -7203,6 +7221,10 @@ void main(){
                         _pbrShader.SetFloat("u_SnowSparkle", snowSparkle);
                         _pbrShader.SetFloat("u_SnowDisplacement", snowDisplacement);
                         _pbrShader.SetFloat("u_DisableSnowDisplacement", 1.0f); // Disable displacement for ForwardBase (FPS arms, etc.)
+
+                        // CRITICAL: Set LOD transition to 1.0 (fully opaque) for non-LOD objects
+                        // Without this, u_LodTransition defaults to 0.0 and causes dithering artifacts
+                        _pbrShader.SetFloat("u_LodTransition", 1.0f);
 
                         // Load and bind snow material if assigned
                         if (weather.SnowMapMaterial.HasValue)
