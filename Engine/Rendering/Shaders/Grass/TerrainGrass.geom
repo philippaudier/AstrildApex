@@ -31,6 +31,12 @@ uniform float u_Density;
 uniform float u_CoverageNoiseScale;
 uniform float u_CoverageThreshold;
 
+// Slope & Height constraints
+uniform float u_MinSlopeY;   // cos(maxSlope) - lower Y normal = steeper
+uniform float u_MaxSlopeY;   // cos(minSlope) - higher Y normal = flatter
+uniform float u_MinHeight;
+uniform float u_MaxHeight;
+
 // Colors
 uniform vec4 u_ColorTop;
 uniform vec4 u_ColorBottom;
@@ -218,8 +224,12 @@ void main()
     // Calculate average normal
     vec3 avgNormal = normalize(gs_in[0].normal + gs_in[1].normal + gs_in[2].normal);
     
-    // Skip steep slopes (grass doesn't grow on cliffs)
-    if (avgNormal.y < 0.4) return;
+    // Skip based on slope (normal.y is cos of angle from vertical)
+    // u_MinSlopeY = cos(maxSlope), u_MaxSlopeY = cos(minSlope)
+    if (avgNormal.y < u_MinSlopeY || avgNormal.y > u_MaxSlopeY) return;
+    
+    // Skip based on height
+    if (triCenter.y < u_MinHeight || triCenter.y > u_MaxHeight) return;
     
     // Distance-based LOD culling (skip entire triangle if too far)
     float distToCamera = length(triCenter - uCameraPos);
@@ -264,8 +274,8 @@ void main()
         vec2 jitter = (hash2(seed + 0.5) - 0.5) * 0.2;
         bladePos.xz += jitter;
         
-        // Skip if on steep slope at this specific point
-        if (bladeNormal.y < 0.35) continue;
+        // Skip if slope out of range at this specific point
+        if (bladeNormal.y < u_MinSlopeY || bladeNormal.y > u_MaxSlopeY) continue;
         
         // Random rotation for each blade
         float angle = hash(seed) * 6.28318; // 2*PI

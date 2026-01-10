@@ -220,6 +220,19 @@ namespace Engine.Rendering
                 _grassShader.SetFloat("u_CoverageNoiseScale", props.CoverageNoiseScale);
                 _grassShader.SetFloat("u_CoverageThreshold", props.CoverageThreshold);
 
+                // Slope constraints (convert degrees to cos for shader comparison with normal.y)
+                // normal.y = cos(slopeAngle), so:
+                // - minSlope 0° → cos(0) = 1.0 (flat)
+                // - maxSlope 90° → cos(90) = 0.0 (vertical)
+                float minSlopeY = (float)Math.Cos(props.MaxSlope * Math.PI / 180.0); // cos(maxSlope) = min Y
+                float maxSlopeY = (float)Math.Cos(props.MinSlope * Math.PI / 180.0); // cos(minSlope) = max Y
+                _grassShader.SetFloat("u_MinSlopeY", minSlopeY);
+                _grassShader.SetFloat("u_MaxSlopeY", maxSlopeY);
+
+                // Height constraints
+                _grassShader.SetFloat("u_MinHeight", props.MinHeight);
+                _grassShader.SetFloat("u_MaxHeight", props.MaxHeight);
+
                 // Colors
                 _grassShader.SetVec4("u_ColorTop", new Vector4(props.ColorTop[0], props.ColorTop[1], props.ColorTop[2], 1.0f));
                 _grassShader.SetVec4("u_ColorBottom", new Vector4(props.ColorBottom[0], props.ColorBottom[1], props.ColorBottom[2], 1.0f));

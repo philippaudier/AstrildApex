@@ -249,6 +249,19 @@ namespace Engine.Assets
         [Engine.Serialization.SerializableAttribute("coverageThreshold")]
         public float CoverageThreshold { get; set; } = 0.2f; // 0-1, lower = fuller coverage, higher = sparser patches
 
+        // === SLOPE & HEIGHT CONSTRAINTS ===
+        [Engine.Serialization.SerializableAttribute("minSlope")]
+        public float MinSlope { get; set; } = 0.0f; // Minimum slope angle in degrees (0 = flat)
+
+        [Engine.Serialization.SerializableAttribute("maxSlope")]
+        public float MaxSlope { get; set; } = 45.0f; // Maximum slope angle in degrees (90 = vertical)
+
+        [Engine.Serialization.SerializableAttribute("minHeight")]
+        public float MinHeight { get; set; } = -1000.0f; // Minimum world height for grass
+
+        [Engine.Serialization.SerializableAttribute("maxHeight")]
+        public float MaxHeight { get; set; } = 1000.0f; // Maximum world height for grass
+
         // === GRASS BLADE GEOMETRY ===
         [Engine.Serialization.SerializableAttribute("bladeHeight")]
         public float BladeHeight { get; set; } = 0.4f; // Height of grass blades in world units

@@ -334,6 +334,53 @@ namespace Editor.Inspector
                     ImGui.TreePop();
                 }
 
+                // Slope & Height Constraints
+                if (ImGui.TreeNode("Slope & Height"))
+                {
+                    ImGui.Text("Slope Range (degrees)");
+                    
+                    float slopeMin = grass.MinSlope;
+                    if (ImGui.SliderFloat("Min Slope", ref slopeMin, 0.0f, 89.0f))
+                    {
+                        grass.MinSlope = slopeMin;
+                        if (grass.MaxSlope < slopeMin) grass.MaxSlope = slopeMin;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Minimum slope angle (0 = flat ground)");
+
+                    float slopeMax = grass.MaxSlope;
+                    if (ImGui.SliderFloat("Max Slope", ref slopeMax, 0.0f, 89.0f))
+                    {
+                        grass.MaxSlope = slopeMax;
+                        if (grass.MinSlope > slopeMax) grass.MinSlope = slopeMax;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Maximum slope angle (90 = vertical cliff)");
+
+                    ImGui.Separator();
+                    ImGui.Text("Height Range (world units)");
+
+                    float heightMin = grass.MinHeight;
+                    if (ImGui.DragFloat("Min Height", ref heightMin, 1.0f, -1000.0f, 1000.0f))
+                    {
+                        grass.MinHeight = heightMin;
+                        if (grass.MaxHeight < heightMin) grass.MaxHeight = heightMin;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Minimum world Y for grass placement");
+
+                    float heightMax = grass.MaxHeight;
+                    if (ImGui.DragFloat("Max Height", ref heightMax, 1.0f, -1000.0f, 1000.0f))
+                    {
+                        grass.MaxHeight = heightMax;
+                        if (grass.MinHeight > heightMax) grass.MinHeight = heightMax;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Maximum world Y for grass placement");
+
+                    ImGui.TreePop();
+                }
+
                 // Blade Geometry
                 if (ImGui.TreeNode("Blade Geometry"))
                 {
