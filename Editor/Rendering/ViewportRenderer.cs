@@ -331,9 +331,10 @@ namespace Editor.Rendering
             public Vector3 SkyboxTint; public float SkyboxExposure;
 
             // === FOG (from WeatherComponent) ===
-            public int FogEnabled; public float FogDensity; private float _pad13; private float _pad14;
+            public int FogEnabled; public float FogDensity; public float FogOpacity; public float FogNoiseScale;
             public Vector3 FogColor; public float FogStart;
-            public float FogEnd; private Vector3 _pad15;
+            public float FogEnd; public float FogNoiseSpeed; public float FogLayerHeight; public float FogThickness;
+            public int FogFBMOctaves; public float FogFBMLacunarity; public float FogFBMGain; public float FogScattering;
 
             // === CLIP PLANE ===
             public float ClipPlaneEnabled; private float _pad16; private float _pad17; private float _pad18;
@@ -3309,12 +3310,21 @@ void main(){
 
                         // PERFORMANCE: Use component cache instead of FirstOrDefault + LINQ
                         Engine.Components.EnvironmentSettings? env = null;
-                        if (_scene.Cache != null)
+                        if (_scene?.Cache != null)
                         {
                             var envEntities = _scene.Cache.GetEntitiesWithComponent<Engine.Components.EnvironmentSettings>();
-                            env = envEntities.Count > 0 ? envEntities[0].GetComponent<Engine.Components.EnvironmentSettings>() : null;
+                            if (envEntities != null && envEntities.Count > 0)
+                            {
+                                var entity = envEntities[0];
+                                if (entity != null)
+                                {
+                                    env = entity.GetComponent<Engine.Components.EnvironmentSettings>();
+                                }
+                            }
                         }
-                        var skyTint = env != null ? new OpenTK.Mathematics.Vector3(env.SkyboxTint[0], env.SkyboxTint[1], env.SkyboxTint[2]) : OpenTK.Mathematics.Vector3.One;
+                        var skyTint = env != null 
+                            ? new OpenTK.Mathematics.Vector3(env.SkyboxTint[0], env.SkyboxTint[1], env.SkyboxTint[2]) 
+                            : OpenTK.Mathematics.Vector3.One;
                         var skyExposure = env?.SkyboxExposure ?? 1.0f;
 
                         _skyboxRenderer.Render(viewMatrix, projMatrix, skyTint, skyExposure);
@@ -4799,7 +4809,7 @@ void main(){
                                 }
                                 else
                                 {
-                                    _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                                    _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env?.SkyboxExposure ?? 1.0f);
                                 }
                                 skyboxRendered = true;
                             }
@@ -4824,7 +4834,7 @@ void main(){
                             }
                             else
                             {
-                                _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env.SkyboxExposure);
+                                _skyboxRenderer.RenderWithMaterial(viewMat, projMat, sky, envTint, env?.SkyboxExposure ?? 1.0f);
                             }
                             skyboxRendered = true;
                         }
@@ -6326,6 +6336,16 @@ void main(){
             _globalUniforms.FogColor = lighting.FogColor;
             _globalUniforms.FogStart = lighting.FogStart;
             _globalUniforms.FogEnd = lighting.FogEnd;
+            _globalUniforms.FogDensity = lighting.FogDensity;
+            _globalUniforms.FogOpacity = lighting.FogOpacity;
+            _globalUniforms.FogNoiseScale = lighting.FogNoiseScale;
+            _globalUniforms.FogNoiseSpeed = lighting.FogNoiseSpeed;
+            _globalUniforms.FogLayerHeight = lighting.FogLayerHeight;
+            _globalUniforms.FogThickness = lighting.FogThickness;
+            _globalUniforms.FogFBMOctaves = lighting.FogFBMOctaves;
+            _globalUniforms.FogFBMLacunarity = lighting.FogFBMLacunarity;
+            _globalUniforms.FogFBMGain = lighting.FogFBMGain;
+            _globalUniforms.FogScattering = lighting.FogScattering;
             
             // CRITICAL: Update weather parameters from WeatherManager
             var weather = Engine.Systems.WeatherManager.GetCurrentWeather();

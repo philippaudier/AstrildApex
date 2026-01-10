@@ -389,6 +389,16 @@ namespace Engine.Rendering
             }
             shader.SetInt("u_UseFoamTexture", foamTexture > 0 ? 1 : 0);
 
+            // === SHORE FOAM ===
+            shader.SetInt("u_ShoreFoamEnabled", water.ShoreFoamEnabled ? 1 : 0);
+            shader.SetFloat("u_ShoreFoamDepth", water.ShoreFoamDepth);
+            shader.SetFloat("u_ShoreFoamIntensity", water.ShoreFoamIntensity);
+            shader.SetVec4("u_ShoreFoamColor", new Vector4(water.ShoreFoamColor.X, water.ShoreFoamColor.Y, water.ShoreFoamColor.Z, water.ShoreFoamColor.W));
+            shader.SetFloat("u_ShoreFoamScale", water.ShoreFoamScale);
+            shader.SetFloat("u_ShoreFoamSpeed", water.ShoreFoamSpeed);
+            shader.SetFloat("u_ShoreFoamFade", water.ShoreFoamFade);
+            shader.SetFloat("u_ShoreFoamEdgeSharpness", water.ShoreFoamEdgeSharpness);
+
             // === SPECULAR ===
             shader.SetFloat("u_SpecularIntensity", water.SpecularIntensity);
             shader.SetFloat("u_SpecularPower", water.SpecularPower);

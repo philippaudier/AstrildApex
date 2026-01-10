@@ -33,9 +33,10 @@ layout(std140, binding=0) uniform Global {
     vec3 uSkyboxTint; float uSkyboxExposure;
 
     // === FOG (from WeatherComponent) ===
-    int uFogEnabled; float uFogDensity; float _pad13; float _pad14;
+    int uFogEnabled; float uFogDensity; float uFogOpacity; float uFogNoiseScale;
     vec3 uFogColor; float uFogStart;
-    float uFogEnd; vec3 _pad15;
+    float uFogEnd; float uFogNoiseSpeed; float uFogLayerHeight; float uFogThickness;
+    int uFogFBMOctaves; float uFogFBMLacunarity; float uFogFBMGain; float uFogScattering;
 
     // === CLIP PLANE ===
     float uClipPlaneEnabled; float _pad16; float _pad17; float _pad18;

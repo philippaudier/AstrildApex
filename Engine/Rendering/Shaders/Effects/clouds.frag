@@ -19,6 +19,7 @@ out vec4 FragColor;
 // Cloud uniforms
 uniform float uCloudCoverage;      // 0-1: cloud coverage amount
 uniform float uCloudDensity;       // 0-1: opacity/thickness
+uniform float uCloudOpacity;       // 0-1: overall opacity multiplier
 uniform int uCloudType;            // 0=cirrus, 1=cumulus, 2=stratus, 3=storm
 uniform vec3 uCloudWindOffset;     // XYZ offset for animation (accumulated over time)
 uniform float uCloudScattering;    // Sun scattering intensity
@@ -26,6 +27,7 @@ uniform vec3 uCloudSunDir;         // Direction to sun
 uniform vec3 uCloudSunColor;       // Sun color
 uniform float uCloudSunIntensity;  // Sun/Moon light intensity (brightness)
 uniform float uCloudAmbient;       // Ambient light contribution
+uniform float uCloudSpeed;         // Animation speed multiplier
 uniform float uCloudDetailSpeed;   // Detail animation speed for organic shape changes
 uniform sampler2D uDitheringTex;   // Dithering texture for smooth gradients
 
@@ -34,6 +36,7 @@ uniform float uCloudNoiseScale;    // Global noise scale multiplier
 uniform float uCloudMorphSpeed;    // Organic morphing speed
 uniform float uCloudEdgeSoftness;  // Edge softness/hardness
 uniform float uCloudBillowiness;   // Cotton/billowy appearance strength
+uniform float uCloudTurbulence;    // Shape distortion/turbulence over time
 uniform float uCloudDetailStrength;// Fine detail strength
 
 // === DUAL-LAYER SCROLLING NOISE PARAMETERS ===
@@ -198,25 +201,43 @@ void main() {
 
         // === ORGANIC SHAPE EVOLUTION ===
         // Add time-based distortion for evolving cloud shapes on both layers
+        // Use uCloudDetailSpeed for secondary layer evolution speed
         float timeOffset = uTime * uCloudMorphSpeed * 0.1;
+        float detailTimeOffset = uTime * uCloudDetailSpeed * 0.15;
 
+        // Add turbulence factor for chaotic distortion
+        float turbulenceTime = uTime * uCloudTurbulence * 0.2;
+        
         // Distort UV1 (primary layer) with animated noise for organic movement
-        float distortionStrength1 = 0.15 * uCloudMorphSpeed;
+        // Add turbulence to create more chaotic, evolving shapes
+        float distortionStrength1 = 0.25 * uCloudMorphSpeed; // Increased from 0.15 for more visible morphing
+        vec2 turbulence1 = vec2(
+            perlinNoise2D(uv1 * 1.5 + vec2(turbulenceTime * 0.5, -turbulenceTime * 0.4), 3.0),
+            perlinNoise2D(uv1 * 1.5 + vec2(-turbulenceTime * 0.45, turbulenceTime * 0.5), 3.0)
+        );
+        turbulence1 = (turbulence1 - 0.5) * 0.15 * uCloudTurbulence;
+        
         vec2 distortion1 = vec2(
             perlinNoise2D(uv1 * 0.5 + vec2(timeOffset * 0.3, timeOffset * 0.2), 2.0),
             perlinNoise2D(uv1 * 0.5 + vec2(timeOffset * 0.2, -timeOffset * 0.3), 2.0)
         );
         distortion1 = (distortion1 - 0.5) * distortionStrength1;
-        vec2 animatedUV1 = uv1 + distortion1;
+        vec2 animatedUV1 = uv1 + distortion1 + turbulence1;
 
-        // Distort UV2 (secondary layer) with different parameters for independent motion
-        float distortionStrength2 = 0.2 * uCloudMorphSpeed;
+        // Distort UV2 (secondary layer) with different parameters and detail speed for independent motion
+        float distortionStrength2 = 0.3 * uCloudDetailSpeed; // Use detail speed here
+        vec2 turbulence2 = vec2(
+            perlinNoise2D(uv2 * 1.8 + vec2(-turbulenceTime * 0.6, turbulenceTime * 0.5), 3.5),
+            perlinNoise2D(uv2 * 1.8 + vec2(turbulenceTime * 0.55, -turbulenceTime * 0.6), 3.5)
+        );
+        turbulence2 = (turbulence2 - 0.5) * 0.18 * uCloudTurbulence;
+        
         vec2 distortion2 = vec2(
-            perlinNoise2D(uv2 * 0.6 + vec2(timeOffset * 0.4, -timeOffset * 0.25), 2.5),
-            perlinNoise2D(uv2 * 0.6 + vec2(-timeOffset * 0.35, timeOffset * 0.3), 2.5)
+            perlinNoise2D(uv2 * 0.6 + vec2(detailTimeOffset * 0.4, -detailTimeOffset * 0.25), 2.5),
+            perlinNoise2D(uv2 * 0.6 + vec2(-detailTimeOffset * 0.35, detailTimeOffset * 0.3), 2.5)
         );
         distortion2 = (distortion2 - 0.5) * distortionStrength2;
-        vec2 animatedUV2 = uv2 + distortion2;
+        vec2 animatedUV2 = uv2 + distortion2 + turbulence2;
 
         // === ADVANCED FBM WITH CONFIGURABLE PARAMETERS ===
         // Prepare noise parameters struct for advanced cloud generation
@@ -257,6 +278,23 @@ void main() {
                        sin(timeOffset * 0.5) * 0.1 * uCloudMorphSpeed;
         noise += breathe;
 
+        // === BILLOWINESS (Cotton/Fluffy Appearance) ===
+        // Add billowy/puffy detail to make clouds look more cotton-like
+        if (uCloudBillowiness > 0.01) {
+            // Multi-scale billowy noise for fluffy appearance
+            vec2 billowUV = animatedUV1 * 2.5;
+            float billow1 = perlinNoise2D(billowUV + vec2(timeOffset * 0.15), 2.0);
+            float billow2 = perlinNoise2D(billowUV * 1.7 + vec2(-timeOffset * 0.12, timeOffset * 0.18), 1.5);
+            
+            // Combine billowy layers
+            float billowPattern = (billow1 * 0.6 + billow2 * 0.4);
+            
+            // Apply billowiness as additive puffiness (creates rounded bulges)
+            // More billowiness = more puffy/cotton-like
+            float billowContribution = billowPattern * uCloudBillowiness * 0.3;
+            noise = saturate(noise + billowContribution * noise); // Amplify existing clouds
+        }
+
         // Clamp and ensure valid range
         noise = saturate(noise);
 
@@ -279,6 +317,9 @@ void main() {
 
         // Apply overall density control
         alpha *= uCloudDensity;
+        
+        // Apply overall opacity multiplier
+        alpha *= uCloudOpacity;
 
         // Skip if this layer contributes nothing
         if (alpha < 0.01) {

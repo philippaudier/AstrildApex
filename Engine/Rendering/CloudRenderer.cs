@@ -101,10 +101,12 @@ namespace Engine.Rendering
             // Set cloud parameters (uniforms NOT in Global UBO)
             _cloudShader.SetFloat("uCloudCoverage", weather.CloudCoverage);
             _cloudShader.SetFloat("uCloudDensity", weather.CloudDensity);
+            _cloudShader.SetFloat("uCloudOpacity", weather.CloudOpacity);
             _cloudShader.SetInt("uCloudType", (int)weather.CloudType);
             _cloudShader.SetVec3("uCloudWindOffset", _windOffset);
             _cloudShader.SetFloat("uCloudScattering", weather.CloudScattering);
             _cloudShader.SetFloat("uCloudAmbient", weather.CloudAmbient);
+            _cloudShader.SetFloat("uCloudSpeed", weather.CloudSpeed);
             _cloudShader.SetFloat("uCloudDetailSpeed", weather.CloudDetailSpeed);
 
             // Set fine-tune parameters
@@ -112,19 +114,20 @@ namespace Engine.Rendering
             _cloudShader.SetFloat("uCloudMorphSpeed", weather.CloudMorphSpeed);
             _cloudShader.SetFloat("uCloudEdgeSoftness", weather.CloudEdgeSoftness);
             _cloudShader.SetFloat("uCloudBillowiness", weather.CloudBillowiness);
+            _cloudShader.SetFloat("uCloudTurbulence", weather.CloudTurbulence);
             _cloudShader.SetFloat("uCloudDetailStrength", weather.CloudDetailStrength);
 
             // === SET DUAL-LAYER SCROLLING NOISE PARAMETERS ===
             // Layer 1: Primary noise layer
             _cloudShader.SetFloat("uNoiseLayer1Speed", weather.NoiseLayer1Speed);
             var layer1Dir = weather.GetNoiseLayer1Direction();
-            _cloudShader.SetVec2("uNoiseLayer1Direction", layer1Dir);
+            _cloudShader.SetVec2("uNoiseLayer1Direction", new Vector2(layer1Dir.X, layer1Dir.Y));
             _cloudShader.SetFloat("uNoiseLayer1Scale", weather.NoiseLayer1Scale);
 
             // Layer 2: Secondary noise layer
             _cloudShader.SetFloat("uNoiseLayer2Speed", weather.NoiseLayer2Speed);
             var layer2Dir = weather.GetNoiseLayer2Direction();
-            _cloudShader.SetVec2("uNoiseLayer2Direction", layer2Dir);
+            _cloudShader.SetVec2("uNoiseLayer2Direction", new Vector2(layer2Dir.X, layer2Dir.Y));
             _cloudShader.SetFloat("uNoiseLayer2Scale", weather.NoiseLayer2Scale);
 
             // === SET FBM PARAMETERS ===

@@ -473,6 +473,78 @@ namespace Editor.Inspector
                 }
             }
 
+            // === SHORE FOAM ===
+            if (ThemedImGui.CollapsingHeader("Shore Foam"))
+            {
+                bool shoreFoamEnabled = water.ShoreFoamEnabled;
+                if (ImGui.Checkbox("Enable Shore Foam", ref shoreFoamEnabled))
+                {
+                    water.ShoreFoamEnabled = shoreFoamEnabled;
+                    changed = true;
+                }
+                ImGui.TextDisabled("Foam in shallow water near shorelines");
+
+                if (water.ShoreFoamEnabled)
+                {
+                    float shoreFoamDepth = water.ShoreFoamDepth;
+                    if (ImGui.SliderFloat("Shore Foam Depth", ref shoreFoamDepth, 0.1f, 10.0f))
+                    {
+                        water.ShoreFoamDepth = shoreFoamDepth;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Maximum depth for shore foam appearance");
+
+                    float shoreFoamIntensity = water.ShoreFoamIntensity;
+                    if (ImGui.SliderFloat("Shore Foam Intensity", ref shoreFoamIntensity, 0.0f, 3.0f))
+                    {
+                        water.ShoreFoamIntensity = shoreFoamIntensity;
+                        changed = true;
+                    }
+
+                    var shoreFoamColor = new Numerics.Vector4(
+                        water.ShoreFoamColor.X, water.ShoreFoamColor.Y,
+                        water.ShoreFoamColor.Z, water.ShoreFoamColor.W);
+                    if (ImGui.ColorEdit4("Shore Foam Color", ref shoreFoamColor))
+                    {
+                        water.ShoreFoamColor = new Vector4(
+                            shoreFoamColor.X, shoreFoamColor.Y, shoreFoamColor.Z, shoreFoamColor.W);
+                        changed = true;
+                    }
+
+                    float shoreFoamScale = water.ShoreFoamScale;
+                    if (ImGui.DragFloat("Shore Foam Scale", ref shoreFoamScale, 0.1f, 0.1f, 50.0f))
+                    {
+                        water.ShoreFoamScale = shoreFoamScale;
+                        changed = true;
+                    }
+
+                    float shoreFoamSpeed = water.ShoreFoamSpeed;
+                    if (ImGui.DragFloat("Shore Foam Speed", ref shoreFoamSpeed, 0.001f, 0.0f, 0.5f))
+                    {
+                        water.ShoreFoamSpeed = shoreFoamSpeed;
+                        changed = true;
+                    }
+
+                    float shoreFoamFade = water.ShoreFoamFade;
+                    if (ImGui.SliderFloat("Shore Foam Fade", ref shoreFoamFade, 0.1f, 2.0f))
+                    {
+                        water.ShoreFoamFade = shoreFoamFade;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Fade curve: higher = sharper transition");
+
+                    float shoreFoamEdgeSharpness = water.ShoreFoamEdgeSharpness;
+                    if (ImGui.SliderFloat("Edge Sharpness", ref shoreFoamEdgeSharpness, 0.5f, 5.0f))
+                    {
+                        water.ShoreFoamEdgeSharpness = shoreFoamEdgeSharpness;
+                        changed = true;
+                    }
+                    ImGui.TextDisabled("Emphasize very shallow areas");
+
+                    ImGui.TextDisabled("Uses same foam texture as Crest Foam if assigned");
+                }
+            }
+
             // === REFLECTIONS ===
             if (ThemedImGui.CollapsingHeader("Reflections"))
             {

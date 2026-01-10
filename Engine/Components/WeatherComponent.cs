@@ -127,6 +127,34 @@ namespace Engine.Components
         [Serialization.SerializableAttribute("fogEnd")]
         public float FogEnd { get; set; } = 300.0f; // Linear fog end distance
 
+        // Advanced fog parameters
+        [Serialization.SerializableAttribute("fogOpacity")]
+        public float FogOpacity { get; set; } = 1.0f; // Overall fog opacity multiplier (0.0-1.0)
+
+        [Serialization.SerializableAttribute("fogNoiseScale")]
+        public float FogNoiseScale { get; set; } = 0.5f; // Fog noise detail scale
+
+        [Serialization.SerializableAttribute("fogNoiseSpeed")]
+        public float FogNoiseSpeed { get; set; } = 0.1f; // Fog animation speed
+
+        [Serialization.SerializableAttribute("fogFBMOctaves")]
+        public int FogFBMOctaves { get; set; } = 3; // FBM octaves for fog (2-6)
+
+        [Serialization.SerializableAttribute("fogFBMLacunarity")]
+        public float FogFBMLacunarity { get; set; } = 2.0f; // Frequency multiplier (1.5-3.0)
+
+        [Serialization.SerializableAttribute("fogFBMGain")]
+        public float FogFBMGain { get; set; } = 0.5f; // Amplitude multiplier (0.3-0.7)
+
+        [Serialization.SerializableAttribute("fogScattering")]
+        public float FogScattering { get; set; } = 0.4f; // Sun light scattering in fog
+
+        [Serialization.SerializableAttribute("fogLayerHeight")]
+        public float FogLayerHeight { get; set; } = 50.0f; // Height where fog is thickest
+
+        [Serialization.SerializableAttribute("fogThickness")]
+        public float FogThickness { get; set; } = 0.5f; // How thick/opaque fog gets at maximum density (0.0-1.0)
+
         // === CLOUD PARAMETERS ===
 
         [Serialization.SerializableAttribute("cloudEnabled")]
@@ -137,6 +165,9 @@ namespace Engine.Components
 
         [Serialization.SerializableAttribute("cloudDensity")]
         public float CloudDensity { get; set; } = 0.8f; // 0.0 = transparent, 1.0 = opaque
+
+        [Serialization.SerializableAttribute("cloudOpacity")]
+        public float CloudOpacity { get; set; } = 0.85f; // Overall cloud opacity multiplier (0.0-1.0)
 
         [Serialization.SerializableAttribute("cloudType")]
         public CloudType CloudType { get; set; } = CloudType.Cumulus; // Type of clouds
@@ -172,6 +203,55 @@ namespace Engine.Components
         [Serialization.SerializableAttribute("cloudDetailStrength")]
         public float CloudDetailStrength { get; set; } = 0.5f; // Fine detail strength (0.0-1.0)
 
+        // === DUAL-LAYER SCROLLING NOISE PARAMETERS ===
+        // Layer 1: Primary noise layer (large-scale cloud shapes)
+        [Serialization.SerializableAttribute("noiseLayer1Speed")]
+        public float NoiseLayer1Speed { get; set; } = 1.0f; // Speed multiplier for layer 1 scrolling (0.0-3.0)
+
+        [Serialization.SerializableAttribute("noiseLayer1DirectionX")]
+        public float NoiseLayer1DirectionX { get; set; } = 1.0f; // X direction of layer 1 scrolling
+
+        [Serialization.SerializableAttribute("noiseLayer1DirectionY")]
+        public float NoiseLayer1DirectionY { get; set; } = 0.5f; // Y direction of layer 1 scrolling
+
+        [Serialization.SerializableAttribute("noiseLayer1Scale")]
+        public float NoiseLayer1Scale { get; set; } = 1.0f; // Scale multiplier for layer 1 (0.1-5.0)
+
+        // Layer 2: Secondary noise layer (detail/erosion)
+        [Serialization.SerializableAttribute("noiseLayer2Speed")]
+        public float NoiseLayer2Speed { get; set; } = 1.5f; // Speed multiplier for layer 2 scrolling (0.0-3.0)
+
+        [Serialization.SerializableAttribute("noiseLayer2DirectionX")]
+        public float NoiseLayer2DirectionX { get; set; } = -0.5f; // X direction of layer 2 scrolling
+
+        [Serialization.SerializableAttribute("noiseLayer2DirectionY")]
+        public float NoiseLayer2DirectionY { get; set; } = 1.0f; // Y direction of layer 2 scrolling
+
+        [Serialization.SerializableAttribute("noiseLayer2Scale")]
+        public float NoiseLayer2Scale { get; set; } = 2.5f; // Scale multiplier for layer 2 (0.1-5.0)
+
+        // === FBM PARAMETERS (Customizable per cloud type) ===
+        [Serialization.SerializableAttribute("fbmOctaves")]
+        public int FBMOctaves { get; set; } = 4; // Number of FBM octaves (2-8)
+
+        [Serialization.SerializableAttribute("fbmLacunarity")]
+        public float FBMLacunarity { get; set; } = 2.0f; // Frequency multiplier per octave (1.5-3.0)
+
+        [Serialization.SerializableAttribute("fbmGain")]
+        public float FBMGain { get; set; } = 0.5f; // Amplitude multiplier per octave (0.3-0.7)
+
+        [Serialization.SerializableAttribute("fbmStrength")]
+        public float FBMStrength { get; set; } = 0.7f; // Overall FBM contribution (0.0-1.0)
+
+        [Serialization.SerializableAttribute("worleyWeight")]
+        public float WorleyWeight { get; set; } = 0.6f; // Worley noise weight in hybrid mixing (0.0-1.0)
+
+        [Serialization.SerializableAttribute("erosion")]
+        public float Erosion { get; set; } = 0.3f; // Erosion strength - creates holes/tears (0.0-1.0)
+
+        [Serialization.SerializableAttribute("sharpness")]
+        public float Sharpness { get; set; } = 0.5f; // Edge sharpness (0.0=soft, 1.0=sharp) (0.0-1.0)
+
         // === MATERIAL REFERENCES ===
         
         [Serialization.SerializableAttribute("wetnessMapMaterial")]
@@ -202,6 +282,26 @@ namespace Engine.Components
         public Vector2 GetWindDirection()
         {
             var dir = new Vector2(WindDirectionX, WindDirectionZ);
+            float len = dir.Length();
+            return len > 0.001f ? dir / len : new Vector2(1, 0);
+        }
+
+        /// <summary>
+        /// Get normalized noise layer 1 direction vector
+        /// </summary>
+        public Vector2 GetNoiseLayer1Direction()
+        {
+            var dir = new Vector2(NoiseLayer1DirectionX, NoiseLayer1DirectionY);
+            float len = dir.Length();
+            return len > 0.001f ? dir / len : new Vector2(1, 0);
+        }
+
+        /// <summary>
+        /// Get normalized noise layer 2 direction vector
+        /// </summary>
+        public Vector2 GetNoiseLayer2Direction()
+        {
+            var dir = new Vector2(NoiseLayer2DirectionX, NoiseLayer2DirectionY);
             float len = dir.Length();
             return len > 0.001f ? dir / len : new Vector2(1, 0);
         }

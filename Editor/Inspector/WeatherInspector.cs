@@ -525,6 +525,117 @@ namespace Editor.Inspector
                         UpdateWeatherManager(weather);
                         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                     }
+
+                    // Advanced Fog Parameters
+                    if (ImGui.TreeNode("🌫️ Advanced Fog"))
+                    {
+                        float fogOpacity = weather.FogOpacity;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Opacity", ref fogOpacity, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.FogOpacity = Math.Clamp(fogOpacity, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Overall fog opacity multiplier");
+
+                        float fogThickness = weather.FogThickness;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Thickness", ref fogThickness, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.FogThickness = Math.Clamp(fogThickness, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("How opaque/thick fog gets at maximum density");
+
+                        float fogLayerHeight = weather.FogLayerHeight;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.DragFloat("Layer Height", ref fogLayerHeight, 1.0f, -100.0f, 500.0f))
+                        {
+                            weather.FogLayerHeight = fogLayerHeight;
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Height where fog is thickest (meters)");
+
+                        float fogNoiseScale = weather.FogNoiseScale;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Noise Scale", ref fogNoiseScale, 0.1f, 2.0f, "%.2f"))
+                        {
+                            weather.FogNoiseScale = Math.Clamp(fogNoiseScale, 0.1f, 2.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Volumetric noise detail scale");
+
+                        float fogNoiseSpeed = weather.FogNoiseSpeed;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Noise Speed", ref fogNoiseSpeed, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.FogNoiseSpeed = Math.Clamp(fogNoiseSpeed, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Fog animation/morphing speed");
+
+                        float fogScattering = weather.FogScattering;
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.SliderFloat("Sun Scattering", ref fogScattering, 0.0f, 1.0f, "%.2f"))
+                        {
+                            weather.FogScattering = Math.Clamp(fogScattering, 0.0f, 1.0f);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Sun glow through fog (forward scattering)");
+
+                        // FBM Parameters
+                        if (ImGui.TreeNode("FBM Parameters"))
+                        {
+                            int fogFBMOctaves = weather.FogFBMOctaves;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderInt("Octaves", ref fogFBMOctaves, 2, 6))
+                            {
+                                weather.FogFBMOctaves = Math.Clamp(fogFBMOctaves, 2, 6);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Number of noise octaves (higher = more detail, slower)");
+
+                            float fogFBMLacunarity = weather.FogFBMLacunarity;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Lacunarity", ref fogFBMLacunarity, 1.5f, 3.0f, "%.2f"))
+                            {
+                                weather.FogFBMLacunarity = Math.Clamp(fogFBMLacunarity, 1.5f, 3.0f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Frequency multiplier per octave");
+
+                            float fogFBMGain = weather.FogFBMGain;
+                            ImGui.SetNextItemWidth(-120);
+                            if (ImGui.SliderFloat("Gain", ref fogFBMGain, 0.3f, 0.7f, "%.2f"))
+                            {
+                                weather.FogFBMGain = Math.Clamp(fogFBMGain, 0.3f, 0.7f);
+                                UpdateWeatherManager(weather);
+                                Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                            }
+                            if (ImGui.IsItemHovered())
+                                ImGui.SetTooltip("Amplitude multiplier per octave");
+
+                            ImGui.TreePop();
+                        }
+
+                        ImGui.TreePop();
+                    }
                 }
             }
         }
@@ -580,6 +691,18 @@ namespace Editor.Inspector
                     }
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("0 = transparent, 1 = opaque");
+
+                    // Opacity slider
+                    float opacity = weather.CloudOpacity;
+                    ImGui.SetNextItemWidth(-120);
+                    if (ImGui.SliderFloat("Opacity", ref opacity, 0.0f, 1.0f, "%.2f"))
+                    {
+                        weather.CloudOpacity = Math.Clamp(opacity, 0.0f, 1.0f);
+                        UpdateWeatherManager(weather);
+                        Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Overall opacity multiplier (0 = invisible, 1 = full opacity)");
 
                     // Advanced cloud parameters
                     if (ImGui.TreeNode("Advanced Cloud"))

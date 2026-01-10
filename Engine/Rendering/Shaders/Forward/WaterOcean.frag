@@ -57,6 +57,16 @@ uniform float u_CrestFoamSpeed = 0.1;
 uniform int u_UseFoamTexture = 0;
 uniform sampler2D u_FoamTex;
 
+// === SHORE FOAM ===
+uniform int u_ShoreFoamEnabled = 1;
+uniform float u_ShoreFoamDepth = 2.0;
+uniform float u_ShoreFoamIntensity = 1.5;
+uniform vec4 u_ShoreFoamColor = vec4(1.0, 1.0, 1.0, 0.9);
+uniform float u_ShoreFoamScale = 8.0;
+uniform float u_ShoreFoamSpeed = 0.05;
+uniform float u_ShoreFoamFade = 0.5;
+uniform float u_ShoreFoamEdgeSharpness = 2.0;
+
 // === SPECULAR ===
 uniform float u_SpecularIntensity = 2.0;
 uniform float u_SpecularPower = 720.0;
@@ -260,6 +270,62 @@ vec3 calculateCrestFoam(float waveHeight, vec2 uv) {
     }
 
     return u_CrestFoamColor.rgb * foamFactor * u_CrestFoamIntensity * foamPattern * u_CrestFoamColor.a;
+}
+
+// Shore foam near shallow water/beaches
+vec3 calculateShoreFoam(float waterDepth, vec2 worldPos, vec2 uv) {
+    if (u_ShoreFoamEnabled == 0 || waterDepth > u_ShoreFoamDepth) return vec3(0.0);
+    
+    // Calculate depth-based foam intensity
+    // Fade from full intensity at depth=0 to zero at depth=u_ShoreFoamDepth
+    float depthFactor = 1.0 - saturate(waterDepth / u_ShoreFoamDepth);
+    
+    // Apply fade curve for smooth or sharp transition
+    depthFactor = pow(depthFactor, u_ShoreFoamFade);
+    
+    // Edge sharpness: emphasize shallow areas more dramatically
+    depthFactor = pow(depthFactor, 1.0 / u_ShoreFoamEdgeSharpness);
+    
+    // Animated foam UV with different scrolling pattern than crest foam
+    vec2 foamUV1 = worldPos * u_ShoreFoamScale + u_Time * u_ShoreFoamSpeed * vec2(0.3, 0.7);
+    vec2 foamUV2 = worldPos * u_ShoreFoamScale * 1.3 + u_Time * u_ShoreFoamSpeed * vec2(-0.5, 0.4);
+    
+    // Foam pattern: use foam texture if available, otherwise procedural
+    float foamPattern = 0.0;
+    if (u_UseFoamTexture > 0) {
+        // Sample foam texture with dual-layer scrolling
+        float foam1 = texture(u_FoamTex, foamUV1).r;
+        float foam2 = texture(u_FoamTex, foamUV2).r;
+        foamPattern = foam1 * 0.6 + foam2 * 0.4;
+    } else {
+        // Procedural foam with multiple layers for realistic look
+        // Layer 1: Large foam patches
+        float foamNoise1 = hash(floor(foamUV1 * 10.0)) * 0.5 + 0.5;
+        for (int i = 0; i < 3; i++) {
+            float scale = float(i + 1) * 2.5;
+            foamNoise1 += hash(floor(foamUV1 * scale * 8.0 + u_Time * 0.3)) / (scale * 1.5);
+        }
+        
+        // Layer 2: Fine foam detail
+        float foamNoise2 = hash(floor(foamUV2 * 15.0)) * 0.4 + 0.6;
+        for (int i = 0; i < 2; i++) {
+            float scale = float(i + 2) * 3.0;
+            foamNoise2 += hash(floor(foamUV2 * scale * 12.0 - u_Time * 0.4)) / (scale * 2.0);
+        }
+        
+        // Combine layers for organic foam pattern
+        foamPattern = saturate((foamNoise1 * 0.6 + foamNoise2 * 0.4) * 1.5 - 0.3);
+        
+        // Add wave influence to make foam move with water
+        float waveFactor = sin(worldPos.x * 2.0 + worldPos.y * 1.5 + u_Time * 2.0) * 0.5 + 0.5;
+        foamPattern *= mix(0.7, 1.0, waveFactor);
+    }
+    
+    // More foam in very shallow water (beach edge)
+    float beachEdge = smoothstep(0.5, 0.0, waterDepth);
+    foamPattern = mix(foamPattern, 1.0, beachEdge * 0.5);
+    
+    return u_ShoreFoamColor.rgb * depthFactor * u_ShoreFoamIntensity * foamPattern * u_ShoreFoamColor.a;
 }
 
 // Improved Caustics (GPU Gems inspired)
@@ -552,6 +618,9 @@ void main()
     // === CREST FOAM ===
     vec3 crestFoam = calculateCrestFoam(vWaveHeight, vUV);
     
+    // === SHORE FOAM ===
+    vec3 shoreFoam = calculateShoreFoam(depthDiff, vWorldPos.xz, vUV);
+    
     // === SHADOWS ===
     float shadow = 1.0;
     // Disable shadows for now to avoid potential issues
@@ -581,6 +650,10 @@ void main()
     // Add crest foam on top
     float foamMask = length(crestFoam);
     finalColor = mix(finalColor, finalColor + crestFoam, saturate(foamMask));
+    
+    // Add shore foam on top (blends with crest foam additively)
+    float shoreFoamMask = length(shoreFoam);
+    finalColor = mix(finalColor, finalColor + shoreFoam, saturate(shoreFoamMask));
     
     // === FOG ===
     finalColor = processFog(finalColor, vWorldPos);

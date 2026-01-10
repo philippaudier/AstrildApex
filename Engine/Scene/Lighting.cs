@@ -33,6 +33,17 @@ namespace Engine.Scene
     // Fog density (for exponential fog control)
     public float FogDensity = 0.01f;
         
+        // Advanced fog parameters
+        public float FogOpacity = 1.0f;
+        public float FogNoiseScale = 0.5f;
+        public float FogNoiseSpeed = 0.1f;
+        public int FogFBMOctaves = 3;
+        public float FogFBMLacunarity = 2.0f;
+        public float FogFBMGain = 0.5f;
+        public float FogScattering = 0.4f;
+        public float FogLayerHeight = 50.0f;
+        public float FogThickness = 0.5f;
+        
         // Skybox settings
         public Vector3 SkyboxTint = Vector3.One;
         public float SkyboxExposure = 1.0f;
@@ -202,6 +213,17 @@ namespace Engine.Scene
                 L.FogStart = weatherComp.FogStart;
                 L.FogEnd = weatherComp.FogEnd;
                 L.FogDensity = weatherComp.FogDensity;
+                
+                // Advanced fog parameters
+                L.FogOpacity = weatherComp.FogOpacity;
+                L.FogNoiseScale = weatherComp.FogNoiseScale;
+                L.FogNoiseSpeed = weatherComp.FogNoiseSpeed;
+                L.FogFBMOctaves = weatherComp.FogFBMOctaves;
+                L.FogFBMLacunarity = weatherComp.FogFBMLacunarity;
+                L.FogFBMGain = weatherComp.FogFBMGain;
+                L.FogScattering = weatherComp.FogScattering;
+                L.FogLayerHeight = weatherComp.FogLayerHeight;
+                L.FogThickness = weatherComp.FogThickness;
             }
             else
             {
@@ -211,6 +233,15 @@ namespace Engine.Scene
                 L.FogStart = 0.0f;
                 L.FogEnd = 300.0f;
                 L.FogDensity = 0.01f;
+                L.FogOpacity = 1.0f;
+                L.FogNoiseScale = 0.5f;
+                L.FogNoiseSpeed = 0.1f;
+                L.FogFBMOctaves = 3;
+                L.FogFBMLacunarity = 2.0f;
+                L.FogFBMGain = 0.5f;
+                L.FogScattering = 0.4f;
+                L.FogLayerHeight = 50.0f;
+                L.FogThickness = 0.5f;
             }
 
             // Process all other lights

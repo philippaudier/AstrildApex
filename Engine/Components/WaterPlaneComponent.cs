@@ -109,6 +109,32 @@ namespace Engine.Components
         [Serialization.SerializableAttribute("crestFoamSpeed")]
         public float CrestFoamSpeed { get; set; } = 0.1f; // Foam animation speed
 
+        // === SHORE FOAM ===
+
+        [Serialization.SerializableAttribute("shoreFoamEnabled")]
+        public bool ShoreFoamEnabled { get; set; } = true; // Enable shore foam near shallow water
+
+        [Serialization.SerializableAttribute("shoreFoamDepth")]
+        public float ShoreFoamDepth { get; set; } = 2.0f; // Maximum depth for shore foam appearance
+
+        [Serialization.SerializableAttribute("shoreFoamIntensity")]
+        public float ShoreFoamIntensity { get; set; } = 1.5f; // Shore foam brightness multiplier
+
+        [Serialization.SerializableAttribute("shoreFoamColor")]
+        public Vector4 ShoreFoamColor { get; set; } = new Vector4(1.0f, 1.0f, 1.0f, 0.9f); // Shore foam color
+
+        [Serialization.SerializableAttribute("shoreFoamScale")]
+        public float ShoreFoamScale { get; set; } = 8.0f; // Shore foam texture tiling
+
+        [Serialization.SerializableAttribute("shoreFoamSpeed")]
+        public float ShoreFoamSpeed { get; set; } = 0.05f; // Shore foam animation speed
+
+        [Serialization.SerializableAttribute("shoreFoamFade")]
+        public float ShoreFoamFade { get; set; } = 0.5f; // How smoothly foam fades with depth (0-1)
+
+        [Serialization.SerializableAttribute("shoreFoamEdgeSharpness")]
+        public float ShoreFoamEdgeSharpness { get; set; } = 2.0f; // Edge contrast (1-10)
+
         // === SUBSURFACE SCATTERING ===
 
         [Serialization.SerializableAttribute("sssEnabled")]
