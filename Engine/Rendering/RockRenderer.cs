@@ -180,7 +180,9 @@ namespace Engine.Rendering
         /// Render all rock layers
         /// </summary>
         public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity,
-            Vector3 sunDirection, Vector3 sunColor, float sunIntensity)
+            Vector3 sunDirection, Vector3 sunColor, float sunIntensity,
+            bool useShadows = false, int shadowTexture = 0, Matrix4? shadowMatrix = null,
+            float shadowBias = 0.005f, float shadowMapSize = 2048f, float shadowStrength = 0.8f)
         {
             using (Profiling.Profiler.Profile("RockRenderer.Render"))
             {
@@ -209,6 +211,26 @@ namespace Engine.Rendering
 
                 // Use shader
                 _rockShader.Use();
+
+                // Shadow uniforms
+                if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+                {
+                    _rockShader.SetInt("u_UseShadows", 1);
+                    _rockShader.SetFloat("u_ShadowBias", shadowBias);
+                    _rockShader.SetFloat("u_ShadowMapSize", shadowMapSize);
+                    _rockShader.SetFloat("u_ShadowStrength", shadowStrength);
+                    _rockShader.SetMat4("u_ShadowMatrix", shadowMatrix.Value);
+
+                    // Bind shadow map to texture unit 17
+                    GL.ActiveTexture(TextureUnit.Texture17);
+                    GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
+                    _rockShader.SetInt("u_ShadowMap", 17);
+                    GL.ActiveTexture(TextureUnit.Texture0); // Restore to default
+                }
+                else
+                {
+                    _rockShader.SetInt("u_UseShadows", 0);
+                }
 
                 // Common uniforms
                 _rockShader.SetVec3("u_AmbientColor", ambientColor);
@@ -301,6 +323,37 @@ namespace Engine.Rendering
                     _rockShader.SetFloat("u_MaxRenderDistance", props.MaxRenderDistance);
                     _rockShader.SetFloat("u_FadeRange", props.FadeRange);
                     _rockShader.SetFloat("u_LodBias", props.LodBias);
+                    _rockShader.SetInt("u_LodEnabled", props.LodEnabled ? 1 : 0);
+                    _rockShader.SetFloat("u_LodDistance1", props.LodDistance1);
+                    _rockShader.SetFloat("u_LodDistance2", props.LodDistance2);
+                    _rockShader.SetFloat("u_LodDistance3", props.LodDistance3);
+
+                    // Snow coverage from weather system
+                    try
+                    {
+                        var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                        if (weather != null)
+                        {
+                            _rockShader.SetFloat("u_SnowCoverage", weather.SnowIntensity);
+                            _rockShader.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                            _rockShader.SetFloat("u_SnowSlopeMin", weather.SnowSlopeMin);
+                            _rockShader.SetFloat("u_SnowSlopeMax", weather.SnowSlopeMax);
+                        }
+                        else
+                        {
+                            _rockShader.SetFloat("u_SnowCoverage", 0f);
+                            _rockShader.SetFloat("u_SnowAccumulation", 0f);
+                            _rockShader.SetFloat("u_SnowSlopeMin", 0f);
+                            _rockShader.SetFloat("u_SnowSlopeMax", 45f);
+                        }
+                    }
+                    catch
+                    {
+                        _rockShader.SetFloat("u_SnowCoverage", 0f);
+                        _rockShader.SetFloat("u_SnowAccumulation", 0f);
+                        _rockShader.SetFloat("u_SnowSlopeMin", 0f);
+                        _rockShader.SetFloat("u_SnowSlopeMax", 45f);
+                    }
 
                     // Draw using terrain geometry
                     GL.BindVertexArray(layer.TerrainVAO);

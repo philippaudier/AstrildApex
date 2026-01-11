@@ -22,59 +22,33 @@ namespace Engine.Rendering
         /// <summary>
         /// Extract frustum planes from a view-projection matrix.
         /// Call this once per frame with the current camera's VP matrix.
+        /// IMPORTANT: Pass View * Projection (OpenTK row-major convention).
         /// </summary>
         public void ExtractPlanes(Matrix4 viewProjection)
         {
             // Gribb-Hartmann method for extracting frustum planes from VP matrix
             // Each plane is stored as (A, B, C, D) where Ax + By + Cz + D = 0
+            //
+            // For OpenTK row-major matrices with View * Projection order,
+            // we extract from COLUMNS of the combined VP matrix.
 
-            // Left plane
-            _planes[PlaneLeft] = new Vector4(
-                viewProjection.M14 + viewProjection.M11,
-                viewProjection.M24 + viewProjection.M21,
-                viewProjection.M34 + viewProjection.M31,
-                viewProjection.M44 + viewProjection.M41
-            );
+            // Left plane = column4 + column1
+            _planes[PlaneLeft] = viewProjection.Column3 + viewProjection.Column0;
 
-            // Right plane
-            _planes[PlaneRight] = new Vector4(
-                viewProjection.M14 - viewProjection.M11,
-                viewProjection.M24 - viewProjection.M21,
-                viewProjection.M34 - viewProjection.M31,
-                viewProjection.M44 - viewProjection.M41
-            );
+            // Right plane = column4 - column1
+            _planes[PlaneRight] = viewProjection.Column3 - viewProjection.Column0;
 
-            // Bottom plane
-            _planes[PlaneBottom] = new Vector4(
-                viewProjection.M14 + viewProjection.M12,
-                viewProjection.M24 + viewProjection.M22,
-                viewProjection.M34 + viewProjection.M32,
-                viewProjection.M44 + viewProjection.M42
-            );
+            // Bottom plane = column4 + column2
+            _planes[PlaneBottom] = viewProjection.Column3 + viewProjection.Column1;
 
-            // Top plane
-            _planes[PlaneTop] = new Vector4(
-                viewProjection.M14 - viewProjection.M12,
-                viewProjection.M24 - viewProjection.M22,
-                viewProjection.M34 - viewProjection.M32,
-                viewProjection.M44 - viewProjection.M42
-            );
+            // Top plane = column4 - column2
+            _planes[PlaneTop] = viewProjection.Column3 - viewProjection.Column1;
 
-            // Near plane
-            _planes[PlaneNear] = new Vector4(
-                viewProjection.M14 + viewProjection.M13,
-                viewProjection.M24 + viewProjection.M23,
-                viewProjection.M34 + viewProjection.M33,
-                viewProjection.M44 + viewProjection.M43
-            );
+            // Near plane = column4 + column3
+            _planes[PlaneNear] = viewProjection.Column3 + viewProjection.Column2;
 
-            // Far plane
-            _planes[PlaneFar] = new Vector4(
-                viewProjection.M14 - viewProjection.M13,
-                viewProjection.M24 - viewProjection.M23,
-                viewProjection.M34 - viewProjection.M33,
-                viewProjection.M44 - viewProjection.M43
-            );
+            // Far plane = column4 - column3
+            _planes[PlaneFar] = viewProjection.Column3 - viewProjection.Column2;
 
             // Normalize all planes
             for (int i = 0; i < 6; i++)
@@ -97,15 +71,18 @@ namespace Engine.Rendering
         public bool TestSphere(Vector3 center, float radius)
         {
             // Test sphere against all 6 planes
+            // Plane normals point INWARD. A point is inside if distance >= 0 for all planes.
+            // For a sphere, we allow distance >= -radius (sphere intersecting the plane).
             for (int i = 0; i < 6; i++)
             {
                 // Calculate signed distance from sphere center to plane
+                // Positive = inside frustum, Negative = outside frustum
                 float distance = _planes[i].X * center.X +
                                 _planes[i].Y * center.Y +
                                 _planes[i].Z * center.Z +
                                 _planes[i].W;
 
-                // If sphere is completely outside any plane, it's not visible
+                // If sphere is completely outside any plane (entirely on negative side), it's not visible
                 if (distance < -radius)
                 {
                     return false;

@@ -191,6 +191,13 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("streamingMaxLOD")]
         public int StreamingMaxLOD { get; set; } = 3;  // Maximum LOD level (0 = highest detail)
 
+        // Tile culling settings (Infinite Streaming mode only)
+        [Engine.Serialization.SerializableAttribute("enableTileFrustumCulling")]
+        public bool EnableTileFrustumCulling { get; set; } = true;  // Enable frustum culling for tiles
+
+        [Engine.Serialization.SerializableAttribute("tileCullingDistance")]
+        public float TileCullingDistance { get; set; } = 1000f;  // Max distance to render tiles (meters, 0 = infinite)
+
         // === RENDERING SETTINGS ===
         [Engine.Serialization.SerializableAttribute("renderMode")]
         public PolygonMode RenderMode { get; set; } = PolygonMode.Fill;  // Fill, Line (wireframe), or Point

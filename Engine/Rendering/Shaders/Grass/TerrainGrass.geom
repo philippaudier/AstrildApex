@@ -51,6 +51,11 @@ uniform vec2 u_WindDirection;
 // LOD
 uniform float u_MaxRenderDistance;
 uniform float u_FadeRange;
+uniform int u_LodEnabled;
+uniform float u_LodDistance1;
+uniform float u_LodDistance2;
+uniform float u_LodDistance3;
+uniform int u_MaxBladesPerTriangle; // Configurable max blades per triangle (10-30)
 
 // Density texture (optional)
 uniform sampler2D u_DensityMap;
@@ -116,53 +121,52 @@ vec3 barycentricInterpolate(vec3 v0, vec3 v1, vec3 v2, vec3 bary) {
 }
 
 // Generate a single grass blade
-void GenerateGrassBlade(vec3 basePos, vec3 terrainNormal, float angle, float randomSeed, float densityFactor)
+void GenerateGrassBlade(vec3 basePos, vec3 terrainNormal, float angle, float randomSeed, float densityFactor, int segments)
 {
     // Calculate distance to camera for LOD
     float distToCamera = length(basePos - uCameraPos);
-    
+
     // Skip if beyond max distance
     if (distToCamera > u_MaxRenderDistance) return;
-    
+
     // Calculate fade factor for smooth LOD transition
     float fadeStart = u_MaxRenderDistance - u_FadeRange;
     float fadeFactor = 1.0 - smoothstep(fadeStart, u_MaxRenderDistance, distToCamera);
     if (fadeFactor < 0.01) return;
-    
+
     // Random height variation
     float heightVar = mix(1.0 - u_BladeHeightVariation, 1.0 + u_BladeHeightVariation, hash(basePos.xz + randomSeed));
     float bladeHeight = u_BladeHeight * heightVar * fadeFactor * densityFactor;
-    
+
     // Random width variation
     float widthVar = mix(0.7, 1.3, hash(basePos.xz + randomSeed + 0.5));
     float bladeWidth = u_BladeWidth * widthVar;
-    
+
     // Create local coordinate system aligned with terrain normal
     vec3 up = terrainNormal;
     vec3 right = normalize(cross(up, vec3(1.0, 0.0, 0.0)));
     if (length(right) < 0.1) right = normalize(cross(up, vec3(0.0, 0.0, 1.0)));
     vec3 forward = cross(right, up);
-    
+
     // Rotate around up vector by angle
     float cosA = cos(angle);
     float sinA = sin(angle);
     vec3 bladeRight = right * cosA + forward * sinA;
     vec3 bladeForward = forward * cosA - right * sinA;
-    
+
     // Wind calculation with turbulence
     vec2 windDir = normalize(u_WindDirection);
     float windPhase = uTime * u_WindSpeed + basePos.x * 0.3 + basePos.z * 0.4;
     float windNoise = sin(windPhase) * 0.6 + sin(windPhase * 2.1 + randomSeed) * 0.25 + sin(windPhase * 4.3) * 0.15;
     windNoise *= u_WindTurbulence;
     vec3 windOffset = vec3(windDir.x, 0.0, windDir.y) * windNoise * u_WindStrength;
-    
+
     // Color variation per blade
     float colorVar = mix(-u_ColorVariation, u_ColorVariation, hash(basePos.xz + randomSeed + 1.0));
     vec3 colorTop = u_ColorTop.rgb + vec3(colorVar);
     vec3 colorBottom = u_ColorBottom.rgb + vec3(colorVar * 0.5);
-    
-    // Generate blade with 2 segments (6 vertices for triangle strip)
-    const int segments = 2;
+
+    // Generate blade with variable segments based on LOD
     for (int seg = 0; seg <= segments; seg++)
     {
         float t = float(seg) / float(segments);
@@ -249,41 +253,75 @@ void main()
         densityMapValue = texture(u_DensityMap, densityUV).r;
         if (densityMapValue < 0.01) return;
     }
-    
-    // Calculate number of blades based on triangle area and density
+
+    // Early exit if density is 0 or negative
+    if (u_Density <= 0.0) return;
+
+    // === LOD CALCULATION ===
+    // Determine LOD level and parameters based on distance
+    int lodLevel = 0; // 0=highest detail, 3=lowest detail
+    int numSegments = 2; // Default segments per blade
+    float lodDensityMult = 1.0; // Density multiplier for LOD
+
+    if (u_LodEnabled > 0) {
+        if (distToCamera > u_LodDistance3) {
+            lodLevel = 3;
+            numSegments = 1; // Lowest detail: 1 segment (3 vertices per blade)
+            lodDensityMult = 0.4; // 40% density at far distance
+        } else if (distToCamera > u_LodDistance2) {
+            lodLevel = 2;
+            numSegments = 1; // Medium-low detail: 1 segment
+            lodDensityMult = 0.7; // 70% density
+        } else if (distToCamera > u_LodDistance1) {
+            lodLevel = 1;
+            numSegments = 2; // Medium-high detail: 2 segments
+            lodDensityMult = 0.9; // 90% density
+        } else {
+            lodLevel = 0;
+            numSegments = 2; // Highest detail: 2 segments
+            lodDensityMult = 1.0; // 100% density
+        }
+    }
+
+    // Calculate number of blades based on triangle area and density with LOD multiplier
     // Larger triangles get more blades for uniform coverage
     float baseBladeCount = float(u_BladesPerVertex);
     float areaFactor = clamp(triArea / 4.0, 0.5, 3.0); // Normalize around 4 square units
-    int numBlades = int(baseBladeCount * areaFactor * u_Density * coverageFactor * densityMapValue);
-    numBlades = clamp(numBlades, 0, 10); // Max 10 blades per triangle (6 vertices each = 60 max)
-    
+    int numBlades = int(baseBladeCount * areaFactor * u_Density * coverageFactor * densityMapValue * lodDensityMult);
+
+    // Dynamic max based on segments: 1 segment = 3 verts, 2 segments = 6 verts
+    // max_vertices = 60, so with 1 segment we can fit 20 blades, with 2 segments we fit 10 blades
+    int maxBlades = (numSegments == 1) ? 20 : 10;
+    maxBlades = min(maxBlades, u_MaxBladesPerTriangle); // Respect user-configured max
+    numBlades = clamp(numBlades, 0, maxBlades);
+
     if (numBlades == 0) return;
-    
+
     // Generate blades distributed across triangle surface using barycentric coords
     for (int i = 0; i < numBlades; i++)
     {
         // Generate random barycentric coordinates for this blade
         vec2 seed = triCenter.xz + vec2(float(i) * 17.3, float(i) * 31.7);
         vec3 bary = randomBarycentric(seed);
-        
+
         // Interpolate position and normal using barycentric coords
         vec3 bladePos = barycentricInterpolate(v0, v1, v2, bary);
         vec3 bladeNormal = normalize(barycentricInterpolate(gs_in[0].normal, gs_in[1].normal, gs_in[2].normal, bary));
-        
+
         // Add small random offset to break up patterns
         vec2 jitter = (hash2(seed + 0.5) - 0.5) * 0.2;
         bladePos.xz += jitter;
-        
+
         // Skip if slope out of range at this specific point
         if (bladeNormal.y < u_MinSlopeY || bladeNormal.y > u_MaxSlopeY) continue;
-        
+
         // Random rotation for each blade
         float angle = hash(seed) * 6.28318; // 2*PI
         float randomSeed = float(i) + hash(seed) * 100.0;
-        
+
         // Height variation based on coverage
         float localDensity = coverageFactor * densityMapValue;
-        
-        GenerateGrassBlade(bladePos, bladeNormal, angle, randomSeed, sqrt(localDensity));
+
+        GenerateGrassBlade(bladePos, bladeNormal, angle, randomSeed, sqrt(localDensity), numSegments);
     }
 }

@@ -509,6 +509,7 @@ namespace Engine.Rendering
             // The Global UBO (binding = 0) must already be bound by the caller (ViewportRenderer).
 
             // Extract frustum planes from view-projection matrix for culling
+            // Use View * Projection order (same as grass/rocks which works correctly)
             Matrix4 viewProjection = view * projection;
             _frustumCuller.ExtractPlanes(viewProjection);
 
@@ -1357,7 +1358,8 @@ namespace Engine.Rendering
                     }
                 }
 
-                // Frustum culling using bounding sphere
+
+                // Frustum culling réactivé (même logique que grass/rocks)
                 if (!_frustumCuller.TestSphere(position, batch.CullingSphereRadius))
                 {
                     continue; // Outside frustum, skip

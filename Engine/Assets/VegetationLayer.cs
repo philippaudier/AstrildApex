@@ -307,14 +307,23 @@ namespace Engine.Assets
         public float DensityMapScale { get; set; } = 0.01f; // World-space UV scale for density map
 
         // === WIND ANIMATION ===
+        [Engine.Serialization.SerializableAttribute("windMode")]
+        public int WindMode { get; set; } = 0; // 0=Global (from Weather), 1=Local (custom), 2=Blend
+
+        [Engine.Serialization.SerializableAttribute("windBlendFactor")]
+        public float WindBlendFactor { get; set; } = 0.5f; // Blend factor when WindMode=2 (0=local, 1=global)
+
         [Engine.Serialization.SerializableAttribute("windStrength")]
-        public float WindStrength { get; set; } = 0.5f; // How much wind affects grass
+        public float WindStrength { get; set; } = 0.5f; // Local wind strength (used when WindMode=1 or 2)
 
         [Engine.Serialization.SerializableAttribute("windSpeed")]
-        public float WindSpeed { get; set; } = 1.5f; // Wind animation speed
+        public float WindSpeed { get; set; } = 1.5f; // Local wind animation speed
 
         [Engine.Serialization.SerializableAttribute("windTurbulence")]
-        public float WindTurbulence { get; set; } = 0.6f; // Wind noise/variation
+        public float WindTurbulence { get; set; } = 0.6f; // Local wind noise/variation
+
+        [Engine.Serialization.SerializableAttribute("windDirection")]
+        public float[] WindDirection { get; set; } = new float[] { 1.0f, 0.0f }; // Local wind direction (X, Z)
 
         // === LOD & CULLING ===
         [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
@@ -322,6 +331,23 @@ namespace Engine.Assets
 
         [Engine.Serialization.SerializableAttribute("fadeRange")]
         public float FadeRange { get; set; } = 20f; // Distance over which grass fades
+
+        // === DISTANCE-BASED LOD ===
+        [Engine.Serialization.SerializableAttribute("lodEnabled")]
+        public bool LodEnabled { get; set; } = true; // Enable distance-based LOD
+
+        [Engine.Serialization.SerializableAttribute("lodDistance1")]
+        public float LodDistance1 { get; set; } = 20f; // Distance for LOD level 1 (high detail)
+
+        [Engine.Serialization.SerializableAttribute("lodDistance2")]
+        public float LodDistance2 { get; set; } = 40f; // Distance for LOD level 2 (medium detail)
+
+        [Engine.Serialization.SerializableAttribute("lodDistance3")]
+        public float LodDistance3 { get; set; } = 60f; // Distance for LOD level 3 (low detail)
+
+        // === DENSITY CONTROL ===
+        [Engine.Serialization.SerializableAttribute("maxBladesPerTriangle")]
+        public int MaxBladesPerTriangle { get; set; } = 20; // Max grass blades per triangle (10-30)
     }
 
     /// <summary>
@@ -334,7 +360,7 @@ namespace Engine.Assets
     {
         // === DENSITY & DISTRIBUTION ===
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 0.12f; // Rocks per triangle (0.01-1)
+        public float Density { get; set; } = 0.12f; // Rocks per triangle (0-1)
 
         [Engine.Serialization.SerializableAttribute("clusteringStrength")]
         public float ClusteringStrength { get; set; } = 0.5f; // 0 = uniform, 1 = highly clustered
@@ -448,5 +474,18 @@ namespace Engine.Assets
 
         [Engine.Serialization.SerializableAttribute("lodBias")]
         public float LodBias { get; set; } = 1.0f; // Detail level multiplier
+
+        // === DISTANCE-BASED LOD ===
+        [Engine.Serialization.SerializableAttribute("lodEnabled")]
+        public bool LodEnabled { get; set; } = true; // Enable distance-based LOD
+
+        [Engine.Serialization.SerializableAttribute("lodDistance1")]
+        public float LodDistance1 { get; set; } = 30f; // Distance for LOD level 1 (high detail - 8+ faces)
+
+        [Engine.Serialization.SerializableAttribute("lodDistance2")]
+        public float LodDistance2 { get; set; } = 60f; // Distance for LOD level 2 (medium detail - 6 faces)
+
+        [Engine.Serialization.SerializableAttribute("lodDistance3")]
+        public float LodDistance3 { get; set; } = 90f; // Distance for LOD level 3 (low detail - 4 faces)
     }
 }

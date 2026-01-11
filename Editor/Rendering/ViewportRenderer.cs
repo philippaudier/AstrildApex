@@ -776,6 +776,7 @@ namespace Editor.Rendering
                 var viewPos = CameraPosition();
                 var viewMatrix = _globalUniforms.ViewMatrix;
                 var projMatrix = _globalUniforms.ProjectionMatrix;
+                // OpenTK row-major: use View * Projection order
                 var viewProjMatrix = viewMatrix * projMatrix;
                 var frustumCuller = new Engine.Rendering.FrustumCuller();
                 frustumCuller.ExtractPlanes(viewProjMatrix);
@@ -1479,6 +1480,16 @@ namespace Editor.Rendering
 
         // Frustum culler for tile visibility (grass/rocks)
         private Engine.Rendering.FrustumCuller _frustumCuller = new Engine.Rendering.FrustumCuller();
+
+        /// <summary>
+        /// Clear all GPU-generated vegetation (grass and rocks).
+        /// Call this when regenerating vegetation to ensure old GPU instances are removed.
+        /// </summary>
+        public void ClearGPUVegetation()
+        {
+            _grassRenderer?.ClearAll();
+            _rockRenderer?.ClearAll();
+        }
 
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
@@ -3816,6 +3827,9 @@ void main(){
 
         public void RenderScene()
         {
+            // Reset render profiler stats for new frame
+            Engine.Profiling.RenderProfiler.BeginFrame();
+
             // Update time system FIRST (drives TimeOfDay for all systems)
             // In Play Mode, PlayMode.UpdateSimulation() handles time updates
             if (!PlayMode.IsPlaying)
@@ -6926,6 +6940,7 @@ void main(){
                                 _grassRenderer.ClearAll();
 
                                 // OPTIMIZATION: Extract frustum planes for tile visibility culling
+                                // OpenTK row-major: use View * Projection order
                                 var viewProjMatrix = viewMatrix * projMatrix;
                                 _frustumCuller.ExtractPlanes(viewProjMatrix);
 
@@ -7018,7 +7033,13 @@ void main(){
                                     new OpenTK.Mathematics.Vector3(viewPos.X, viewPos.Y, viewPos.Z),
                                     time,
                                     ambientColor,
-                                    1.0f // Ambient intensity
+                                    1.0f, // Ambient intensity
+                                    shadowsEnabled,
+                                    shadowTexture,
+                                    shadowMatrix,
+                                    shadowBias,
+                                    shadowMapSize,
+                                    shadowStrength
                                 );
                             }
 
@@ -7134,7 +7155,13 @@ void main(){
                                     1.0f, // Ambient intensity
                                     sunDir,
                                     sunColor,
-                                    _globalUniforms.DirLightIntensity
+                                    _globalUniforms.DirLightIntensity,
+                                    shadowsEnabled,
+                                    shadowTexture,
+                                    shadowMatrix,
+                                    shadowBias,
+                                    shadowMapSize,
+                                    shadowStrength
                                 );
                             }
                         }

@@ -89,16 +89,37 @@ namespace Editor.Inspector
                     {
                         try
                         {
-                            Console.WriteLine("[TerrainVegetationUI] Clearing all vegetation instances (keeping layers)");
+                            Console.WriteLine($"[TerrainVegetationUI] Clearing all vegetation instances (keeping layers), Mode: {terrain.Mode}");
 
                             // Get the current scene
                             var scene = renderer.Scene;
                             if (scene != null)
                             {
-                                // Clear vegetation WITHOUT setting VegetationCleared flag
-                                // This allows regeneration to work afterwards
-                                terrain.ClearVegetation(scene, setCleared: false);
-                                
+                                // Mode-specific clearing
+                                if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                                {
+                                    Console.WriteLine("[TerrainVegetationUI] Infinite Streaming - clearing tiles and GPU vegetation");
+
+                                    // 1. Clear GPU vegetation (grass and rocks)
+                                    renderer.ClearGPUVegetation();
+
+                                    // 2. Clear streaming tiles
+                                    renderer.TerrainRenderer?.ResetStreamingTiles();
+
+                                    // 3. Clear tree instances
+                                    terrain.ClearVegetation(scene, setCleared: false);
+                                }
+                                else
+                                {
+                                    Console.WriteLine("[TerrainVegetationUI] Single Terrain - clearing vegetation and GPU");
+
+                                    // 1. Clear vegetation instances (trees)
+                                    terrain.ClearVegetation(scene, setCleared: false);
+
+                                    // 2. Clear GPU vegetation (grass and rocks)
+                                    renderer.ClearGPUVegetation();
+                                }
+
                                 LogManager.LogInfo("All vegetation instances cleared (layers preserved)", "TerrainVegetationUI");
                                 Editor.SceneManagement.SceneManager.MarkSceneAsModified();
                             }
@@ -300,7 +321,7 @@ namespace Editor.Inspector
                 if (ImGui.TreeNode("Density & Coverage"))
                 {
                     float gDensity = grass.Density;
-                    if (ImGui.SliderFloat("Density##grass", ref gDensity, 0.1f, 3.0f))
+                    if (ImGui.SliderFloat("Density##grass", ref gDensity, 0.0f, 3.0f))
                     {
                         grass.Density = gDensity;
                         grassChanged = true;
@@ -477,25 +498,74 @@ namespace Editor.Inspector
                 // Wind Animation
                 if (ImGui.TreeNode("Wind Animation"))
                 {
-                    float windStrength = grass.WindStrength;
-                    if (ImGui.SliderFloat("Wind Strength", ref windStrength, 0.0f, 1.5f))
+                    // Wind mode selection
+                    string[] windModes = new string[] { "Global (Weather)", "Local (Custom)", "Blend" };
+                    int windMode = grass.WindMode;
+                    if (ImGui.Combo("Wind Mode", ref windMode, windModes, windModes.Length))
                     {
-                        grass.WindStrength = windStrength;
+                        grass.WindMode = windMode;
                         grassChanged = true;
                     }
-
-                    float windSpeed = grass.WindSpeed;
-                    if (ImGui.SliderFloat("Wind Speed", ref windSpeed, 0.0f, 4.0f))
+                    if (ImGui.IsItemHovered())
                     {
-                        grass.WindSpeed = windSpeed;
-                        grassChanged = true;
+                        string tooltip = windMode switch
+                        {
+                            0 => "Use wind settings from Weather component",
+                            1 => "Use custom local wind settings",
+                            2 => "Blend between local and global wind",
+                            _ => ""
+                        };
+                        ImGui.SetTooltip(tooltip);
                     }
 
-                    float windTurb = grass.WindTurbulence;
-                    if (ImGui.SliderFloat("Wind Turbulence", ref windTurb, 0.0f, 1.5f))
+                    // Show blend factor for Blend mode
+                    if (grass.WindMode == 2)
                     {
-                        grass.WindTurbulence = windTurb;
-                        grassChanged = true;
+                        float blendFactor = grass.WindBlendFactor;
+                        if (ImGui.SliderFloat("Blend Factor", ref blendFactor, 0.0f, 1.0f))
+                        {
+                            grass.WindBlendFactor = blendFactor;
+                            grassChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("0 = Local only, 1 = Global only");
+                    }
+
+                    // Show local wind settings for Local or Blend mode
+                    if (grass.WindMode == 1 || grass.WindMode == 2)
+                    {
+                        ImGui.Spacing();
+                        ImGui.Separator();
+                        ImGui.Text("Local Wind Settings");
+
+                        float windStrength = grass.WindStrength;
+                        if (ImGui.SliderFloat("Wind Strength", ref windStrength, 0.0f, 1.5f))
+                        {
+                            grass.WindStrength = windStrength;
+                            grassChanged = true;
+                        }
+
+                        float windSpeed = grass.WindSpeed;
+                        if (ImGui.SliderFloat("Wind Speed", ref windSpeed, 0.0f, 4.0f))
+                        {
+                            grass.WindSpeed = windSpeed;
+                            grassChanged = true;
+                        }
+
+                        float windTurb = grass.WindTurbulence;
+                        if (ImGui.SliderFloat("Wind Turbulence", ref windTurb, 0.0f, 1.5f))
+                        {
+                            grass.WindTurbulence = windTurb;
+                            grassChanged = true;
+                        }
+
+                        // Wind direction (X, Z)
+                        var windDir = new System.Numerics.Vector2(grass.WindDirection[0], grass.WindDirection[1]);
+                        if (ImGui.SliderFloat2("Wind Direction (X, Z)", ref windDir, -1.0f, 1.0f))
+                        {
+                            grass.WindDirection = new float[] { windDir.X, windDir.Y };
+                            grassChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Wind blows in this direction (normalized automatically)");
                     }
 
                     ImGui.TreePop();
@@ -517,6 +587,57 @@ namespace Editor.Inspector
                         grass.FadeRange = fadeRange;
                         grassChanged = true;
                     }
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Text("Distance-Based LOD");
+
+                    bool lodEnabled = grass.LodEnabled;
+                    if (ImGui.Checkbox("Enable LOD", ref lodEnabled))
+                    {
+                        grass.LodEnabled = lodEnabled;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reduce grass density and quality at distance for better performance");
+
+                    if (grass.LodEnabled)
+                    {
+                        float lodDist1 = grass.LodDistance1;
+                        if (ImGui.SliderFloat("LOD Distance 1 (High)", ref lodDist1, 5f, 100f))
+                        {
+                            grass.LodDistance1 = lodDist1;
+                            grassChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("100% density, 2 segments per blade");
+
+                        float lodDist2 = grass.LodDistance2;
+                        if (ImGui.SliderFloat("LOD Distance 2 (Medium)", ref lodDist2, 10f, 150f))
+                        {
+                            grass.LodDistance2 = lodDist2;
+                            grassChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("70% density, 1 segment per blade");
+
+                        float lodDist3 = grass.LodDistance3;
+                        if (ImGui.SliderFloat("LOD Distance 3 (Low)", ref lodDist3, 20f, 200f))
+                        {
+                            grass.LodDistance3 = lodDist3;
+                            grassChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("40% density, 1 segment per blade");
+                    }
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Text("Density Control");
+
+                    int maxBlades = grass.MaxBladesPerTriangle;
+                    if (ImGui.SliderInt("Max Blades Per Triangle", ref maxBlades, 10, 30))
+                    {
+                        grass.MaxBladesPerTriangle = maxBlades;
+                        grassChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Maximum grass blades per terrain triangle\nHigher values = denser grass but lower FPS\n10-20 recommended for good performance");
 
                     ImGui.TreePop();
                 }
@@ -567,7 +688,7 @@ namespace Editor.Inspector
                 if (ImGui.TreeNode("Distribution##rock"))
                 {
                     float rDensity = rock.Density;
-                    if (ImGui.SliderFloat("Density##rock", ref rDensity, 0.05f, 2.0f))
+                    if (ImGui.SliderFloat("Density##rock", ref rDensity, 0.0f, 2.0f))
                     {
                         rock.Density = rDensity;
                         rockChanged = true;
@@ -888,6 +1009,45 @@ namespace Editor.Inspector
                     }
                     if (ImGui.IsItemHovered()) ImGui.SetTooltip("Detail level multiplier");
 
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                    ImGui.Text("Distance-Based LOD");
+
+                    bool lodEnabled = rock.LodEnabled;
+                    if (ImGui.Checkbox("Enable LOD##rock", ref lodEnabled))
+                    {
+                        rock.LodEnabled = lodEnabled;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reduce rock polygon count at distance for better performance");
+
+                    if (rock.LodEnabled)
+                    {
+                        float lodDist1 = rock.LodDistance1;
+                        if (ImGui.SliderFloat("LOD Distance 1 (High)##rock", ref lodDist1, 10f, 100f))
+                        {
+                            rock.LodDistance1 = lodDist1;
+                            rockChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("8 faces (full octahedron detail)");
+
+                        float lodDist2 = rock.LodDistance2;
+                        if (ImGui.SliderFloat("LOD Distance 2 (Medium)##rock", ref lodDist2, 30f, 150f))
+                        {
+                            rock.LodDistance2 = lodDist2;
+                            rockChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("6 faces (medium detail)");
+
+                        float lodDist3 = rock.LodDistance3;
+                        if (ImGui.SliderFloat("LOD Distance 3 (Low)##rock", ref lodDist3, 50f, 200f))
+                        {
+                            rock.LodDistance3 = lodDist3;
+                            rockChanged = true;
+                        }
+                        if (ImGui.IsItemHovered()) ImGui.SetTooltip("4 faces (simple tetrahedron)");
+                    }
+
                     ImGui.TreePop();
                 }
 
@@ -1138,15 +1298,44 @@ namespace Editor.Inspector
                 // Inspector changes modify terrain layers directly in memory, so no need to save first
                 Console.WriteLine($"[TerrainVegetationUI] Regenerating vegetation for terrain: {terrain.Entity?.Name ?? "(unnamed)"}, Mode: {terrain.Mode}");
 
-                // Clear and regenerate vegetation using the same pattern as HandleTerrainModeChange
-                // 1. Reset VegetationCleared flag to allow regeneration
-                terrain.VegetationCleared = false;
+                // === MODE-SPECIFIC REGENERATION ===
+                if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
+                {
+                    // INFINITE STREAMING: Clear tile cache and GPU vegetation
+                    Console.WriteLine("[TerrainVegetationUI] Infinite Streaming mode - clearing tile cache");
 
-                // 2. Clear old vegetation first
-                terrain.ClearVegetation(scene, setCleared: false);
+                    // 1. Clear GPU vegetation (grass and rocks)
+                    renderer.ClearGPUVegetation();
 
-                // 3. Generate new vegetation
-                terrain.GenerateVegetation(scene);
+                    // 2. Clear and reset streaming tiles (forces regeneration with new seed/settings)
+                    renderer.TerrainRenderer?.ResetStreamingTiles();
+
+                    // 3. Clear old tree instances
+                    terrain.ClearVegetation(scene, setCleared: false);
+
+                    // 4. Reset flag to allow regeneration
+                    terrain.VegetationCleared = false;
+
+                    // 5. Generate new tree instances (grass/rocks generated per-tile in render loop)
+                    terrain.GenerateVegetation(scene);
+                }
+                else
+                {
+                    // SINGLE TERRAIN: Standard regeneration
+                    Console.WriteLine("[TerrainVegetationUI] Single Terrain mode - standard regeneration");
+
+                    // 1. Reset VegetationCleared flag to allow regeneration
+                    terrain.VegetationCleared = false;
+
+                    // 2. Clear old vegetation first (trees/instances)
+                    terrain.ClearVegetation(scene, setCleared: false);
+
+                    // 3. Clear GPU vegetation (grass and rocks)
+                    renderer.ClearGPUVegetation();
+
+                    // 4. Generate new vegetation (trees, grass, rocks)
+                    terrain.GenerateVegetation(scene);
+                }
 
                 // Mark scene as modified so user knows to save
                 Editor.SceneManagement.SceneManager.MarkSceneAsModified();

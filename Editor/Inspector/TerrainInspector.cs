@@ -127,6 +127,30 @@ namespace Editor.Inspector
                 }
                 ImGui.TextDisabled($"LOD 0 (highest) to LOD {maxLOD} (lowest)");
 
+                ImGui.Spacing();
+                ImGui.Text("Tile Culling");
+
+                bool enableFrustumCulling = terrain.EnableTileFrustumCulling;
+                if (ImGui.Checkbox("Enable Frustum Culling", ref enableFrustumCulling))
+                {
+                    terrain.EnableTileFrustumCulling = enableFrustumCulling;
+                }
+                ImGui.TextDisabled("Cull tiles outside camera view frustum (recommended)");
+
+                float cullingDistance = terrain.TileCullingDistance;
+                if (ImGui.DragFloat("Culling Distance (m)", ref cullingDistance, 10f, 0f, 5000f))
+                {
+                    terrain.TileCullingDistance = cullingDistance;
+                }
+                if (cullingDistance <= 0)
+                {
+                    ImGui.TextDisabled("0 = infinite distance (render all tiles)");
+                }
+                else
+                {
+                    ImGui.TextDisabled($"Only render tiles within {cullingDistance:F0}m from camera");
+                }
+
                 // TODO: Display streaming stats if available
                 // (Requires access to ViewportRenderer instance - could be added via inspector parameter)
 

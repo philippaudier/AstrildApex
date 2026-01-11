@@ -181,7 +181,9 @@ namespace Engine.Rendering
         /// <summary>
         /// Render all grass layers
         /// </summary>
-        public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity)
+        public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity,
+            bool useShadows = false, int shadowTexture = 0, Matrix4? shadowMatrix = null,
+            float shadowBias = 0.005f, float shadowMapSize = 2048f, float shadowStrength = 0.8f)
         {
             using (Profiler.Profile("GrassRenderer.Render"))
             {
@@ -210,6 +212,26 @@ namespace Engine.Rendering
 
             // Use shader
             _grassShader.Use();
+
+            // Shadow uniforms
+            if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+            {
+                _grassShader.SetInt("u_UseShadows", 1);
+                _grassShader.SetFloat("u_ShadowBias", shadowBias);
+                _grassShader.SetFloat("u_ShadowMapSize", shadowMapSize);
+                _grassShader.SetFloat("u_ShadowStrength", shadowStrength);
+                _grassShader.SetMat4("u_ShadowMatrix", shadowMatrix.Value);
+
+                // Bind shadow map to texture unit 17
+                GL.ActiveTexture(TextureUnit.Texture17);
+                GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
+                _grassShader.SetInt("u_ShadowMap", 17);
+                GL.ActiveTexture(TextureUnit.Texture0); // Restore to default
+            }
+            else
+            {
+                _grassShader.SetInt("u_UseShadows", 0);
+            }
 
             // Ambient lighting (common to all layers)
             _grassShader.SetVec3("u_AmbientColor", ambientColor);
@@ -272,28 +294,80 @@ namespace Engine.Rendering
                 _grassShader.SetVec4("u_ColorBottom", new Vector4(props.ColorBottom[0], props.ColorBottom[1], props.ColorBottom[2], 1.0f));
                 _grassShader.SetFloat("u_ColorVariation", props.ColorVariation);
 
-                // Wind
-                _grassShader.SetFloat("u_WindStrength", props.WindStrength);
-                _grassShader.SetFloat("u_WindSpeed", props.WindSpeed);
-                _grassShader.SetFloat("u_WindTurbulence", props.WindTurbulence);
-                
-                // Get wind direction from weather system
-                Vector2 windDir = Vector2.UnitX;
+                // Wind - support Global/Local/Blend modes
+                float effectiveWindStrength = props.WindStrength;
+                float effectiveWindSpeed = props.WindSpeed;
+                float effectiveWindTurbulence = props.WindTurbulence;
+                Vector2 effectiveWindDirection = new Vector2(props.WindDirection[0], props.WindDirection[1]);
+
+                // Get global wind from weather system
                 try
                 {
                     var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
                     if (weather != null)
                     {
-                        var dir = weather.GetWindDirection();
-                        windDir = new Vector2(dir.X, dir.Y);
+                        Vector2 globalWindDir = new Vector2(weather.GetWindDirection().X, weather.GetWindDirection().Y);
+                        float globalWindStrength = weather.WindStrength;
+                        float globalWindSpeed = weather.WindSpeed;
+                        float globalWindGustiness = weather.WindGustiness;
+
+                        if (props.WindMode == 0) // Global mode
+                        {
+                            effectiveWindStrength = globalWindStrength;
+                            effectiveWindSpeed = globalWindSpeed;
+                            effectiveWindTurbulence = globalWindGustiness;
+                            effectiveWindDirection = globalWindDir;
+                        }
+                        else if (props.WindMode == 2) // Blend mode
+                        {
+                            float blend = props.WindBlendFactor;
+                            effectiveWindStrength = props.WindStrength * (1 - blend) + globalWindStrength * blend;
+                            effectiveWindSpeed = props.WindSpeed * (1 - blend) + globalWindSpeed * blend;
+                            effectiveWindTurbulence = props.WindTurbulence * (1 - blend) + globalWindGustiness * blend;
+                            effectiveWindDirection = new Vector2(
+                                props.WindDirection[0] * (1 - blend) + globalWindDir.X * blend,
+                                props.WindDirection[1] * (1 - blend) + globalWindDir.Y * blend
+                            );
+                        }
+                        // else WindMode == 1 (Local): use props values directly (already set)
                     }
                 }
                 catch { }
-                _grassShader.SetVec2("u_WindDirection", windDir);
+
+                _grassShader.SetFloat("u_WindStrength", effectiveWindStrength);
+                _grassShader.SetFloat("u_WindSpeed", effectiveWindSpeed);
+                _grassShader.SetFloat("u_WindTurbulence", effectiveWindTurbulence);
+                _grassShader.SetVec2("u_WindDirection", effectiveWindDirection);
 
                 // LOD
                 _grassShader.SetFloat("u_MaxRenderDistance", props.MaxRenderDistance);
                 _grassShader.SetFloat("u_FadeRange", props.FadeRange);
+                _grassShader.SetInt("u_LodEnabled", props.LodEnabled ? 1 : 0);
+                _grassShader.SetFloat("u_LodDistance1", props.LodDistance1);
+                _grassShader.SetFloat("u_LodDistance2", props.LodDistance2);
+                _grassShader.SetFloat("u_LodDistance3", props.LodDistance3);
+                _grassShader.SetInt("u_MaxBladesPerTriangle", props.MaxBladesPerTriangle);
+
+                // Snow coverage from weather system
+                try
+                {
+                    var weather = Engine.Systems.WeatherManager.GetCurrentWeather();
+                    if (weather != null)
+                    {
+                        _grassShader.SetFloat("u_SnowCoverage", weather.SnowIntensity);
+                        _grassShader.SetFloat("u_SnowAccumulation", weather.SnowAccumulation);
+                    }
+                    else
+                    {
+                        _grassShader.SetFloat("u_SnowCoverage", 0f);
+                        _grassShader.SetFloat("u_SnowAccumulation", 0f);
+                    }
+                }
+                catch
+                {
+                    _grassShader.SetFloat("u_SnowCoverage", 0f);
+                    _grassShader.SetFloat("u_SnowAccumulation", 0f);
+                }
 
                 // Density map (optional) - for painting grass coverage
                 if (props.DensityMap.HasValue)

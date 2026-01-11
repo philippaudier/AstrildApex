@@ -73,6 +73,10 @@ uniform float u_RotationRandomness;
 uniform float u_MaxRenderDistance;
 uniform float u_FadeRange;
 uniform float u_LodBias;
+uniform int u_LodEnabled;
+uniform float u_LodDistance1;
+uniform float u_LodDistance2;
+uniform float u_LodDistance3;
 
 // ============================================
 // NOISE FUNCTIONS
@@ -257,16 +261,35 @@ void GenerateRock(vec3 basePos, vec3 terrainNormal, vec3 rockSeed, float rockSiz
     // Distance LOD check
     float distToCamera = length(basePos - uCameraPos);
     if (distToCamera > u_MaxRenderDistance) return;
-    
+
     // Fade factor
     float fadeStart = u_MaxRenderDistance - u_FadeRange;
     float fadeFactor = 1.0 - smoothstep(fadeStart, u_MaxRenderDistance, distToCamera);
     if (fadeFactor < 0.01) return;
-    
-    // LOD: reduce detail at distance (skip some faces)
-    float lodDetail = clamp(1.0 - (distToCamera / u_MaxRenderDistance) * (1.0 - u_LodBias), 0.3, 1.0);
-    int numFaces = int(8.0 * lodDetail);
-    numFaces = max(numFaces, 4); // Minimum 4 faces
+
+    // === LOD SYSTEM ===
+    // Determine number of faces based on distance LOD
+    int numFaces = 8; // Default: highest detail (8 faces)
+
+    if (u_LodEnabled > 0) {
+        if (distToCamera > u_LodDistance3) {
+            numFaces = 4; // LOD 3: lowest detail - simple tetrahedron
+        } else if (distToCamera > u_LodDistance2) {
+            numFaces = 6; // LOD 2: medium detail
+        } else if (distToCamera > u_LodDistance1) {
+            numFaces = 7; // LOD 1: medium-high detail
+        } else {
+            numFaces = 8; // LOD 0: highest detail - full octahedron
+        }
+        // Apply bias multiplier
+        numFaces = int(float(numFaces) * u_LodBias);
+        numFaces = clamp(numFaces, 4, 8); // Ensure valid range
+    } else {
+        // Fallback: old LOD system using distance-based interpolation
+        float lodDetail = clamp(1.0 - (distToCamera / u_MaxRenderDistance) * (1.0 - u_LodBias), 0.3, 1.0);
+        numFaces = int(8.0 * lodDetail);
+        numFaces = max(numFaces, 4);
+    }
     
     // Per-rock randomness for shape variety
     float rockRand = hash(rockSeed);
@@ -409,11 +432,14 @@ void main()
         hash(vec3(v2.x, v0.z, v1.y))
     );
     
+    // Early exit if density is 0 or negative
+    if (u_Density <= 0.0) return;
+
     // Clustering noise - sample at world position with offset to break grid
     vec3 clusterSamplePos = triCenter + triSeed * 10.0;
     float clusterNoise = fbm(clusterSamplePos * u_ClusterNoiseScale, 2, 2.0, 0.5);
     float placementChance = mix(1.0, clusterNoise, u_ClusteringStrength);
-    
+
     // Placement threshold with CUBIC curve for extreme low-density control
     // density 0.01 -> 0.001, density 0.1 -> 0.01, density 0.5 -> 0.125
     float placementRand = hash(triSeed.xy + triSeed.z);

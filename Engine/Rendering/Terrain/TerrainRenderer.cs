@@ -929,26 +929,87 @@ namespace Engine.Rendering.Terrain
 
                 // Use real deltaTime for smooth LOD transitions
                 float deltaTime = Engine.Core.Time.DeltaTime;
-                
+
                 // Update fading-out tiles (cross-fade cleanup)
                 _tileManager.UpdateFadingTiles(deltaTime);
 
-                // Render all visible tiles with LOD transition animation
-                _tileManager.ForEachRenderable(tile =>
+                // === TILE CULLING ===
+                // Setup frustum culling if enabled
+                bool useFrustumCulling = terrain.EnableTileFrustumCulling;
+                float cullingDistance = terrain.TileCullingDistance;
+                Engine.Rendering.FrustumCuller? frustumCuller = null;
+
+                if (useFrustumCulling)
                 {
-                    if (tile.Vao != 0 && tile.IndexCount > 0)
+                    frustumCuller = new Engine.Rendering.FrustumCuller();
+                    Matrix4 viewProj = view * projection;
+                    frustumCuller.ExtractPlanes(viewProj);
+                }
+
+                // Frustum test function (System.Numerics.Vector3 for tile manager compatibility)
+                Func<System.Numerics.Vector3, System.Numerics.Vector3, bool> frustumTest = (worldMin, worldMax) =>
+                {
+                    // Convert System.Numerics.Vector3 to OpenTK.Mathematics.Vector3 for frustum test
+                    Vector3 worldMinOtk = new Vector3(worldMin.X, worldMin.Y, worldMin.Z);
+                    Vector3 worldMaxOtk = new Vector3(worldMax.X, worldMax.Y, worldMax.Z);
+
+                    // Distance culling (check tile center)
+                    if (cullingDistance > 0)
                     {
-                        // Update LOD transition (dithered fade-in/fade-out)
-                        tile.UpdateTransition(deltaTime);
-
-                        // Set transition factor for dithered alpha in shader
-                        _shader.SetFloat("u_LodTransition", tile.TransitionFactor);
-
-                        GL.BindVertexArray(tile.Vao);
-                        GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
-                        GL.BindVertexArray(0);
+                        Vector3 tileCenter = (worldMinOtk + worldMaxOtk) * 0.5f;
+                        float distanceToCamera = (tileCenter - viewPos).Length;
+                        if (distanceToCamera > cullingDistance)
+                            return false;
                     }
-                });
+
+                    // Frustum culling (check AABB)
+                    if (frustumCuller != null)
+                    {
+                        return frustumCuller.TestAABB(worldMinOtk, worldMaxOtk);
+                    }
+
+                    return true;
+                };
+
+                // Render tiles with optional culling
+                if (useFrustumCulling)
+                {
+                    // Use ForEachVisible with frustum test
+                    _tileManager.ForEachVisible(frustumTest, tile =>
+                    {
+                        if (tile.Vao != 0 && tile.IndexCount > 0)
+                        {
+                            // Update LOD transition (dithered fade-in/fade-out)
+                            tile.UpdateTransition(deltaTime);
+
+                            // Set transition factor for dithered alpha in shader
+                            _shader.SetFloat("u_LodTransition", tile.TransitionFactor);
+
+                            GL.BindVertexArray(tile.Vao);
+                            GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
+                            GL.BindVertexArray(0);
+                        }
+                    });
+                }
+                else
+                {
+                    // Render all tiles without culling (legacy behavior)
+                    _tileManager.ForEachRenderable(tile =>
+                    {
+                        if (tile.Vao != 0 && tile.IndexCount > 0)
+                        {
+                            // Update LOD transition (dithered fade-in/fade-out)
+                            tile.UpdateTransition(deltaTime);
+
+                            // Set transition factor for dithered alpha in shader
+                            _shader.SetFloat("u_LodTransition", tile.TransitionFactor);
+
+                            GL.BindVertexArray(tile.Vao);
+                            GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
+                            GL.BindVertexArray(0);
+                        }
+                    });
+                }
             }
             else
             {
@@ -1369,14 +1430,14 @@ namespace Engine.Rendering.Terrain
                 if (distToTile > maxRenderDist + tileSize * 0.71f)
                     return; // Skip this tile
 
-                // OPTIMIZATION: Frustum culling - skip tiles outside view frustum
-                // Use AABB test instead of sphere for better culling at altitude
-                // Extend vertically to account for tall trees (e.g., 50m tall)
-                float maxTreeHeight = Math.Max(50f, maxCullingSphereRadius * 5f);
-                var tileMin = new Vector3(tile.X * tileSize, -10f, tile.Y * tileSize);
-                var tileMax = new Vector3((tile.X + 1) * tileSize, maxTreeHeight, (tile.Y + 1) * tileSize);
-                if (!frustumCuller.TestAABB(tileMin, tileMax))
-                    return; // Skip this tile
+                // FRUSTUM CULLING DISABLED - was causing trees to disappear when looked at
+                // The frustum planes extracted from ViewProjection seem inverted
+                // TODO: Fix FrustumCuller to work correctly with OpenTK matrices
+                // float maxTreeHeight = Math.Max(50f, maxCullingSphereRadius * 5f);
+                // var tileMin = new Vector3(tile.X * tileSize, -10f, tile.Y * tileSize);
+                // var tileMax = new Vector3((tile.X + 1) * tileSize, maxTreeHeight, (tile.Y + 1) * tileSize);
+                // if (!frustumCuller.TestAABB(tileMin, tileMax))
+                //     return; // Skip this tile
 
                 // Tile is visible - collect instances
                 foreach (var kvp in tile.VegetationInstances)
