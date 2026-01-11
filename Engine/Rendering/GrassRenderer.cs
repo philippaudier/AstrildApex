@@ -16,7 +16,6 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _grassShader = null;
         private bool _disposed = false;
-        private int _logCounter = 0; // For debug logging
 
         /// <summary>
         /// Stores grass data per terrain + layer combination

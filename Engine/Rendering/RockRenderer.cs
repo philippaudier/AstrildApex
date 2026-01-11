@@ -16,7 +16,6 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _rockShader = null;
         private bool _disposed = false;
-        private int _logCounter = 0; // For debug logging
 
         /// <summary>
         /// Stores rock data per terrain + layer combination

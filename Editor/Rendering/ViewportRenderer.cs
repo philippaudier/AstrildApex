@@ -771,8 +771,16 @@ namespace Editor.Rendering
 
             if (terrain.Mode == Engine.Components.TerrainMode.InfiniteStreaming)
             {
-                // INFINITE STREAMING: Get instances from all renderable tiles
-                vegetationInstances = _terrainRenderer?.GetStreamingVegetationInstances();
+                // INFINITE STREAMING: Get instances from visible tiles only (distance + frustum culling)
+                // Extract frustum for culling
+                var viewPos = CameraPosition();
+                var viewMatrix = _globalUniforms.ViewMatrix;
+                var projMatrix = _globalUniforms.ProjectionMatrix;
+                var viewProjMatrix = viewMatrix * projMatrix;
+                var frustumCuller = new Engine.Rendering.FrustumCuller();
+                frustumCuller.ExtractPlanes(viewProjMatrix);
+
+                vegetationInstances = _terrainRenderer?.GetStreamingVegetationInstances(viewPos, viewProjMatrix, frustumCuller, terrain);
             }
             else
             {

@@ -1325,19 +1325,56 @@ namespace Engine.Rendering.Terrain
         /// <summary>
         /// Get all vegetation instances from all renderable tiles (Infinite Streaming mode only).
         /// Returns a dictionary of layer index -> list of transforms, ready for VegetationRenderer.UpdateBatch().
+        /// OPTIMIZATION: Filters tiles by distance and frustum to avoid spawning trees on all loaded tiles.
         /// </summary>
-        public System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? GetStreamingVegetationInstances()
+        public System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>? GetStreamingVegetationInstances(
+            Vector3 cameraPos, OpenTK.Mathematics.Matrix4 viewProjMatrix, Engine.Rendering.FrustumCuller frustumCuller,
+            Engine.Components.Terrain terrain)
         {
-            if (_tileManager == null) return null;
+            if (_tileManager == null || terrain == null) return null;
 
             var result = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<OpenTK.Mathematics.Matrix4>>();
+            float tileSize = terrain.StreamingTileSize;
 
-            // Collect instances from all renderable tiles
+            // Collect instances from visible tiles only (distance + frustum culling)
             _tileManager.ForEachRenderable(tile =>
             {
                 if (tile.VegetationInstances == null || tile.VegetationInstances.Count == 0)
                     return;
 
+                // Compute tile center position (world space)
+                float tileCenterX = tile.X * tileSize + tileSize * 0.5f;
+                float tileCenterZ = tile.Y * tileSize + tileSize * 0.5f;
+                var tileCenterPos = new Vector3(tileCenterX, 0, tileCenterZ);
+
+                // Find max render distance for this tile's vegetation layers
+                float maxRenderDist = 0f;
+                float maxCullingSphereRadius = 0f;
+                if (terrain.VegetationLayers != null)
+                {
+                    foreach (var layer in terrain.VegetationLayers)
+                    {
+                        if (layer == null || layer.IsGrassLayer || layer.IsRockLayer) continue; // Skip grass/rocks (handled separately)
+                        maxRenderDist = Math.Max(maxRenderDist, layer.MaxRenderDistance);
+                        maxCullingSphereRadius = Math.Max(maxCullingSphereRadius, layer.CullingSphereRadius);
+                    }
+                }
+                if (maxRenderDist <= 0) maxRenderDist = 500f; // Default fallback
+                if (maxCullingSphereRadius <= 0) maxCullingSphereRadius = 5f;
+
+                // OPTIMIZATION: Distance culling - skip tiles beyond render distance
+                float dx = tileCenterPos.X - cameraPos.X;
+                float dz = tileCenterPos.Z - cameraPos.Z;
+                float distToTile = (float)Math.Sqrt(dx * dx + dz * dz);
+                if (distToTile > maxRenderDist + tileSize * 0.71f)
+                    return; // Skip this tile
+
+                // OPTIMIZATION: Frustum culling - skip tiles outside view frustum
+                float tileRadius = Math.Max(tileSize * 1.5f, maxCullingSphereRadius * 50f);
+                if (!frustumCuller.TestSphere(tileCenterPos, tileRadius))
+                    return; // Skip this tile
+
+                // Tile is visible - collect instances
                 foreach (var kvp in tile.VegetationInstances)
                 {
                     int layerIndex = kvp.Key;
