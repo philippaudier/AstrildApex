@@ -47,8 +47,7 @@ namespace Engine.Rendering.PostProcess
         // TAA shader
         private ShaderProgram? _taaShader;
 
-        // Blit shader (ultra-fast copy)
-        private ShaderProgram? _blitShader;
+        // NOTE: Blit shader removed - now using hardware GL.BlitFramebuffer for better performance
 
         // Jitter state
         private int _frameIndex = 0;
@@ -77,8 +76,6 @@ namespace Engine.Rendering.PostProcess
         private int _uJitter = -1;
         private int _uScreenSize = -1;
     private int _uVelocity = -1;
-
-        private int _blitTexLoc = -1;
 
         public TAASettings Settings { get; set; } = TAASettings.Default;
 
@@ -123,22 +120,7 @@ namespace Engine.Rendering.PostProcess
                 try { Engine.Utils.DebugLogger.Log($"[TAA] Stack trace: {ex.StackTrace}"); } catch { }
             }
 
-            // Load ultra-fast blit shader for copying result
-            try
-            {
-                _blitShader = ShaderProgram.FromFiles(
-                    "Engine/Rendering/Shaders/PostProcess/Blit.vert",
-                    "Engine/Rendering/Shaders/PostProcess/Blit.frag"
-                );
-                _blitTexLoc = GL.GetUniformLocation(_blitShader.Handle, "u_Texture");
-                // PERFORMANCE: Disabled log
-                // Console.WriteLine($"[TAA] Blit shader loaded successfully (Handle: {_blitShader.Handle}, u_Texture: {_blitTexLoc})");
-            }
-            catch (Exception ex)
-            {
-                try { Engine.Utils.DebugLogger.Log($"[TAA] Failed to load blit shader: {ex.Message}"); } catch { }
-                try { Engine.Utils.DebugLogger.Log($"[TAA] Stack trace: {ex.StackTrace}"); } catch { }
-            }
+            // NOTE: Blit shader removed - using hardware GL.BlitFramebuffer instead for +1-2 FPS gain
 
             CreateResources();
             CreateFullscreenQuad();
@@ -372,36 +354,35 @@ namespace Engine.Rendering.PostProcess
         }
 
         /// <summary>
-        /// PERFORMANCE-OPTIMIZED: Copy TAA result to output texture using fast blit.
-        /// Returns output FBO that can be used directly.
+        /// PERFORMANCE-OPTIMIZED: Copy TAA result to output texture using hardware framebuffer blit.
+        /// Uses GL.BlitFramebuffer instead of shader-based blit to eliminate state changes.
+        /// Expected gain: +1-2 FPS by reducing shader/texture/VAO bindings.
         /// </summary>
         public void BlitToTarget(int targetFBO, int width, int height)
         {
-            if (_blitShader == null || _historyTexture == 0)
+            if (_historyTexture == 0)
             {
                 if (Engine.Utils.DebugLogger.EnableVerbose)
                 {
-                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] BlitToTarget skipped - blitShader null: {_blitShader == null}, historyTex: {_historyTexture}"); } catch { }
+                    try { Engine.Utils.DebugLogger.Log($"[TAARenderer] BlitToTarget skipped - historyTex: {_historyTexture}"); } catch { }
                 }
                 return;
             }
 
-            GL.BindFramebuffer(FramebufferTarget.Framebuffer, targetFBO);
-            GL.Viewport(0, 0, width, height);
+            // OPTIMIZATION: Use hardware framebuffer blit instead of shader-based blit
+            // This eliminates shader binding, texture binding, uniform upload, VAO binding, and draw call
+            // Replaced 6+ GL state changes with just 2 framebuffer binds + 1 blit
+            GL.BindFramebuffer(FramebufferTarget.ReadFramebuffer, _historyFBO);
+            GL.BindFramebuffer(FramebufferTarget.DrawFramebuffer, targetFBO);
 
-            // Ultra-fast blit
-            GL.UseProgram(_blitShader.Handle);
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, _historyTexture);
-            GL.Uniform1(_blitTexLoc, 0);
-
-            // Single draw call
-            GL.BindVertexArray(_quadVAO);
-            GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
+            GL.BlitFramebuffer(
+                0, 0, _width, _height,          // Source region (TAA history buffer)
+                0, 0, width, height,             // Dest region (output framebuffer)
+                ClearBufferMask.ColorBufferBit,
+                BlitFramebufferFilter.Linear     // Linear filtering for high quality
+            );
 
             // Cleanup
-            GL.BindVertexArray(0);
-            GL.UseProgram(0);
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         }
 
@@ -460,7 +441,7 @@ namespace Engine.Rendering.PostProcess
                 GL.DeleteBuffer(_quadVBO);
 
             _taaShader?.Dispose();
-            _blitShader?.Dispose();
+            // NOTE: Blit shader removed - using hardware GL.BlitFramebuffer instead
         }
     }
 }
