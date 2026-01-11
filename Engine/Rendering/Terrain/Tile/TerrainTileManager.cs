@@ -183,22 +183,48 @@ namespace Engine.Rendering.Terrain.Tile
             // PHASE 2: Adjust LODs to prevent seams (iterative smoothing)
             // Rule: A tile's LOD can be at most 1 higher than its neighbors' LODs
             // This prevents T-junctions and ensures seamless borders
-            bool changed = true;
+            // OPTIMIZED: Use in-place updates with change tracking to avoid dictionary copies
+
+            var changedTiles = new System.Collections.Generic.HashSet<(int, int)>();
             int maxIterations = 10;  // Prevent infinite loops
             int iteration = 0;
 
-            while (changed && iteration < maxIterations)
+            // Pre-fetch neighbor tiles once (batch lock acquisition)
+            var neighborTiles = new System.Collections.Generic.Dictionary<(int, int), int>();
+            lock (_tilesLock)
             {
-                changed = false;
-                iteration++;
-
-                var adjustedLods = new System.Collections.Generic.Dictionary<(int, int), int>(desiredLods);
-
-                // CRITICAL: Iterate over adjusted LODs, not original desiredLods
-                foreach (var kvp in adjustedLods.ToList())  // ToList() to avoid collection modification during iteration
+                foreach (var kvp in desiredLods)
                 {
                     var (tx, ty) = kvp.Key;
-                    int myLod = kvp.Value;
+                    var neighbors = new[] {
+                        (tx, ty - 1), (tx, ty + 1), (tx - 1, ty), (tx + 1, ty)
+                    };
+
+                    foreach (var neighbor in neighbors)
+                    {
+                        if (!desiredLods.ContainsKey(neighbor) &&
+                            _tilesByCoord.TryGetValue(neighbor, out var list) && list.Count > 0)
+                        {
+                            neighborTiles.TryAdd(neighbor, list[0].Lod);
+                        }
+                    }
+                }
+            }
+
+            // Mark all tiles as potentially changed for first iteration
+            foreach (var key in desiredLods.Keys)
+                changedTiles.Add(key);
+
+            while (changedTiles.Count > 0 && iteration < maxIterations)
+            {
+                iteration++;
+                var tilesToCheck = new System.Collections.Generic.List<(int, int)>(changedTiles);
+                changedTiles.Clear();
+
+                foreach (var (tx, ty) in tilesToCheck)
+                {
+                    if (!desiredLods.TryGetValue((tx, ty), out int myLod))
+                        continue;
 
                     // Check 4 neighbors (N, S, E, W)
                     var neighbors = new[] {
@@ -213,25 +239,19 @@ namespace Engine.Rendering.Terrain.Tile
 
                     foreach (var neighbor in neighbors)
                     {
-                        // Check both desiredLods AND currently rendered tiles
                         int neighborLod = int.MaxValue;
-                        
-                        if (adjustedLods.TryGetValue(neighbor, out int desiredNeighborLod))
+
+                        // Check desiredLods first (no lock needed)
+                        if (desiredLods.TryGetValue(neighbor, out int desiredNeighborLod))
                         {
                             neighborLod = desiredNeighborLod;
                             hasNeighbor = true;
                         }
-                        else
+                        // Check pre-fetched neighbor tiles
+                        else if (neighborTiles.TryGetValue(neighbor, out int renderedLod))
                         {
-                            // Check if there's a currently rendered tile at this neighbor position
-                            lock (_tilesLock)
-                            {
-                                if (_tilesByCoord.TryGetValue(neighbor, out var list) && list.Count > 0)
-                                {
-                                    neighborLod = list[0].Lod;
-                                    hasNeighbor = true;
-                                }
-                            }
+                            neighborLod = renderedLod;
+                            hasNeighbor = true;
                         }
 
                         if (neighborLod < minNeighborLod)
@@ -243,12 +263,18 @@ namespace Engine.Rendering.Terrain.Tile
                     // If we have at least one neighbor and our LOD is > neighbor + 1, reduce it
                     if (hasNeighbor && minNeighborLod != int.MaxValue && myLod > minNeighborLod + 1)
                     {
-                        adjustedLods[(tx, ty)] = minNeighborLod + 1;
-                        changed = true;
+                        int newLod = minNeighborLod + 1;
+                        desiredLods[(tx, ty)] = newLod;
+
+                        // Mark this tile and its neighbors as changed for next iteration
+                        changedTiles.Add((tx, ty));
+                        foreach (var neighbor in neighbors)
+                        {
+                            if (desiredLods.ContainsKey(neighbor))
+                                changedTiles.Add(neighbor);
+                        }
                     }
                 }
-
-                desiredLods = adjustedLods;
             }
 
             // PHASE 3: Request tiles with adjusted LODs
