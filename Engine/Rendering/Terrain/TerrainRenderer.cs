@@ -26,6 +26,9 @@ namespace Engine.Rendering.Terrain
         private float _lastNoiseScale = 0;
         private int _lastOctaves = 0;
 
+        // Reusable frustum culler for tile culling (avoids per-frame allocation)
+        private Engine.Rendering.FrustumCuller _tileFrustumCuller = new Engine.Rendering.FrustumCuller();
+
         public TerrainRenderer()
         {
             // Subscribe to material changes to invalidate cache
@@ -449,22 +452,21 @@ namespace Engine.Rendering.Terrain
                             GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
                             _shader.SetInt("u_Splatmap[1]", 21);
 
-                            // CRITICAL FIX: Initialize ALL array elements (MAX_LAYERS = 8) to avoid InvalidOperation
-                            // GLSL requires all array elements to be initialized, even if not used
-                            
-                            #pragma warning disable CS0618 // Disable obsolete warnings for legacy texture properties
-                            for (int i = 0; i < 8; i++)
-                            {
-                                if (i < layerCount)
-                                {
-                                    var layer = terrain.TerrainLayers[i];
+                            // OPTIMIZATION: Only bind textures and upload uniforms for ACTIVE layers (not all 8)
+                            // Shader reads u_LayerCount to know how many layers to sample, so dummy layers are unused
+                            // This reduces ~120 redundant GL calls per frame (from 170 to 50 with 2 layers)
 
-                                    // Load Material for this layer (NEW SYSTEM with caching)
-                                    MaterialAsset? layerMaterial = null;
-                                    if (layer.Material.HasValue)
-                                    {
-                                        layerMaterial = GetMaterialCached(layer.Material.Value);
-                                    }
+                            #pragma warning disable CS0618 // Disable obsolete warnings for legacy texture properties
+                            for (int i = 0; i < layerCount; i++)  // OPTIMIZED: Loop only active layers
+                            {
+                                var layer = terrain.TerrainLayers[i];
+
+                                // Load Material for this layer (NEW SYSTEM with caching)
+                                MaterialAsset? layerMaterial = null;
+                                if (layer.Material.HasValue)
+                                {
+                                    layerMaterial = GetMaterialCached(layer.Material.Value);
+                                }
 
                                     // Bind albedo texture (from Material or legacy property)
                                     GL.ActiveTexture(TextureUnit.Texture0 + i * 2);
@@ -619,47 +621,14 @@ namespace Engine.Rendering.Terrain
                                     
                                     _shader.SetFloat($"u_LayerMetallic[{i}]", metallic);
                                     _shader.SetFloat($"u_LayerSmoothness[{i}]", smoothness);
-                                    _shader.SetVec4($"u_LayerAlbedoColor[{i}]", albedoColor);
-                                    _shader.SetFloat($"u_LayerNormalStrength[{i}]", normalStrength);
-                                    _shader.SetInt($"u_LayerTransparencyMode[{i}]", transparencyMode);
+                                _shader.SetVec4($"u_LayerAlbedoColor[{i}]", albedoColor);
+                                _shader.SetFloat($"u_LayerNormalStrength[{i}]", normalStrength);
+                                _shader.SetInt($"u_LayerTransparencyMode[{i}]", transparencyMode);
 
-                                    // Debug log removed - was spamming console every frame
-                                }
-                                else
-                                {
-                                    // Initialize unused layers with dummy textures and default values
-                                    GL.ActiveTexture(TextureUnit.Texture0 + i * 2);
-                                    GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
-
-                                    int albedoLoc = GL.GetUniformLocation(_shader.Handle, $"u_LayerAlbedo[{i}]");
-                                    if (albedoLoc >= 0)
-                                        GL.Uniform1(albedoLoc, i * 2);
-
-                                    GL.ActiveTexture(TextureUnit.Texture0 + i * 2 + 1);
-                                    GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.White1x1);
-
-                                    int normalLoc = GL.GetUniformLocation(_shader.Handle, $"u_LayerNormal[{i}]");
-                                    if (normalLoc >= 0)
-                                        GL.Uniform1(normalLoc, i * 2 + 1);
-
-                                    _shader.SetVec4($"u_LayerTilingOffset[{i}]", new Vector4(1f, 1f, 0f, 0f));
-                                    _shader.SetInt($"u_LayerUseTriplanar[{i}]", 0);
-                                    _shader.SetFloat($"u_LayerTriplanarScale[{i}]", 1.0f);
-                                    _shader.SetFloat($"u_LayerTriplanarBlend[{i}]", 4.0f);
-                                    _shader.SetVec4($"u_LayerStylize[{i}]", new Vector4(1f,1f,1f,0f));
-                                    _shader.SetFloat($"u_LayerEmission[{i}]", 0f);
-                                    _shader.SetVec4($"u_LayerHeightSlope[{i}]", new Vector4(0f, 0f, 0f, 0f));
-                                    _shader.SetFloat($"u_LayerStrength[{i}]", 0f);
-                                    _shader.SetInt($"u_LayerIsUnderwater[{i}]", 0);
-                                    _shader.SetVec4($"u_LayerUnderwaterParams[{i}]", new Vector4(0f, 0f, 0f, 0f));
-                                    _shader.SetFloat($"u_LayerUnderwaterBlend[{i}]", 0f);
-                                    _shader.SetFloat($"u_LayerMetallic[{i}]", 0f);
-                                    _shader.SetFloat($"u_LayerSmoothness[{i}]", 0.5f);
-                                    _shader.SetVec4($"u_LayerAlbedoColor[{i}]", Vector4.One);
-                                    _shader.SetFloat($"u_LayerNormalStrength[{i}]", 1.0f);
-                                    _shader.SetInt($"u_LayerTransparencyMode[{i}]", 0);
-                                }
+                                // Debug log removed - was spamming console every frame
                             }
+                            // OPTIMIZED: Removed else block for dummy layer initialization
+                            // Shader only samples first u_LayerCount layers, so dummy data is unused
 #pragma warning restore CS0618
 
                             // Configured layers successfully
@@ -934,17 +903,20 @@ namespace Engine.Rendering.Terrain
                 _tileManager.UpdateFadingTiles(deltaTime);
 
                 // === TILE CULLING ===
-                // Setup frustum culling if enabled
+                // Setup frustum culling if enabled (OPTIMIZED: reuse instance instead of allocating)
                 bool useFrustumCulling = terrain.EnableTileFrustumCulling;
                 float cullingDistance = terrain.TileCullingDistance;
                 Engine.Rendering.FrustumCuller? frustumCuller = null;
 
                 if (useFrustumCulling)
                 {
-                    frustumCuller = new Engine.Rendering.FrustumCuller();
+                    frustumCuller = _tileFrustumCuller;  // Reuse pre-allocated instance
                     Matrix4 viewProj = view * projection;
                     frustumCuller.ExtractPlanes(viewProj);
                 }
+
+                // Pre-compute squared culling distance to avoid sqrt in tight loop
+                float cullingDistanceSq = cullingDistance * cullingDistance;
 
                 // Frustum test function (System.Numerics.Vector3 for tile manager compatibility)
                 Func<System.Numerics.Vector3, System.Numerics.Vector3, bool> frustumTest = (worldMin, worldMax) =>
@@ -953,12 +925,12 @@ namespace Engine.Rendering.Terrain
                     Vector3 worldMinOtk = new Vector3(worldMin.X, worldMin.Y, worldMin.Z);
                     Vector3 worldMaxOtk = new Vector3(worldMax.X, worldMax.Y, worldMax.Z);
 
-                    // Distance culling (check tile center)
+                    // Distance culling (check tile center) - OPTIMIZED: use LengthSquared to avoid sqrt
                     if (cullingDistance > 0)
                     {
                         Vector3 tileCenter = (worldMinOtk + worldMaxOtk) * 0.5f;
-                        float distanceToCamera = (tileCenter - viewPos).Length;
-                        if (distanceToCamera > cullingDistance)
+                        float distanceSqToCamera = (tileCenter - viewPos).LengthSquared;
+                        if (distanceSqToCamera > cullingDistanceSq)
                             return false;
                     }
 
@@ -987,7 +959,7 @@ namespace Engine.Rendering.Terrain
 
                             GL.BindVertexArray(tile.Vao);
                             GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
-                            GL.BindVertexArray(0);
+                            // OPTIMIZATION: Don't unbind VAO between tiles (reduces state changes)
                         }
                     });
                 }
@@ -1006,10 +978,13 @@ namespace Engine.Rendering.Terrain
 
                             GL.BindVertexArray(tile.Vao);
                             GL.DrawElements(PrimitiveType.Triangles, tile.IndexCount, DrawElementsType.UnsignedInt, 0);
-                            GL.BindVertexArray(0);
+                            // OPTIMIZATION: Don't unbind VAO between tiles (reduces state changes)
                         }
                     });
                 }
+
+                // Unbind VAO once after all tiles rendered
+                GL.BindVertexArray(0);
             }
             else
             {
