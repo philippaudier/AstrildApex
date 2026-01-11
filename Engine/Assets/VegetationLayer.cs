@@ -249,7 +249,7 @@ namespace Engine.Assets
     {
         // === DENSITY & COVERAGE ===
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 1.5f; // Multiplier for blade count (0.5-3)
+        public float Density { get; set; } = 0.25f; // Multiplier for blade count (0.05-1)
 
         [Engine.Serialization.SerializableAttribute("coverageNoiseScale")]
         public float CoverageNoiseScale { get; set; } = 0.05f; // Noise scale for patchy grass (world-space)
@@ -284,7 +284,7 @@ namespace Engine.Assets
         public float BladeCurvature { get; set; } = 0.4f; // Bend amount (0-1)
 
         [Engine.Serialization.SerializableAttribute("bladesPerVertex")]
-        public int BladesPerVertex { get; set; } = 6; // Base number of grass blades per triangle (1-10)
+        public int BladesPerVertex { get; set; } = 2; // Base number of grass blades per triangle (1-10)
 
         // === APPEARANCE ===
         [Engine.Serialization.SerializableAttribute("colorTop")]
@@ -318,10 +318,10 @@ namespace Engine.Assets
 
         // === LOD & CULLING ===
         [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
-        public float MaxRenderDistance { get; set; } = 150f; // Distance fade-out
+        public float MaxRenderDistance { get; set; } = 80f; // Distance fade-out
 
         [Engine.Serialization.SerializableAttribute("fadeRange")]
-        public float FadeRange { get; set; } = 30f; // Distance over which grass fades
+        public float FadeRange { get; set; } = 20f; // Distance over which grass fades
     }
 
     /// <summary>
@@ -334,7 +334,7 @@ namespace Engine.Assets
     {
         // === DENSITY & DISTRIBUTION ===
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 0.8f; // Rocks per triangle (0.1-2)
+        public float Density { get; set; } = 0.12f; // Rocks per triangle (0.01-1)
 
         [Engine.Serialization.SerializableAttribute("clusteringStrength")]
         public float ClusteringStrength { get; set; } = 0.5f; // 0 = uniform, 1 = highly clustered
@@ -379,7 +379,7 @@ namespace Engine.Assets
         public float NoiseAmplitude { get; set; } = 0.35f; // Displacement amount (0-1)
 
         [Engine.Serialization.SerializableAttribute("noiseOctaves")]
-        public int NoiseOctaves { get; set; } = 3; // FBM octaves for detail (1-5)
+        public int NoiseOctaves { get; set; } = 2; // FBM octaves for detail (1-5)
 
         [Engine.Serialization.SerializableAttribute("noiseLacunarity")]
         public float NoiseLacunarity { get; set; } = 2.2f; // Frequency multiplier per octave
@@ -441,10 +441,10 @@ namespace Engine.Assets
 
         // === LOD & CULLING ===
         [Engine.Serialization.SerializableAttribute("maxRenderDistance")]
-        public float MaxRenderDistance { get; set; } = 200f; // Distance fade-out
+        public float MaxRenderDistance { get; set; } = 120f; // Distance fade-out
 
         [Engine.Serialization.SerializableAttribute("fadeRange")]
-        public float FadeRange { get; set; } = 40f; // Distance over which rocks fade
+        public float FadeRange { get; set; } = 20f; // Distance over which rocks fade
 
         [Engine.Serialization.SerializableAttribute("lodBias")]
         public float LodBias { get; set; } = 1.0f; // Detail level multiplier

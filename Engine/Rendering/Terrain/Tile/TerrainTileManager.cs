@@ -84,6 +84,7 @@ namespace Engine.Rendering.Terrain.Tile
 
             // PHASE 1: Calculate desired LOD for each tile based on REAL distance from camera
             var desiredLods = new System.Collections.Generic.Dictionary<(int, int), int>();
+            var tileDistances = new System.Collections.Generic.Dictionary<(int, int), float>(); // Store distances for priority sorting
 
             for (int dy = -maxTileRadius; dy <= maxTileRadius; dy++)
             {
@@ -110,6 +111,9 @@ namespace Engine.Rendering.Terrain.Tile
 
                     // Skip tiles beyond max render distance (TRUE CIRCLE, not square)
                     if (realDistMeters > maxRenderDistance) continue;
+
+                    // Store distance for priority sorting
+                    tileDistances[(tx, ty)] = realDistMeters;
 
                     // Check if tile already exists at this position with any LOD
                     var coordKey = (tx, ty);
@@ -288,7 +292,8 @@ namespace Engine.Rendering.Terrain.Tile
                 // Note: Skirts hide LOD seams, so we don't need to regenerate when neighbors change
                 if (currentLod == -1 || currentLod != finalLod)
                 {
-                    RequestTile(tx, ty, finalLod, neighborDict);
+                    float distance = tileDistances.TryGetValue((tx, ty), out float dist) ? dist : float.MaxValue;
+                    RequestTile(tx, ty, finalLod, neighborDict, distance);
                 }
             }
 
@@ -307,7 +312,7 @@ namespace Engine.Rendering.Terrain.Tile
         /// Request generation of a single tile.
         /// CRITICAL: Only one LOD can be active for a given (x,y) position at a time.
         /// </summary>
-        public TerrainTile RequestTile(int x, int y, int lod, System.Collections.Generic.Dictionary<(int, int), int>? neighborLods = null)
+        public TerrainTile RequestTile(int x, int y, int lod, System.Collections.Generic.Dictionary<(int, int), int>? neighborLods = null, float distanceToCamera = float.MaxValue)
         {
             lock (_tilesLock)
             {
@@ -323,6 +328,7 @@ namespace Engine.Rendering.Terrain.Tile
                     if (existing.State == TerrainTile.TileState.Evicted ||
                         existing.State == TerrainTile.TileState.Unloaded)
                     {
+                        existing.RequestDistance = distanceToCamera; // Update distance for priority
                         existing.RequestLoad();
                         _generationQueue.Enqueue(existing);
                         _workEvent.Set();
@@ -341,6 +347,7 @@ namespace Engine.Rendering.Terrain.Tile
                 var t = new TerrainTile(x, y, lod);
                 // Attach neighbor info for CPU generator to use for stitching
                 t.NeighborLods = neighborLods;
+                t.RequestDistance = distanceToCamera; // Store distance for priority sorting
                 _tiles[key] = t;
 
                 // Add to secondary index for O(1) LOD lookup
@@ -409,6 +416,7 @@ namespace Engine.Rendering.Terrain.Tile
 
         /// <summary>
         /// Worker thread loop - processes tile generation queue.
+        /// OPTIMIZATION: Tiles are processed by distance priority (closest first)
         /// </summary>
         private void WorkerLoop()
         {
@@ -417,14 +425,38 @@ namespace Engine.Rendering.Terrain.Tile
                 _workEvent.WaitOne(100);
                 if (!_running) break;
 
-                while (_running && _generationQueue.TryDequeue(out var tile))
+                // Dequeue all pending tiles into a list
+                var pendingTiles = new List<TerrainTile>();
+                while (_generationQueue.TryDequeue(out var tile))
                 {
+                    pendingTiles.Add(tile);
+                }
+
+                // Sort by distance to camera (closest first) for optimal streaming
+                pendingTiles.Sort((a, b) => a.RequestDistance.CompareTo(b.RequestDistance));
+
+                // DEBUG: Log first 3 tiles to verify priority sorting
+                if (pendingTiles.Count > 0)
+                {
+                    int logCount = Math.Min(3, pendingTiles.Count);
+                    for (int i = 0; i < logCount; i++)
+                    {
+                        var t = pendingTiles[i];
+                        Engine.Utils.DebugLogger.Log($"[TileManager] Processing tile ({t.X},{t.Y}) LOD{t.Lod} at {t.RequestDistance:F1}m (priority #{i+1}/{pendingTiles.Count})");
+                    }
+                }
+
+                // Process tiles in priority order
+                foreach (var tile in pendingTiles)
+                {
+                    if (!_running) break;
+
                     try
                     {
-                                if (TileGenerator == null) continue;
+                        if (TileGenerator == null) continue;
 
-                                // Generate CPU buffers (generator now receives the TerrainTile so it can access NeighborLods)
-                                var result = TileGenerator.Invoke(tile);
+                        // Generate CPU buffers (generator now receives the TerrainTile so it can access NeighborLods)
+                        var result = TileGenerator.Invoke(tile);
                         if (result.vertices != null && result.indices != null)
                         {
                             tile.OnCpuReady(result.vertices, result.indices);

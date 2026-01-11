@@ -4,6 +4,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using Engine.Assets;
 using Engine.Components;
+using Engine.Profiling;
 
 namespace Engine.Rendering
 {
@@ -15,6 +16,7 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _grassShader = null;
         private bool _disposed = false;
+        private int _logCounter = 0; // For debug logging
 
         /// <summary>
         /// Stores grass data per terrain + layer combination
@@ -27,8 +29,9 @@ namespace Engine.Rendering
             public int TerrainIndexCount;
             public GrassProperties Properties = new GrassProperties();
             public bool NeedsRebuild = true;
-            public Matrix4 ModelMatrix = Matrix4.Identity;    // Terrain's model matrix
+            public Matrix4 ModelMatrix = Matrix4.Identity;    // Terrain's model matrix (for shader)
             public Matrix3 NormalMatrix = Matrix3.Identity;   // Terrain's normal matrix
+            public Vector3 TileCenterPosition = Vector3.Zero; // Tile center for distance culling (separate from ModelMatrix)
         }
 
         private readonly Dictionary<string, GrassLayer> _grassLayers = new();
@@ -131,8 +134,9 @@ namespace Engine.Rendering
         /// Register a grass layer for a terrain layer.
         /// Uses the terrain's mesh as the base geometry.
         /// </summary>
+        /// <param name="tileCenterPosition">Optional: tile center position for distance culling (for streaming tiles with vertices already in world space)</param>
         public void RegisterGrassLayer(Guid terrainGuid, int layerIndex, GrassProperties properties,
-            int terrainVAO, int terrainIndexCount, Matrix4 modelMatrix, Matrix3 normalMatrix)
+            int terrainVAO, int terrainIndexCount, Matrix4 modelMatrix, Matrix3 normalMatrix, Vector3? tileCenterPosition = null)
         {
             string key = $"{terrainGuid}_{layerIndex}";
 
@@ -153,6 +157,8 @@ namespace Engine.Rendering
             layer.TerrainIndexCount = terrainIndexCount;
             layer.ModelMatrix = modelMatrix;
             layer.NormalMatrix = normalMatrix;
+            // Use provided tile center position, or extract from model matrix translation
+            layer.TileCenterPosition = tileCenterPosition ?? new Vector3(modelMatrix.M41, modelMatrix.M42, modelMatrix.M43);
             layer.NeedsRebuild = true;
         }
 
@@ -178,11 +184,24 @@ namespace Engine.Rendering
         /// </summary>
         public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity)
         {
-            if (_grassShader == null)
-                return;
+            using (Profiler.Profile("GrassRenderer.Render"))
+            {
+                Profiling.GPUProfiler.BeginGPUScope("GrassRenderer");
+                Profiling.RenderProfiler.BeginRenderPass("Grass");
 
-            if (_grassLayers.Count == 0)
-                return;
+                if (_grassShader == null)
+                {
+                    Profiling.RenderProfiler.EndRenderPass();
+                    Profiling.GPUProfiler.EndGPUScope();
+                    return;
+                }
+
+                if (_grassLayers.Count == 0)
+                {
+                    Profiling.RenderProfiler.EndRenderPass();
+                    Profiling.GPUProfiler.EndGPUScope();
+                    return;
+                }
 
             // Enable blending for soft grass tips
             GL.Enable(EnableCap.Blend);
@@ -198,12 +217,29 @@ namespace Engine.Rendering
             _grassShader.SetFloat("u_AmbientIntensity", ambientIntensity);
 
             // Render each grass layer with its own transform
+            int layersRendered = 0;
+            int layersSkipped = 0;
+            const int MaxGrassLayersPerFrame = 50; // Limit grass layers rendered (reduced from 100 with frustum culling)
+
             foreach (var layer in _grassLayers.Values)
             {
                 if (layer.TerrainVAO == 0 || layer.TerrainIndexCount == 0)
                     continue;
 
+                // OPTIMIZATION: Stop if too many layers rendered this frame
+                if (layersRendered >= MaxGrassLayersPerFrame)
+                {
+                    layersSkipped++;
+                    break;
+                }
+
+                // Get properties early
                 var props = layer.Properties;
+
+                // Distance culling is now handled in ViewportRenderer (before RegisterGrassLayer)
+                // This avoids double culling and gives user control via inspector MaxRenderDistance
+
+                layersRendered++;
 
                 // Set per-layer model transform
                 _grassShader.SetMat4("u_Model", layer.ModelMatrix);
@@ -312,14 +348,25 @@ namespace Engine.Rendering
 
                 GL.DrawElements(PrimitiveType.Triangles, layer.TerrainIndexCount,
                     DrawElementsType.UnsignedInt, IntPtr.Zero);
+
+                // Record draw call - geometry shader generates grass blades from terrain triangles
+                // Each terrain triangle generates multiple grass blades (BladesPerVertex)
+                int terrainTriangles = layer.TerrainIndexCount / 3;
+                int grassBladesGenerated = terrainTriangles * props.BladesPerVertex;
+                Profiling.RenderProfiler.RecordDrawCall(1, terrainTriangles);
+                Profiling.Profiler.SetCounter($"Grass.{layer.TerrainGuid}_BladesGenerated", grassBladesGenerated);
             }
 
-            // Restore state
-            GL.BindVertexArray(0);
-            GL.UseProgram(0);
-            GL.DepthMask(true);
-            GL.Disable(EnableCap.Blend);
-            GL.Enable(EnableCap.CullFace);
+                // Restore state
+                GL.BindVertexArray(0);
+                GL.UseProgram(0);
+                GL.DepthMask(true);
+                GL.Disable(EnableCap.Blend);
+                GL.Enable(EnableCap.CullFace);
+
+                Profiling.RenderProfiler.EndRenderPass();
+                Profiling.GPUProfiler.EndGPUScope();
+            }
         }
 
         public void Dispose()

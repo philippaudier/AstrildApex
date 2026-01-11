@@ -1469,6 +1469,9 @@ namespace Editor.Rendering
         // Rock Renderer (GPU-generated procedural rocks)
         private Engine.Rendering.RockRenderer? _rockRenderer = null;
 
+        // Frustum culler for tile visibility (grass/rocks)
+        private Engine.Rendering.FrustumCuller _frustumCuller = new Engine.Rendering.FrustumCuller();
+
         public Engine.Rendering.PostProcess.TAARenderer.TAASettings TAASettings
         {
             get => _taaSettings;
@@ -6881,7 +6884,9 @@ void main(){
                             catch { } // Non-critical if fails
 
                             // Render terrain with all features
-                            _terrainRenderer.RenderTerrain(
+                            if (_terrainRenderer != null)
+                            {
+                                _terrainRenderer.RenderTerrain(
                                 terrain,
                                 viewMatrix,
                                 projMatrix,
@@ -6904,10 +6909,18 @@ void main(){
                                 _globalUBO,  // Pass globalUBO for clip plane support
                                 entity.Id  // Pass entity ID for selection outline
                             );
+                            }
 
                             // === GRASS RENDERING (GPU-generated grass from terrain mesh) ===
                             if (_grassRenderer != null && terrain.VegetationLayers != null)
                             {
+                                // Clear all previous grass layers - they will be re-registered for current tiles
+                                _grassRenderer.ClearAll();
+
+                                // OPTIMIZATION: Extract frustum planes for tile visibility culling
+                                var viewProjMatrix = viewMatrix * projMatrix;
+                                _frustumCuller.ExtractPlanes(viewProjMatrix);
+
                                 // Compute normal matrix from terrain model matrix
                                 Matrix3 grassNormalMat;
                                 try
@@ -6924,8 +6937,17 @@ void main(){
                                 for (int vIdx = 0; vIdx < terrain.VegetationLayers.Length; vIdx++)
                                 {
                                     var vLayer = terrain.VegetationLayers[vIdx];
+
                                     if (vLayer == null || !vLayer.IsGrassLayer || vLayer.GrassProperties == null)
                                         continue;
+
+                                    // Get max render distance for this layer (for pre-culling)
+                                    float maxRenderDist = vLayer.GrassProperties.MaxRenderDistance;
+                                    if (maxRenderDist <= 0) maxRenderDist = 500f; // Default fallback
+
+                                    // Get culling sphere radius from parent layer (for frustum culling)
+                                    float cullingSphereRadius = vLayer.CullingSphereRadius;
+                                    if (cullingSphereRadius <= 0) cullingSphereRadius = 5f; // Default fallback
 
                                     // Handle streaming terrain mode (multiple tiles)
                                     if (terrain.Mode == TerrainMode.InfiniteStreaming && _terrainRenderer != null && _terrainRenderer.HasActiveTiles)
@@ -6933,11 +6955,32 @@ void main(){
                                         float tileSize = terrain.StreamingTileSize;
                                         _terrainRenderer.ForEachRenderableTile((tileVao, tileIndexCount, tileX, tileY, tileSz) =>
                                         {
-                                            // Tile vertices are already in world coordinates, no offset needed
-                                            // Use tile-specific layer index to avoid collisions
+                                            // Compute tile center position (world space)
+                                            float tileCenterX = tileX * tileSz + tileSz * 0.5f;
+                                            float tileCenterZ = tileY * tileSz + tileSz * 0.5f;
+                                            var tileCenterPos = new OpenTK.Mathematics.Vector3(tileCenterX, 0, tileCenterZ);
+
+                                            // OPTIMIZATION: Distance culling - skip tiles beyond render distance
+                                            // Use XZ distance only (ignore Y) since grass properties define horizontal range
+                                            float dx = tileCenterPos.X - viewPos.X;
+                                            float dz = tileCenterPos.Z - viewPos.Z;
+                                            float distToTile = (float)Math.Sqrt(dx * dx + dz * dz);
+
+                                            // Distance culling (only here, not in GrassRenderer to avoid double culling)
+                                            if (maxRenderDist > 0 && distToTile > maxRenderDist + tileSz * 0.71f)
+                                                return; // Skip this tile
+
+                                            // OPTIMIZATION: Frustum culling - skip tiles outside view frustum
+                                            // Use expanded radius to include tiles at horizon (user can adjust via CullingSphereRadius)
+                                            // Base: tile diagonal, expanded by culling sphere radius scaled up for tile coverage
+                                            float tileRadius = Math.Max(tileSz * 1.5f, cullingSphereRadius * 50f);
+                                            if (!_frustumCuller.TestSphere(tileCenterPos, tileRadius))
+                                                return; // Skip this tile
+
+                                            // Tile is visible - register grass layer
                                             int regIndex = -(vIdx + 1) * 10000 + tileX * 100 + tileY;
                                             _grassRenderer.RegisterGrassLayer(entity.Guid, regIndex, vLayer.GrassProperties,
-                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity);
+                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity, tileCenterPos);
                                         }, tileSize);
                                     }
                                     else
@@ -6974,6 +7017,11 @@ void main(){
                             // === ROCK RENDERING (GPU-generated procedural rocks from terrain mesh) ===
                             if (_rockRenderer != null && terrain.VegetationLayers != null)
                             {
+                                // Clear all previous rock layers - they will be re-registered for current tiles
+                                _rockRenderer.ClearAll();
+
+                                // Frustum already extracted for grass (reuse it for rocks)
+
                                 // Compute normal matrix from terrain model matrix
                                 Matrix3 rockNormalMat;
                                 try
@@ -6990,8 +7038,17 @@ void main(){
                                 for (int vIdx = 0; vIdx < terrain.VegetationLayers.Length; vIdx++)
                                 {
                                     var vLayer = terrain.VegetationLayers[vIdx];
+
                                     if (vLayer == null || !vLayer.IsRockLayer || vLayer.RockProperties == null)
                                         continue;
+
+                                    // Get max render distance for this layer (for pre-culling)
+                                    float maxRenderDist = vLayer.RockProperties.MaxRenderDistance;
+                                    if (maxRenderDist <= 0) maxRenderDist = 500f; // Default fallback
+
+                                    // Get culling sphere radius from parent layer (for frustum culling)
+                                    float cullingSphereRadius = vLayer.CullingSphereRadius;
+                                    if (cullingSphereRadius <= 0) cullingSphereRadius = 5f; // Default fallback
 
                                     // Handle streaming terrain mode (multiple tiles)
                                     if (terrain.Mode == TerrainMode.InfiniteStreaming && _terrainRenderer != null && _terrainRenderer.HasActiveTiles)
@@ -6999,9 +7056,32 @@ void main(){
                                         float tileSize = terrain.StreamingTileSize;
                                         _terrainRenderer.ForEachRenderableTile((tileVao, tileIndexCount, tileX, tileY, tileSz) =>
                                         {
+                                            // Compute tile center position (world space)
+                                            float tileCenterX = tileX * tileSz + tileSz * 0.5f;
+                                            float tileCenterZ = tileY * tileSz + tileSz * 0.5f;
+                                            var tileCenterPos = new OpenTK.Mathematics.Vector3(tileCenterX, 0, tileCenterZ);
+
+                                            // OPTIMIZATION: Distance culling - skip tiles beyond render distance
+                                            // Use XZ distance only (ignore Y) since rock properties define horizontal range
+                                            float dx = tileCenterPos.X - viewPos.X;
+                                            float dz = tileCenterPos.Z - viewPos.Z;
+                                            float distToTile = (float)Math.Sqrt(dx * dx + dz * dz);
+
+                                            // Distance culling (only here, not in RockRenderer to avoid double culling)
+                                            if (maxRenderDist > 0 && distToTile > maxRenderDist + tileSz * 0.71f)
+                                                return; // Skip this tile
+
+                                            // OPTIMIZATION: Frustum culling - skip tiles outside view frustum
+                                            // Use expanded radius to include tiles at horizon (user can adjust via CullingSphereRadius)
+                                            // Base: tile diagonal, expanded by culling sphere radius scaled up for tile coverage
+                                            float tileRadius = Math.Max(tileSz * 1.5f, cullingSphereRadius * 50f);
+                                            if (!_frustumCuller.TestSphere(tileCenterPos, tileRadius))
+                                                return; // Skip this tile
+
+                                            // Tile is visible - register rock layer
                                             int regIndex = -(vIdx + 1) * 10000 + tileX * 100 + tileY;
                                             _rockRenderer.RegisterRockLayer(entity.Guid, regIndex, vLayer.RockProperties,
-                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity);
+                                                tileVao, tileIndexCount, Matrix4.Identity, Matrix3.Identity, tileCenterPos);
                                         }, tileSize);
                                     }
                                     else

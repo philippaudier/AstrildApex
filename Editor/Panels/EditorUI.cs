@@ -314,6 +314,7 @@ public static class EditorUI
                 var sim = ShowIconManager; if (ImGui.MenuItem("🎨 SVG Icons Manager", null, sim)) ShowIconManager = !ShowIconManager;
                 var spo = ShowPerformanceOverlay; if (ImGui.MenuItem("⚡ Performance Overlay", null, spo)) ShowPerformanceOverlay = !ShowPerformanceOverlay;
                 var ssp = SystemsProfilerPanel.IsOpen; if (ImGui.MenuItem("🔧 Systems Profiler", null, ssp)) SystemsProfilerPanel.IsOpen = !SystemsProfilerPanel.IsOpen;
+                var prof = ProfilerPanel.IsOpen; if (ImGui.MenuItem("📊 GPU Profiler", null, prof)) ProfilerPanel.IsOpen = !ProfilerPanel.IsOpen;
                 ImGui.EndMenu();
             }
 
@@ -566,6 +567,11 @@ public static class EditorUI
         PanelProfiler.BeginPanel("SystemsProfiler");
         SystemsProfilerPanel.Draw();
         PanelProfiler.EndPanel("SystemsProfiler");
+
+        // GPU Profiler panel
+        PanelProfiler.BeginPanel("GPUProfiler");
+        ProfilerPanel.Draw();
+        PanelProfiler.EndPanel("GPUProfiler");
 
         // Render settings panels
         PanelProfiler.BeginPanel("InputSettings");

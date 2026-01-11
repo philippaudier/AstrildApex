@@ -187,6 +187,10 @@ namespace Editor.Rendering
                 return;
             }
 
+            // DEBUG: Log vegetation update to detect excessive calls
+            int totalInstances = terrain.VegetationInstances.Values.Sum(list => list.Count);
+            Console.WriteLine($"[GameRenderer] Vegetation regenerated: {terrain.VegetationLayers.Length} layers, {totalInstances} total instances");
+
             // Update batches for each vegetation layer
             for (int layerIndex = 0; layerIndex < terrain.VegetationLayers.Length; layerIndex++)
             {
@@ -736,6 +740,12 @@ void main()
         public void RenderScene()
         {
             if (_scene == null || _camera == null) return;
+
+            // NOTE: Profiling.BeginFrame() should ideally be called ONCE per application frame,
+            // not here, because RenderScene() can be called multiple times (shadows, reflections, etc.)
+            // For now we call it here but this causes stat accumulation in multi-view scenarios
+            Engine.Profiling.Profiler.NewFrame();
+            Engine.Profiling.RenderProfiler.BeginFrame();
 
             // Update time system FIRST (drives TimeOfDay)
             float deltaTime = (float)_weatherDeltaStopwatch.Elapsed.TotalSeconds;
@@ -1290,6 +1300,9 @@ void main()
             */
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+            // End profiling frame - collect GPU results
+            Engine.Profiling.GPUProfiler.CollectGPUResults();
         }
 
         /// <summary>

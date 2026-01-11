@@ -95,6 +95,10 @@ namespace Engine.Rendering
         private const int MaxInstancesPerBatch = 50000; // Reduced from 100k for better memory usage
         private const int InitialInstanceBufferSize = 10000;
 
+        // PERFORMANCE: Limit total rendered instances per frame to prevent lag
+        private const int MaxTotalInstancesPerFrame = 500000; // Cap at 500k instances total (was 100k)
+        private const int MaxBatchesPerFrame = 200; // Cap at 200 batches per frame (was 50)
+
         private ShaderProgram? _vegetationShader = null;
         private ShaderProgram? _shadowDepthShader = null;
         private ShaderProgram? _shadowDepthAlphaClipShader = null;
@@ -366,8 +370,10 @@ namespace Engine.Rendering
 
             if (needsUpdate)
             {
-                batch.Transforms = transforms;
-                batch.LastTransformCount = transforms.Count;
+                // CRITICAL FIX: Clone the list instead of copying the reference
+                // This prevents infinite accumulation if the caller continues to modify the list
+                batch.Transforms = transforms != null ? new List<Matrix4>(transforms) : new List<Matrix4>();
+                batch.LastTransformCount = batch.Transforms.Count;
                 batch.NeedsGPUUpdate = true; // Will trigger culling + GPU upload in Render()
             }
 
@@ -437,13 +443,20 @@ namespace Engine.Rendering
             float shadowBias = 0.001f, float shadowMapSize = 2048f, float shadowStrength = 0.7f,
             int shadowQuality = 1, float shadowNormalBias = 0.001f, int pcfSamples = 9, float lightSize = 0.05f)
         {
-            if (_batches.Count == 0)
+            using (Profiling.Profiler.Profile("VegetationRenderer.Render"))
             {
-                // No batches to render (this is normal if no vegetation was generated)
-                return;
-            }
+                Profiling.GPUProfiler.BeginGPUScope("VegetationRenderer");
+                Profiling.RenderProfiler.BeginRenderPass("Vegetation");
 
-            if (_vegetationShader == null)
+                if (_batches.Count == 0)
+                {
+                    // No batches to render (this is normal if no vegetation was generated)
+                    Profiling.RenderProfiler.EndRenderPass();
+                    Profiling.GPUProfiler.EndGPUScope();
+                    return;
+                }
+
+                if (_vegetationShader == null)
             {
                 Engine.Utils.DebugLogger.Log("[VegetationRenderer] Cannot render vegetation - shader is null; attempting reload.");
                 LoadShader();
@@ -503,14 +516,33 @@ namespace Engine.Rendering
             TotalInstances = 0;
             VisibleInstances = 0;
 
-            // Render each batch
+            // OPTIMIZATION: Sort batches by distance to camera (render closest first)
+            var sortedBatches = _batches.Values
+                .Where(b => b.Transforms.Count > 0 && b.VAO != 0)
+                .Select(b => {
+                    // Calculate batch center (average of all instance positions)
+                    Vector3 center = Vector3.Zero;
+                    int sampleCount = Math.Min(b.Transforms.Count, 10); // Sample first 10 instances for speed
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        center.X += b.Transforms[i].M41;
+                        center.Y += b.Transforms[i].M42;
+                        center.Z += b.Transforms[i].M43;
+                    }
+                    center /= sampleCount;
+                    float distSqr = (center - cameraPos).LengthSquared;
+                    return (batch: b, distSqr: distSqr);
+                })
+                .OrderBy(x => x.distSqr)
+                .ToList();
+
+            // Render each batch (sorted by distance, closest first)
             int batchesRendered = 0;
             int instancesRendered = 0;
+            int totalInstancesThisFrame = 0;
 
-            foreach (var batch in _batches.Values)
+            foreach (var (batch, batchDistSqr) in sortedBatches)
             {
-                if (batch.Transforms.Count == 0 || batch.VAO == 0) continue;
-
                 TotalInstances += batch.Transforms.Count;
 
                 // Perform frustum and distance culling to populate VisibleTransforms
@@ -526,6 +558,21 @@ namespace Engine.Rendering
                 VisibleInstances += batch.InstanceCount;
 
                 if (batch.InstanceCount == 0) continue;
+
+                // OPTIMIZATION: Stop rendering if we hit frame budget limits
+                if (batchesRendered >= MaxBatchesPerFrame)
+                {
+                    // Too many batches this frame, skip remaining batches
+                    continue;
+                }
+
+                if (totalInstancesThisFrame + batch.InstanceCount > MaxTotalInstancesPerFrame)
+                {
+                    // Would exceed instance budget, skip this batch
+                    continue;
+                }
+
+                totalInstancesThisFrame += batch.InstanceCount;
 
                 // Choose shader program for this batch. Prefer material's declared shader when available
                 ShaderProgram shToUse = _vegetationShader!; // fallback
@@ -845,15 +892,31 @@ namespace Engine.Rendering
                     batch.InstanceCount
                 );
 
+                // Record profiling stats for this batch
+                int trianglesRendered = (batch.IndexCount / 3) * batch.InstanceCount;
+                Profiling.RenderProfiler.RecordDrawCall(batch.InstanceCount, trianglesRendered);
+
+                int culled = batch.Transforms.Count - batch.VisibleTransforms.Count;
+                Profiling.RenderProfiler.RecordInstancingBatch(
+                    $"Vegetation_{batch.ModelGuid.ToString().Substring(0, 8)}",
+                    batch.VisibleTransforms.Count,
+                    trianglesRendered,
+                    culled
+                );
+
                 batchesRendered++;
                 instancesRendered += batch.InstanceCount;
             }
 
-            // CRITICAL: Restore OpenGL state
-            GL.BindVertexArray(0);
-            GL.UseProgram(0);
-            GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
-            GL.DepthMask(true); // Restore depth writing
+                // CRITICAL: Restore OpenGL state
+                GL.BindVertexArray(0);
+                GL.UseProgram(0);
+                GL.Disable(EnableCap.Blend); // Ensure blending is off after rendering
+                GL.DepthMask(true); // Restore depth writing
+
+                Profiling.RenderProfiler.EndRenderPass();
+                Profiling.GPUProfiler.EndGPUScope();
+            } // End using Profiler.Profile
         }
 
         /// <summary>
@@ -1265,8 +1328,19 @@ namespace Engine.Rendering
             float maxDistSqr = batch.MaxRenderDistance * batch.MaxRenderDistance;
             bool hasDistanceCulling = batch.MaxRenderDistance > 0;
 
+            // OPTIMIZATION: Limit instances tested per batch to prevent lag
+            const int MaxInstancesTestedPerBatch = 50000; // Was 10k, increased to 50k
+            int instancesTested = 0;
+
             for (int i = 0; i < batch.Transforms.Count; i++)
             {
+                // OPTIMIZATION: Stop testing if we've tested too many
+                if (instancesTested >= MaxInstancesTestedPerBatch)
+                {
+                    break;
+                }
+
+                instancesTested++;
                 var transform = batch.Transforms[i];
 
                 // Extract position from transform matrix

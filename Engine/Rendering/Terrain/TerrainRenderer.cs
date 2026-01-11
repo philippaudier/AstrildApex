@@ -874,7 +874,8 @@ namespace Engine.Rendering.Terrain
                     Engine.Utils.DebugLogger.Log("[TerrainRenderer] Initialized infinite terrain streaming");
                 }
 
-                // Request tiles around camera
+                // Request tiles around camera (use world coordinates)
+                // Tiles are generated in world space already (see TileCpuGenerator)
                 _tileManager.RequestTilesAround(terrain, viewPos.X, viewPos.Z, terrain.StreamingRadius);
 
                 // Process GPU resource deletions from evicted tiles (thread-safe)
@@ -1236,7 +1237,7 @@ namespace Engine.Rendering.Terrain
         /// Initialize tile manager and force synchronous tile generation/upload.
         /// Call this after scene load to ensure tiles are ready before first shadow pass.
         /// </summary>
-        public void InitializeAndProcessTiles(Engine.Components.Terrain terrain, OpenTK.Mathematics.Vector3 cameraPos, int maxTiles = 30)
+        public void InitializeAndProcessTiles(Engine.Components.Terrain terrain, OpenTK.Mathematics.Vector3 cameraPos, int maxTiles = 30, Matrix4 modelMatrix = default)
         {
             if (terrain.Mode != TerrainMode.InfiniteStreaming) return;
 
@@ -1255,7 +1256,8 @@ namespace Engine.Rendering.Terrain
                 Engine.Utils.DebugLogger.Log("[TerrainRenderer] Initialized tile manager for scene load");
             }
 
-            // Request tiles around camera
+            // Request tiles around camera (use world coordinates)
+            // Tiles are generated in world space already (see TileCpuGenerator)
             _tileManager.RequestTilesAround(terrain, cameraPos.X, cameraPos.Z, terrain.StreamingRadius);
 
             // Force synchronous processing of tiles for immediate availability

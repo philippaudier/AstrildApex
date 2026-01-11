@@ -48,6 +48,9 @@ namespace Engine.Rendering.Terrain.Tile
         public bool IsFadingOut { get; private set; } = false;
         private const float _transitionSpeed = 1.0f;  // Slower fade for visible dithering (1 second)
 
+        // Distance to camera when requested (for priority sorting)
+        public float RequestDistance { get; set; } = float.MaxValue;
+
         public TileState State { get { lock(_stateLock) { return _state; } } }
 
         public TerrainTile(int x, int y, int lod)

@@ -16,6 +16,7 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _rockShader = null;
         private bool _disposed = false;
+        private int _logCounter = 0; // For debug logging
 
         /// <summary>
         /// Stores rock data per terrain + layer combination
@@ -30,6 +31,7 @@ namespace Engine.Rendering
             public bool NeedsRebuild = true;
             public Matrix4 ModelMatrix = Matrix4.Identity;
             public Matrix3 NormalMatrix = Matrix3.Identity;
+            public Vector3 TileCenterPosition = Vector3.Zero; // Tile center for distance culling (separate from ModelMatrix)
         }
 
         private readonly Dictionary<string, RockLayer> _rockLayers = new();
@@ -131,8 +133,9 @@ namespace Engine.Rendering
         /// <summary>
         /// Register a rock layer for a terrain.
         /// </summary>
+        /// <param name="tileCenterPosition">Optional: tile center position for distance culling (for streaming tiles with vertices already in world space)</param>
         public void RegisterRockLayer(Guid terrainGuid, int layerIndex, RockProperties properties,
-            int terrainVAO, int terrainIndexCount, Matrix4 modelMatrix, Matrix3 normalMatrix)
+            int terrainVAO, int terrainIndexCount, Matrix4 modelMatrix, Matrix3 normalMatrix, Vector3? tileCenterPosition = null)
         {
             string key = $"{terrainGuid}_{layerIndex}";
 
@@ -152,6 +155,8 @@ namespace Engine.Rendering
             layer.TerrainIndexCount = terrainIndexCount;
             layer.ModelMatrix = modelMatrix;
             layer.NormalMatrix = normalMatrix;
+            // Use provided tile center position, or extract from model matrix translation
+            layer.TileCenterPosition = tileCenterPosition ?? new Vector3(modelMatrix.M41, modelMatrix.M42, modelMatrix.M43);
             layer.NeedsRebuild = true;
         }
 
@@ -178,104 +183,145 @@ namespace Engine.Rendering
         public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity,
             Vector3 sunDirection, Vector3 sunColor, float sunIntensity)
         {
-            if (_rockShader == null)
-                return;
-
-            if (_rockLayers.Count == 0)
-                return;
-
-            // Enable depth testing, disable blending for solid rocks
-            GL.Enable(EnableCap.DepthTest);
-            GL.DepthMask(true);
-            // Disable culling - procedural rocks have inconsistent winding
-            GL.Disable(EnableCap.CullFace);
-
-            // Use shader
-            _rockShader.Use();
-
-            // Common uniforms
-            _rockShader.SetVec3("u_AmbientColor", ambientColor);
-            _rockShader.SetFloat("u_AmbientIntensity", ambientIntensity);
-            _rockShader.SetVec3("u_SunDirection", sunDirection);
-            _rockShader.SetVec3("u_SunColor", sunColor);
-            _rockShader.SetFloat("u_SunIntensity", sunIntensity);
-
-            // Render each rock layer
-            foreach (var layer in _rockLayers.Values)
+            using (Profiling.Profiler.Profile("RockRenderer.Render"))
             {
-                if (layer.TerrainVAO == 0 || layer.TerrainIndexCount == 0)
-                    continue;
+                Profiling.GPUProfiler.BeginGPUScope("RockRenderer");
+                Profiling.RenderProfiler.BeginRenderPass("Rocks");
 
-                var props = layer.Properties;
+                if (_rockShader == null)
+                {
+                    Profiling.RenderProfiler.EndRenderPass();
+                    Profiling.GPUProfiler.EndGPUScope();
+                    return;
+                }
 
-                // Per-layer transforms
-                _rockShader.SetMat4("u_Model", layer.ModelMatrix);
-                _rockShader.SetMat3("u_NormalMat", layer.NormalMatrix);
+                if (_rockLayers.Count == 0)
+                {
+                    Profiling.RenderProfiler.EndRenderPass();
+                    Profiling.GPUProfiler.EndGPUScope();
+                    return;
+                }
 
-                // Density & Distribution
-                _rockShader.SetFloat("u_Density", props.Density);
-                _rockShader.SetFloat("u_ClusteringStrength", props.ClusteringStrength);
-                _rockShader.SetFloat("u_ClusterNoiseScale", props.ClusterNoiseScale);
-                _rockShader.SetFloat("u_PlacementThreshold", props.PlacementThreshold);
+                // Enable depth testing, disable blending for solid rocks
+                GL.Enable(EnableCap.DepthTest);
+                GL.DepthMask(true);
+                // Disable culling - procedural rocks have inconsistent winding
+                GL.Disable(EnableCap.CullFace);
 
-                // Slope & Height constraints (convert to shader format)
-                float minSlopeY = (float)Math.Cos(props.MaxSlope * Math.PI / 180.0);
-                float maxSlopeY = (float)Math.Cos(props.MinSlope * Math.PI / 180.0);
-                _rockShader.SetFloat("u_MinSlopeY", minSlopeY);
-                _rockShader.SetFloat("u_MaxSlopeY", maxSlopeY);
-                _rockShader.SetFloat("u_MinHeight", props.MinHeight);
-                _rockShader.SetFloat("u_MaxHeight", props.MaxHeight);
+                // Use shader
+                _rockShader.Use();
 
-                // Size
-                _rockShader.SetFloat("u_MinSize", props.MinSize);
-                _rockShader.SetFloat("u_MaxSize", props.MaxSize);
-                _rockShader.SetFloat("u_SizeVariation", props.SizeVariation);
-                _rockShader.SetFloat("u_FlattenY", props.FlattenY);
+                // Common uniforms
+                _rockShader.SetVec3("u_AmbientColor", ambientColor);
+                _rockShader.SetFloat("u_AmbientIntensity", ambientIntensity);
+                _rockShader.SetVec3("u_SunDirection", sunDirection);
+                _rockShader.SetVec3("u_SunColor", sunColor);
+                _rockShader.SetFloat("u_SunIntensity", sunIntensity);
 
-                // Noise displacement
-                _rockShader.SetFloat("u_NoiseFrequency", props.NoiseFrequency);
-                _rockShader.SetFloat("u_NoiseAmplitude", props.NoiseAmplitude);
-                _rockShader.SetInt("u_NoiseOctaves", props.NoiseOctaves);
-                _rockShader.SetFloat("u_NoiseLacunarity", props.NoiseLacunarity);
-                _rockShader.SetFloat("u_NoisePersistence", props.NoisePersistence);
+                // Render each rock layer
+                int layersRendered = 0;
+                int layersSkipped = 0;
+                const int MaxRockLayersPerFrame = 50; // Limit rock layers rendered (reduced from 100 with frustum culling)
 
-                // Shape features
-                _rockShader.SetFloat("u_Sharpness", props.Sharpness);
-                _rockShader.SetFloat("u_FacetStrength", props.FacetStrength);
-                _rockShader.SetFloat("u_CrackDepth", props.CrackDepth);
-                _rockShader.SetFloat("u_CrackScale", props.CrackScale);
+                foreach (var layer in _rockLayers.Values)
+                {
+                    if (layer.TerrainVAO == 0 || layer.TerrainIndexCount == 0)
+                        continue;
 
-                // Colors
-                _rockShader.SetVec4("u_BaseColor", new Vector4(props.BaseColor[0], props.BaseColor[1], props.BaseColor[2], 1.0f));
-                _rockShader.SetVec4("u_DarkColor", new Vector4(props.DarkColor[0], props.DarkColor[1], props.DarkColor[2], 1.0f));
-                _rockShader.SetVec4("u_HighlightColor", new Vector4(props.HighlightColor[0], props.HighlightColor[1], props.HighlightColor[2], 1.0f));
-                _rockShader.SetFloat("u_ColorVariation", props.ColorVariation);
-                _rockShader.SetFloat("u_Roughness", props.Roughness);
-                _rockShader.SetFloat("u_Metallic", props.Metallic);
+                    // OPTIMIZATION: Stop if too many layers rendered this frame
+                    if (layersRendered >= MaxRockLayersPerFrame)
+                    {
+                        layersSkipped++;
+                        break;
+                    }
 
-                // Moss
-                _rockShader.SetFloat("u_MossAmount", props.MossAmount);
-                _rockShader.SetVec4("u_MossColor", new Vector4(props.MossColor[0], props.MossColor[1], props.MossColor[2], 1.0f));
-                _rockShader.SetFloat("u_MossTopBias", props.MossTopBias);
+                    // Get properties early
+                    var props = layer.Properties;
 
-                // Embedding & orientation
-                _rockShader.SetFloat("u_EmbedDepth", props.EmbedDepth);
-                _rockShader.SetFloat("u_AlignToTerrain", props.AlignToTerrain);
-                _rockShader.SetFloat("u_RotationRandomness", props.RotationRandomness);
+                    // Distance culling is now handled in ViewportRenderer (before RegisterRockLayer)
+                    // This avoids double culling and gives user control via inspector MaxRenderDistance
 
-                // LOD
-                _rockShader.SetFloat("u_MaxRenderDistance", props.MaxRenderDistance);
-                _rockShader.SetFloat("u_FadeRange", props.FadeRange);
-                _rockShader.SetFloat("u_LodBias", props.LodBias);
+                    layersRendered++;
 
-                // Draw using terrain geometry
-                GL.BindVertexArray(layer.TerrainVAO);
-                GL.DrawElements(PrimitiveType.Triangles, layer.TerrainIndexCount, DrawElementsType.UnsignedInt, IntPtr.Zero);
+                    // Per-layer transforms
+                    _rockShader.SetMat4("u_Model", layer.ModelMatrix);
+                    _rockShader.SetMat3("u_NormalMat", layer.NormalMatrix);
+
+                    // Density & Distribution
+                    _rockShader.SetFloat("u_Density", props.Density);
+                    _rockShader.SetFloat("u_ClusteringStrength", props.ClusteringStrength);
+                    _rockShader.SetFloat("u_ClusterNoiseScale", props.ClusterNoiseScale);
+                    _rockShader.SetFloat("u_PlacementThreshold", props.PlacementThreshold);
+
+                    // Slope & Height constraints (convert to shader format)
+                    float minSlopeY = (float)Math.Cos(props.MaxSlope * Math.PI / 180.0);
+                    float maxSlopeY = (float)Math.Cos(props.MinSlope * Math.PI / 180.0);
+                    _rockShader.SetFloat("u_MinSlopeY", minSlopeY);
+                    _rockShader.SetFloat("u_MaxSlopeY", maxSlopeY);
+                    _rockShader.SetFloat("u_MinHeight", props.MinHeight);
+                    _rockShader.SetFloat("u_MaxHeight", props.MaxHeight);
+
+                    // Size
+                    _rockShader.SetFloat("u_MinSize", props.MinSize);
+                    _rockShader.SetFloat("u_MaxSize", props.MaxSize);
+                    _rockShader.SetFloat("u_SizeVariation", props.SizeVariation);
+                    _rockShader.SetFloat("u_FlattenY", props.FlattenY);
+
+                    // Noise displacement
+                    _rockShader.SetFloat("u_NoiseFrequency", props.NoiseFrequency);
+                    _rockShader.SetFloat("u_NoiseAmplitude", props.NoiseAmplitude);
+                    _rockShader.SetInt("u_NoiseOctaves", props.NoiseOctaves);
+                    _rockShader.SetFloat("u_NoiseLacunarity", props.NoiseLacunarity);
+                    _rockShader.SetFloat("u_NoisePersistence", props.NoisePersistence);
+
+                    // Shape features
+                    _rockShader.SetFloat("u_Sharpness", props.Sharpness);
+                    _rockShader.SetFloat("u_FacetStrength", props.FacetStrength);
+                    _rockShader.SetFloat("u_CrackDepth", props.CrackDepth);
+                    _rockShader.SetFloat("u_CrackScale", props.CrackScale);
+
+                    // Colors
+                    _rockShader.SetVec4("u_BaseColor", new Vector4(props.BaseColor[0], props.BaseColor[1], props.BaseColor[2], 1.0f));
+                    _rockShader.SetVec4("u_DarkColor", new Vector4(props.DarkColor[0], props.DarkColor[1], props.DarkColor[2], 1.0f));
+                    _rockShader.SetVec4("u_HighlightColor", new Vector4(props.HighlightColor[0], props.HighlightColor[1], props.HighlightColor[2], 1.0f));
+                    _rockShader.SetFloat("u_ColorVariation", props.ColorVariation);
+                    _rockShader.SetFloat("u_Roughness", props.Roughness);
+                    _rockShader.SetFloat("u_Metallic", props.Metallic);
+
+                    // Moss
+                    _rockShader.SetFloat("u_MossAmount", props.MossAmount);
+                    _rockShader.SetVec4("u_MossColor", new Vector4(props.MossColor[0], props.MossColor[1], props.MossColor[2], 1.0f));
+                    _rockShader.SetFloat("u_MossTopBias", props.MossTopBias);
+
+                    // Embedding & orientation
+                    _rockShader.SetFloat("u_EmbedDepth", props.EmbedDepth);
+                    _rockShader.SetFloat("u_AlignToTerrain", props.AlignToTerrain);
+                    _rockShader.SetFloat("u_RotationRandomness", props.RotationRandomness);
+
+                    // LOD
+                    _rockShader.SetFloat("u_MaxRenderDistance", props.MaxRenderDistance);
+                    _rockShader.SetFloat("u_FadeRange", props.FadeRange);
+                    _rockShader.SetFloat("u_LodBias", props.LodBias);
+
+                    // Draw using terrain geometry
+                    GL.BindVertexArray(layer.TerrainVAO);
+                    GL.DrawElements(PrimitiveType.Triangles, layer.TerrainIndexCount, DrawElementsType.UnsignedInt, IntPtr.Zero);
+
+                    // Record draw call - geometry shader generates rocks from terrain triangles
+                    // Each terrain triangle can potentially generate a rock (based on density)
+                    int terrainTriangles = layer.TerrainIndexCount / 3;
+                    int estimatedRocks = (int)(terrainTriangles * props.Density);
+                    Profiling.RenderProfiler.RecordDrawCall(1, terrainTriangles);
+                    Profiling.Profiler.SetCounter($"Rocks.{layer.TerrainGuid}_RocksGenerated", estimatedRocks);
+                }
+
+                // Restore state
+                GL.BindVertexArray(0);
+                GL.UseProgram(0);
+
+                Profiling.RenderProfiler.EndRenderPass();
+                Profiling.GPUProfiler.EndGPUScope();
             }
-
-            // Restore state
-            GL.BindVertexArray(0);
-            GL.UseProgram(0);
         }
 
         public void Dispose()
