@@ -1370,8 +1370,12 @@ namespace Engine.Rendering.Terrain
                     return; // Skip this tile
 
                 // OPTIMIZATION: Frustum culling - skip tiles outside view frustum
-                float tileRadius = Math.Max(tileSize * 1.5f, maxCullingSphereRadius * 50f);
-                if (!frustumCuller.TestSphere(tileCenterPos, tileRadius))
+                // Use AABB test instead of sphere for better culling at altitude
+                // Extend vertically to account for tall trees (e.g., 50m tall)
+                float maxTreeHeight = Math.Max(50f, maxCullingSphereRadius * 5f);
+                var tileMin = new Vector3(tile.X * tileSize, -10f, tile.Y * tileSize);
+                var tileMax = new Vector3((tile.X + 1) * tileSize, maxTreeHeight, (tile.Y + 1) * tileSize);
+                if (!frustumCuller.TestAABB(tileMin, tileMax))
                     return; // Skip this tile
 
                 // Tile is visible - collect instances

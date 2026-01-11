@@ -148,7 +148,7 @@ namespace Engine.Rendering
                     LayerIndex = layerIndex
                 };
                 _grassLayers[key] = layer;
-                Console.WriteLine($"[GrassRenderer] Created new grass layer: {key}, VAO={terrainVAO}, indexCount={terrainIndexCount}");
+                
             }
 
             layer.Properties = properties;

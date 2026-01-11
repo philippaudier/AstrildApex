@@ -146,7 +146,7 @@ namespace Engine.Rendering
                     LayerIndex = layerIndex
                 };
                 _rockLayers[key] = layer;
-                Console.WriteLine($"[RockRenderer] Created new rock layer: {key}, VAO={terrainVAO}, indexCount={terrainIndexCount}");
+                
             }
 
             layer.Properties = properties;
