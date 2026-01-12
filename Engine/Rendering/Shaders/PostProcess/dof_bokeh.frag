@@ -38,20 +38,26 @@ void main()
 
     float radius = centerCoC * u_BokehRadius;
 
+    // PERFORMANCE: Pre-compute constant values outside the loop
+    float invSamples = 1.0 / float(samples);
+    vec2 radiusTexel = radius * u_TexelSize;
+
     // Circular bokeh sampling using golden angle spiral
     for (int i = 1; i < samples; i++)
     {
-        float angle = float(i) * GOLDEN_ANGLE + u_BokehRotation;
-        float distance = sqrt(float(i) / float(samples)); // Uniform disc distribution
+        float fi = float(i);
+        float angle = fi * GOLDEN_ANGLE + u_BokehRotation;
+        // PERFORMANCE: Use pre-computed invSamples instead of dividing by samples each iteration
+        float distance = sqrt(fi * invSamples); // Uniform disc distribution
 
-        vec2 offset = vec2(cos(angle), sin(angle)) * distance * radius * u_TexelSize;
-        vec4 sample = texture(u_SourceTexture, vTexCoord + offset);
+        vec2 offset = vec2(cos(angle), sin(angle)) * distance * radiusTexel;
+        vec4 sampleColor = texture(u_SourceTexture, vTexCoord + offset);
 
         // Weight by sample CoC (larger CoC = more contribution)
-        float weight = smoothstep(0.0, radius, sample.a);
+        float weight = smoothstep(0.0, radius, sampleColor.a);
         weight = max(weight, 0.1); // Minimum weight to avoid artifacts
 
-        color += sample.rgb * weight;
+        color += sampleColor.rgb * weight;
         totalWeight += weight;
     }
 

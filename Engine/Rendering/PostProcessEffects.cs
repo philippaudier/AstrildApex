@@ -1380,7 +1380,9 @@ namespace Engine.Rendering
             _downsampleShader!.Use();
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampleFBOs[0]);
-            GL.Viewport(0, 0, Math.Max(1, _width >> 1), Math.Max(1, _height >> 1));
+            int targetWidth = Math.Max(1, _width >> 1);
+            int targetHeight = Math.Max(1, _height >> 1);
+            GL.Viewport(0, 0, targetWidth, targetHeight);
 
             GL.ActiveTexture(TextureUnit.Texture0);
             GL.BindTexture(TextureTarget.Texture2D, context.SourceTexture);
@@ -1389,6 +1391,8 @@ namespace Engine.Rendering
             _downsampleShader.SetFloat("u_SoftKnee", bloom.SoftKnee);
             _downsampleShader.SetFloat("u_Clamp", bloom.Clamp);
             _downsampleShader.SetInt("u_FirstPass", 1);
+            // PERFORMANCE: Pass texel size to avoid textureSize() call in shader
+            _downsampleShader.SetVec2("u_TexelSize", new Vector2(1.0f / _width, 1.0f / _height));
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
@@ -1401,12 +1405,17 @@ namespace Engine.Rendering
 
             for (int i = 1; i < Math.Min(bloom.Iterations, _downsampleTextures.Length); i++)
             {
+                int sourceWidth = Math.Max(1, _width >> i);
+                int sourceHeight = Math.Max(1, _height >> i);
+
                 GL.BindFramebuffer(FramebufferTarget.Framebuffer, _downsampleFBOs[i]);
                 GL.Viewport(0, 0, Math.Max(1, _width >> (i + 1)), Math.Max(1, _height >> (i + 1)));
 
                 GL.ActiveTexture(TextureUnit.Texture0);
                 GL.BindTexture(TextureTarget.Texture2D, _downsampleTextures[i - 1]);
                 _downsampleShader.SetInt("u_SourceTexture", 0);
+                // PERFORMANCE: Pass texel size to avoid textureSize() call in shader
+                _downsampleShader.SetVec2("u_TexelSize", new Vector2(1.0f / sourceWidth, 1.0f / sourceHeight));
 
                 GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
             }
@@ -1839,6 +1848,9 @@ namespace Engine.Rendering
                 var invProj = projMatrix.Inverted();
                 _ssaoShader.SetMat4("u_InvProjection", invProj);
             }
+
+            // PERFORMANCE: Pass screen size to avoid expensive textureSize() calls in shader
+            _ssaoShader.SetVec2("u_ScreenSize", new Vector2(ssaoWidth, ssaoHeight));
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
 
@@ -3038,6 +3050,9 @@ namespace Engine.Rendering
 
             // Frame counter pour temporal variation (utiliser un compteur simple)
             _gtaoShader.SetInt("u_FrameCounter", Environment.TickCount & 0xFF);
+
+            // PERFORMANCE: Pass screen size to avoid expensive textureSize() calls in shader
+            _gtaoShader.SetVec2("u_ScreenSize", new OpenTK.Mathematics.Vector2(width, height));
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }

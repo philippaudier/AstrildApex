@@ -78,6 +78,16 @@ namespace Engine.Rendering
         }
         
         public static int White1x1 { get; private set; } = 0;
+        /// <summary>
+        /// Default 1x1 white shadow 2D texture for SimplePCF fallback.
+        /// Prevents undefined behavior when CSM is enabled but shader still references u_ShadowMap.
+        /// </summary>
+        public static int WhiteShadow2D { get; private set; } = 0;
+        /// <summary>
+        /// Default 1x1x4 white shadow array texture for CSM fallback.
+        /// Prevents undefined behavior when CSM is disabled but shader still references u_ShadowMapArray.
+        /// </summary>
+        public static int WhiteShadowArray { get; private set; } = 0;
         public static long TotalMemoryUsed => _totalMemoryUsed;
         public static int LoadedTextureCount => _textureNodes.Count;
 
@@ -104,20 +114,88 @@ namespace Engine.Rendering
         public static void Initialize()
         {
             if (White1x1 != 0) return;
-            
+
+            // Create 1x1 white 2D texture
             White1x1 = GL.GenTexture();
             GL.BindTexture(TextureTarget.Texture2D, White1x1);
-            
+
             byte[] whitePixel = {255, 255, 255, 255};
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, 
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8,
                          1, 1, 0, PixelFormat.Rgba, PixelType.UnsignedByte, whitePixel);
-            
+
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
-            
+
             GL.BindTexture(TextureTarget.Texture2D, 0);
+
+            // Create 1x1 white shadow 2D texture for SimplePCF fallback
+            // This prevents undefined behavior when CSM is enabled but shader still references u_ShadowMap
+            WhiteShadow2D = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2D, WhiteShadow2D);
+
+            // Depth texture 1x1 with max depth (1.0 = no shadow)
+            GL.TexImage2D(
+                TextureTarget.Texture2D,
+                0,
+                PixelInternalFormat.DepthComponent32f,
+                1, 1,
+                0,
+                PixelFormat.DepthComponent,
+                PixelType.Float,
+                new float[] { 1.0f } // Max depth = fully lit
+            );
+
+            // Enable hardware shadow comparison (sampler2DShadow in GLSL)
+            GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)All.TextureCompareMode, (int)All.CompareRefToTexture);
+            GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)All.TextureCompareFunc, (int)All.Lequal);
+
+            // Linear filtering
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+
+            // Clamp to border with white (areas outside = fully lit)
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToBorder);
+            GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToBorder);
+            float[] shadow2DBorderColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            GL.TexParameter(TextureTarget.Texture2D, (TextureParameterName)All.TextureBorderColor, shadow2DBorderColor);
+
+            GL.BindTexture(TextureTarget.Texture2D, 0);
+
+            // Create 1x1x4 white shadow array texture for CSM fallback
+            // This prevents undefined behavior when shader samples u_ShadowMapArray with CSM disabled
+            WhiteShadowArray = GL.GenTexture();
+            GL.BindTexture(TextureTarget.Texture2DArray, WhiteShadowArray);
+
+            // Depth texture array with 4 layers (one per cascade), each 1x1 with max depth (1.0 = no shadow)
+            GL.TexImage3D(
+                TextureTarget.Texture2DArray,
+                0,
+                PixelInternalFormat.DepthComponent32f,
+                1, 1, 4, // 1x1 with 4 layers
+                0,
+                PixelFormat.DepthComponent,
+                PixelType.Float,
+                new float[] { 1.0f, 1.0f, 1.0f, 1.0f } // Max depth = fully lit
+            );
+
+            // Enable hardware shadow comparison (sampler2DArrayShadow in GLSL)
+            GL.TexParameter(TextureTarget.Texture2DArray, (TextureParameterName)All.TextureCompareMode, (int)All.CompareRefToTexture);
+            GL.TexParameter(TextureTarget.Texture2DArray, (TextureParameterName)All.TextureCompareFunc, (int)All.Lequal);
+
+            // Linear filtering
+            GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+
+            // Clamp to border with white (areas outside = fully lit)
+            GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToBorder);
+            GL.TexParameter(TextureTarget.Texture2DArray, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToBorder);
+            float[] borderColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            GL.TexParameter(TextureTarget.Texture2DArray, (TextureParameterName)All.TextureBorderColor, borderColor);
+
+            GL.BindTexture(TextureTarget.Texture2DArray, 0);
+
             // Enable seamless cubemap filtering globally to reduce seams when sampling across cube faces
             try { GL.Enable(EnableCap.TextureCubeMapSeamless); } catch { }
         }

@@ -343,6 +343,9 @@ void main()
     }
     for (int i = 0; i < u_LayerCount; i++) weights[i] /= total;
 
+    // PERFORMANCE: Cache normalized normal once before the loop (saves up to 16 normalize() calls)
+    vec3 cachedNormalizedNormal = normalize(v_Normal);
+
     // Sample layers
     for (int i = 0; i < u_LayerCount; i++)
     {
@@ -358,7 +361,7 @@ void main()
             float triScale = u_LayerTriplanarScale[i];
             float triBlend = u_LayerTriplanarBlend[i];
 
-            vec3 blendWeights = abs(normalize(v_Normal));
+            vec3 blendWeights = abs(cachedNormalizedNormal);
             blendWeights = pow(blendWeights, vec3(triBlend));
             blendWeights /= (blendWeights.x + blendWeights.y + blendWeights.z);
 
@@ -429,7 +432,7 @@ void main()
             float triScale = u_LayerTriplanarScale[i];
             float triBlend = u_LayerTriplanarBlend[i];
 
-            vec3 blendWeights = abs(normalize(v_Normal));
+            vec3 blendWeights = abs(cachedNormalizedNormal);
             blendWeights = pow(blendWeights, vec3(triBlend));
             blendWeights /= (blendWeights.x + blendWeights.y + blendWeights.z);
 

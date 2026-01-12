@@ -1003,23 +1003,58 @@ namespace Engine.Components
             string cacheDir = System.IO.Path.Combine("Cache", "Terrain");
             System.IO.Directory.CreateDirectory(cacheDir);
 
-            // Build a deterministic key from heightmap guid + parameters
-            // Include heightmap file modification time when available so the cache invalidates when the source changes
-            // V4: Added ClosedMesh and SkirtDepth parameters
-            string key = $"v4_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}_{ClosedMesh}_{SkirtDepth}";
-            try
+            // V5: CRITICAL FIX - Include ALL parameters that affect mesh generation:
+            // - Procedural generation params (if enabled)
+            // - Blend params (if blending)
+            // - Heightmap texture (if texture-based)
+            // - Terrain dimensions
+            // - Mesh settings
+            string key;
+
+            if (UseProceduralGeneration)
             {
-                if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
+                // Procedural terrain - include all procedural params
+                key = $"v5_proc_{ProceduralSeed}_{NoiseScale}_{Octaves}_{Persistence}_{Lacunarity}_" +
+                      $"{NoiseOffsetX}_{NoiseOffsetY}_{NoiseType}_{IslandMode}_{IslandFalloff}_" +
+                      $"{EnableTerracing}_{TerraceCount}_{HeightMultiplier}_{HeightPower}_{UseDomainWarping}_{DomainWarpStrength}_" +
+                      $"{ApplyErosion}_{HydraulicIterations}_{HydraulicStrength}_{ThermalIterations}_{ThermalTalusAngle}_{ThermalStrength}_";
+
+                // Add blend params if blending is enabled
+                if (BlendWithTexture && HeightmapTextureGuid.HasValue)
                 {
+                    key += $"blend_{BlendMode}_{BlendStrength}_{HeightmapTextureGuid}_";
+                    // Include texture timestamp for blend invalidation
                     try
                     {
-                        var ticks = System.IO.File.GetLastWriteTimeUtc(rec.Path).Ticks;
-                        key += $"_{ticks}";
+                        if (Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
+                        {
+                            var ticks = System.IO.File.GetLastWriteTimeUtc(rec.Path).Ticks;
+                            key += $"{ticks}_";
+                        }
                     }
-                    catch { /* ignore filesystem issues, key without timestamp still valid */ }
+                    catch { }
                 }
+
+                key += $"{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}_{ClosedMesh}_{SkirtDepth}";
             }
-            catch { /* defensive: AssetDatabase may not be available at very early startup */ }
+            else
+            {
+                // Texture-based terrain - include texture guid and timestamp
+                key = $"v5_tex_{HeightmapTextureGuid}_{MeshResolution}_{TerrainWidth}_{TerrainLength}_{TerrainHeight}_{ClosedMesh}_{SkirtDepth}";
+                try
+                {
+                    if (HeightmapTextureGuid.HasValue && Engine.Assets.AssetDatabase.TryGet(HeightmapTextureGuid.Value, out var rec))
+                    {
+                        try
+                        {
+                            var ticks = System.IO.File.GetLastWriteTimeUtc(rec.Path).Ticks;
+                            key += $"_{ticks}";
+                        }
+                        catch { /* ignore filesystem issues, key without timestamp still valid */ }
+                    }
+                }
+                catch { /* defensive: AssetDatabase may not be available at very early startup */ }
+            }
 
             // Use SHA256 to create a stable filename (GetHashCode is NOT stable across processes)
             using var sha = SHA256.Create();
@@ -1043,11 +1078,13 @@ namespace Engine.Components
 
             if (UseProceduralGeneration)
             {
-                // Build key from all procedural parameters
+                // Build key from procedural parameters ONLY
+                // NOTE: Blend parameters (BlendWithTexture, BlendMode, BlendStrength, HeightmapTextureGuid)
+                // are NOT included because procedural generation is independent of blending.
+                // Blending is applied AFTER procedural generation in GenerateBlendedHeightmap().
                 key = $"heightmap_procedural_{ProceduralSeed}_{NoiseScale}_{Octaves}_{Persistence}_{Lacunarity}_" +
                       $"{NoiseOffsetX}_{NoiseOffsetY}_{NoiseType}_{IslandMode}_{IslandFalloff}_" +
                       $"{EnableTerracing}_{TerraceCount}_{HeightMultiplier}_{HeightPower}_{UseDomainWarping}_{DomainWarpStrength}_" +
-                      $"{BlendWithTexture}_{BlendMode}_{BlendStrength}_{HeightmapTextureGuid}_" +
                       $"{ApplyErosion}_{HydraulicIterations}_{HydraulicStrength}_{ThermalIterations}_{ThermalTalusAngle}_{ThermalStrength}_" +
                       $"{MeshResolution}";
             }

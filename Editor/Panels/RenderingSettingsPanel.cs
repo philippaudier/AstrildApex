@@ -500,6 +500,25 @@ namespace Editor.Panels
 
                 ImGui.Spacing();
 
+                // === Shadow Technology Selection ===
+                ImGui.Text("Shadow Technology");
+                ImGui.SetNextItemWidth(-1);
+
+                int techIndex = (int)s.Technology;
+                string[] techNames = { "Simple PCF (Single Map)", "CSM (Cascaded Shadow Maps)" };
+                if (ImGui.Combo("##ShadowTechnology", ref techIndex, techNames, techNames.Length))
+                {
+                    s.Technology = (Editor.State.EditorSettings.ShadowTechnology)techIndex;
+                    Editor.State.EditorSettings.ShadowsSettings = s;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Shadow rendering technology:\n" +
+                                   "Simple PCF = Fast, single shadow map\n" +
+                                   "CSM = High quality, 4 cascades for better detail at all distances");
+
+                ImGui.Spacing();
+                ImGui.Separator();
+
                 // === Shadow Strength ===
                 ImGui.Text("Shadow Intensity");
                 ImGui.SetNextItemWidth(-1);
@@ -515,25 +534,70 @@ namespace Editor.Panels
                 ImGui.Spacing();
                 ImGui.Separator();
 
-                // === Shadow Quality Mode ===
-                ImGui.Text("Shadow Quality Mode");
-                ImGui.SetNextItemWidth(-1);
-
-                int shadowQuality = s.ShadowQuality;
-                string[] qualityNames = { "PCF Grid (Fast)", "Poisson Disk (Recommended)", "PCSS Soft Shadows (Best)" };
-                if (ImGui.Combo("##ShadowQuality", ref shadowQuality, qualityNames, qualityNames.Length))
+                // === Technology-specific settings ===
+                if (s.Technology == Editor.State.EditorSettings.ShadowTechnology.SimplePCF)
                 {
-                    s.ShadowQuality = Math.Clamp(shadowQuality, 0, 2);
-                    Editor.State.EditorSettings.ShadowsSettings = s;
-                }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Shadow filtering algorithm:\n" +
-                                   "PCF Grid = Basic, fast, configurable kernel\n" +
-                                   "Poisson Disk = Better quality, eliminates banding (RECOMMENDED)\n" +
-                                   "PCSS = Physically correct soft shadows with contact hardening");
+                    // === Shadow Quality Mode (SimplePCF only) ===
+                    ImGui.Text("Shadow Quality Mode");
+                    ImGui.SetNextItemWidth(-1);
 
-                ImGui.Spacing();
-                ImGui.Separator();
+                    int shadowQuality = s.ShadowQuality;
+                    string[] qualityNames = { "PCF Grid (Fast)", "Poisson Disk (Recommended)", "PCSS Soft Shadows (Best)" };
+                    if (ImGui.Combo("##ShadowQuality", ref shadowQuality, qualityNames, qualityNames.Length))
+                    {
+                        s.ShadowQuality = Math.Clamp(shadowQuality, 0, 2);
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Shadow filtering algorithm:\n" +
+                                       "PCF Grid = Basic, fast, configurable kernel\n" +
+                                       "Poisson Disk = Better quality, eliminates banding (RECOMMENDED)\n" +
+                                       "PCSS = Physically correct soft shadows with contact hardening");
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                }
+                else if (s.Technology == Editor.State.EditorSettings.ShadowTechnology.CSM)
+                {
+                    // === CSM Settings ===
+                    ImGui.TextColored(new Numerics.Vector4(0.5f, 0.8f, 1.0f, 1.0f), "Cascaded Shadow Maps (4 cascades)");
+
+                    ImGui.Spacing();
+
+                    // Split Lambda
+                    float splitLambda = s.CSM_SplitLambda;
+                    ImGui.SetNextItemWidth(-1);
+                    if (ImGui.SliderFloat("Cascade Distribution##CSM_Lambda", ref splitLambda, 0.0f, 1.0f, "%.2f"))
+                    {
+                        s.CSM_SplitLambda = splitLambda;
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Cascade split distribution:\n0.0 = Linear (uniform distribution)\n1.0 = Logarithmic (more detail near camera)\n0.75 = Recommended");
+
+                    // Blend Cascades
+                    bool blendCascades = s.CSM_BlendCascades;
+                    if (ImGui.Checkbox("Blend Cascades##CSM_Blend", ref blendCascades))
+                    {
+                        s.CSM_BlendCascades = blendCascades;
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Smoothly blend between cascade boundaries\nReduces visible seams between cascades");
+
+                    // Debug Cascades
+                    bool debugCascades = s.CSM_DebugCascades;
+                    if (ImGui.Checkbox("Debug Cascades##CSM_Debug", ref debugCascades))
+                    {
+                        s.CSM_DebugCascades = debugCascades;
+                        Editor.State.EditorSettings.ShadowsSettings = s;
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Visualize cascade boundaries with colors:\nRed = Cascade 0 (near)\nGreen = Cascade 1\nBlue = Cascade 2\nYellow = Cascade 3 (far)");
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                }
 
                 // === Shadow Map Resolution ===
                 ImGui.Text("Shadow Map Resolution");
@@ -578,39 +642,42 @@ namespace Editor.Panels
                 ImGui.Spacing();
                 ImGui.Separator();
 
-                // === Advanced Quality Settings (mode-specific) ===
-                ImGui.Text("Advanced Quality Settings");
-
-                // PCF Samples (only for Grid mode)
-                if (s.ShadowQuality == 0)
+                // === Advanced Quality Settings (SimplePCF mode-specific) ===
+                if (s.Technology == Editor.State.EditorSettings.ShadowTechnology.SimplePCF)
                 {
-                    int pcfSamples = s.PCFSamples;
-                    ImGui.SetNextItemWidth(-1);
-                    if (ImGui.SliderInt("PCF Kernel Size##PCFSamples", ref pcfSamples, 9, 25))
-                    {
-                        s.PCFSamples = pcfSamples;
-                        Editor.State.EditorSettings.ShadowsSettings = s;
-                    }
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("Number of samples for PCF Grid filtering\n9 = 3x3 kernel (fast)\n16 = 4x4 kernel\n25 = 5x5 kernel (best quality)");
-                }
+                    ImGui.Text("Advanced Quality Settings");
 
-                // Light Size (only for PCSS mode)
-                if (s.ShadowQuality == 2)
-                {
-                    float lightSize = s.LightSize;
-                    ImGui.SetNextItemWidth(-1);
-                    if (ImGui.SliderFloat("Light Source Size##LightSize", ref lightSize, 0.01f, 0.2f, "%.3f"))
+                    // PCF Samples (only for Grid mode)
+                    if (s.ShadowQuality == 0)
                     {
-                        s.LightSize = lightSize;
-                        Editor.State.EditorSettings.ShadowsSettings = s;
+                        int pcfSamples = s.PCFSamples;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderInt("PCF Kernel Size##PCFSamples", ref pcfSamples, 9, 25))
+                        {
+                            s.PCFSamples = pcfSamples;
+                            Editor.State.EditorSettings.ShadowsSettings = s;
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Number of samples for PCF Grid filtering\n9 = 3x3 kernel (fast)\n16 = 4x4 kernel\n25 = 5x5 kernel (best quality)");
                     }
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("Virtual light source size for PCSS\nLarger = softer shadows\nSmaller = sharper shadows");
-                }
 
-                ImGui.Spacing();
-                ImGui.Separator();
+                    // Light Size (only for PCSS mode)
+                    if (s.ShadowQuality == 2)
+                    {
+                        float lightSize = s.LightSize;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.SliderFloat("Light Source Size##LightSize", ref lightSize, 0.01f, 0.2f, "%.3f"))
+                        {
+                            s.LightSize = lightSize;
+                            Editor.State.EditorSettings.ShadowsSettings = s;
+                        }
+                        if (ImGui.IsItemHovered())
+                            ImGui.SetTooltip("Virtual light source size for PCSS\nLarger = softer shadows\nSmaller = sharper shadows");
+                    }
+
+                    ImGui.Spacing();
+                    ImGui.Separator();
+                }
 
                 // === Scene Coverage ===
                 ImGui.Text("Shadow Distance (Coverage)");

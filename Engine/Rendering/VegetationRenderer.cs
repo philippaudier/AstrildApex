@@ -8,6 +8,23 @@ using Engine.Components;
 namespace Engine.Rendering
 {
     /// <summary>
+    /// CSM (Cascaded Shadow Maps) data for vegetation rendering.
+    /// Pass this to VegetationRenderer.Render when CSM shadows are enabled.
+    /// </summary>
+    public class CSMShadowData
+    {
+        public int ShadowTextureArray;
+        public Matrix4[] CascadeMatrices = new Matrix4[4];
+        public float[] CascadePlaneDistances = new float[4];
+        public Matrix4 ViewMatrix;
+        public float ShadowMapSize;
+        public float ShadowBias;
+        public float ShadowStrength;
+        public bool DebugCascades;
+        public bool BlendCascades;
+    }
+
+    /// <summary>
     /// High-performance vegetation renderer using GPU instancing.
     /// Renders thousands of vegetation instances (trees, rocks, grass) with a single draw call per mesh.
     /// Inspired by Unity's Terrain Detail system, Unreal's Foliage Instanced Static Mesh, and Godot's MultiMesh.
@@ -453,10 +470,12 @@ namespace Engine.Rendering
             float snowSlopeMin = 0.0f, float snowSlopeMax = 45.0f, float snowSparkle = 0.5f, float snowDisplacement = 0.02f,
             Vector3 cameraPos = default, Vector3 lightDir = default, Vector3 lightColor = default, Vector3 ambientColor = default,
             uint objectId = 0,
-            // Shadow parameters
+            // Shadow parameters (SimplePCF)
             int shadowTexture = 0, Matrix4? shadowMatrix = null, bool useShadows = false,
             float shadowBias = 0.001f, float shadowMapSize = 2048f, float shadowStrength = 0.7f,
-            int shadowQuality = 1, float shadowNormalBias = 0.001f, int pcfSamples = 9, float lightSize = 0.05f)
+            int shadowQuality = 1, float shadowNormalBias = 0.001f, int pcfSamples = 9, float lightSize = 0.05f,
+            // CSM shadow parameters (optional - if provided, uses CSM instead of SimplePCF)
+            CSMShadowData? csmData = null)
         {
             using (Profiling.Profiler.Profile("VegetationRenderer.Render"))
             {
@@ -652,9 +671,46 @@ namespace Engine.Rendering
                     // Set shadow uniforms (must be set before material binding to ensure shadow map is bound)
                     try
                     {
-                        if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+                        // Always send view matrix (needed for CSM view-space depth calculation)
+                        if (csmData != null)
                         {
+                            shToUse.SetMat4("u_ViewMatrix", csmData.ViewMatrix);
+                        }
+                        else
+                        {
+                            shToUse.SetMat4("u_ViewMatrix", view);
+                        }
+
+                        if (csmData != null)
+                        {
+                            // === CSM (Cascaded Shadow Maps) ===
                             shToUse.SetInt("u_UseShadows", 1);
+                            shToUse.SetInt("u_ShadowTechnology", 1); // 1 = CSM
+                            shToUse.SetFloat("u_ShadowBias", csmData.ShadowBias);
+                            shToUse.SetFloat("u_ShadowMapSize", csmData.ShadowMapSize);
+                            shToUse.SetFloat("u_ShadowStrength", csmData.ShadowStrength);
+
+                            // Bind CSM texture array to unit 18
+                            GL.ActiveTexture(TextureUnit.Texture18);
+                            GL.BindTexture(TextureTarget.Texture2DArray, csmData.ShadowTextureArray);
+                            shToUse.SetInt("u_ShadowMapArray", 18);
+
+                            // Send cascade matrices and plane distances
+                            for (int i = 0; i < 4; i++)
+                            {
+                                shToUse.SetMat4($"u_CascadeMatrices[{i}]", csmData.CascadeMatrices[i]);
+                                shToUse.SetFloat($"u_CascadePlaneDistances[{i}]", csmData.CascadePlaneDistances[i]);
+                            }
+
+                            // CSM-specific settings
+                            shToUse.SetInt("u_CSMDebugCascades", csmData.DebugCascades ? 1 : 0);
+                            shToUse.SetInt("u_CSMBlendCascades", csmData.BlendCascades ? 1 : 0);
+                        }
+                        else if (useShadows && shadowTexture != 0 && shadowMatrix.HasValue)
+                        {
+                            // === SimplePCF (single shadow map) ===
+                            shToUse.SetInt("u_UseShadows", 1);
+                            shToUse.SetInt("u_ShadowTechnology", 0); // 0 = SimplePCF
                             shToUse.SetFloat("u_ShadowBias", shadowBias);
                             shToUse.SetFloat("u_ShadowMapSize", shadowMapSize);
                             shToUse.SetFloat("u_ShadowStrength", shadowStrength);
@@ -664,6 +720,8 @@ namespace Engine.Rendering
                             shToUse.SetFloat("u_ShadowNormalBias", shadowNormalBias);
                             shToUse.SetFloat("u_LightSize", lightSize);
                             shToUse.SetInt("u_PCFSamples", pcfSamples);
+                            shToUse.SetInt("u_CSMDebugCascades", 0);
+                            shToUse.SetInt("u_CSMBlendCascades", 0);
 
                             // Bind shadow map texture to unit 17 (same as PBR shader)
                             GL.ActiveTexture(TextureUnit.Texture17);
@@ -676,6 +734,7 @@ namespace Engine.Rendering
                         else
                         {
                             shToUse.SetInt("u_UseShadows", 0);
+                            shToUse.SetInt("u_ShadowTechnology", 0);
                         }
                     }
                     catch { }

@@ -40,10 +40,19 @@ float PCF_Simple(vec2 shadowCoord, float compareDepth)
 }
 
 // Calculate shadow factor for a world-space position
-float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
+// PERFORMANCE: Uses cameraPos parameter for distance-based early-out
+float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir, vec3 cameraPos)
 {
     if (u_UseShadows == 0)
         return 1.0;
+
+    // PERFORMANCE: Early-out based on shadow distance (avoids expensive PCF for distant fragments)
+    if (u_ShadowDistance > 0.0)
+    {
+        float distToCamera = length(worldPos - cameraPos);
+        if (distToCamera > u_ShadowDistance)
+            return 1.0;
+    }
 
     // Apply normal-based bias in world space
     float normalDot = max(dot(normal, lightDir), 0.0);
@@ -55,7 +64,7 @@ float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    // Check bounds
+    // Check bounds - early-out before expensive PCF sampling
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0 ||
         projCoords.z < 0.0 || projCoords.z > 1.0)
@@ -308,6 +317,7 @@ void main(){
     vec3 normalMap;
     vec3 baseNormal = normalize(vNormal);
     float occlusionValue = 1.0; // Default to no occlusion
+    vec2 adjustedUV = vUV; // FIX: Declare outside scope for transparency alpha sampling
 
     if (u_UseTriplanar == 1)
     {
@@ -324,7 +334,6 @@ void main(){
     else
     {
         // Standard UV mapping with optional parallax
-        vec2 adjustedUV = vUV;
         if (u_HeightScale > 0.001)
         {
             adjustedUV = ParallaxOcclusionMapping(vUV, normalize(vViewDirTangent), u_HeightScale);
@@ -352,10 +361,11 @@ void main(){
 
     vec3 Lo = vec3(0.0);
 
+    // PERFORMANCE: Calculate directional light direction once and reuse for both PBR and shadows
+    vec3 dirLightDir = normalize(-uDirLightDirection);
 
     if (uDirLightIntensity > 0.0) {
-        vec3 L = normalize(-uDirLightDirection);
-        Lo += CalculatePBR(N, V, L, uDirLightColor, uDirLightIntensity, baseCol, rough, metal, F0);
+        Lo += CalculatePBR(N, V, dirLightDir, uDirLightColor, uDirLightIntensity, baseCol, rough, metal, F0);
     }
 
 
@@ -445,10 +455,10 @@ void main(){
     }
 
     // Calculate shadow factor for directional light
+    // PERFORMANCE: Reuse dirLightDir calculated earlier (avoids redundant normalize)
     float shadowFactor = 1.0;
     if (uDirLightIntensity > 0.0) {
-        vec3 L = normalize(-uDirLightDirection);
-        shadowFactor = CalculateShadow(vWorldPos, N, L);
+        shadowFactor = CalculateShadow(vWorldPos, N, dirLightDir, uCameraPos);
     }
 
     // Apply shadows to direct lighting ONLY (not to ambient)

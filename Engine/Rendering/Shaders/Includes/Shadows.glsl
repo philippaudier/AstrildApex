@@ -1,24 +1,45 @@
 // ============================================================================
-// Modern Shadow Mapping with Three Quality Modes
+// Modern Shadow Mapping with Two Technologies
 // ============================================================================
+// Technology 0: SimplePCF - Single shadow map with PCF/Poisson/PCSS
+// Technology 1: CSM - Cascaded Shadow Maps for large outdoor scenes
+// ============================================================================
+// Quality Modes (for SimplePCF):
 // Mode 0: PCF Grid - Fast, robust, basic soft shadows
 // Mode 1: PCF Poisson Disk - Better quality, same performance
 // Mode 2: PCSS - Physically accurate soft shadows with contact hardening
 // ============================================================================
 
-// Hardware shadow comparison enabled (sampler2DShadow)
+// Shadow technology selector (0 = SimplePCF, 1 = CSM)
+uniform int u_ShadowTechnology;
+
+// ============================================================================
+// SimplePCF Uniforms
+// ============================================================================
 uniform sampler2DShadow u_ShadowMap;
 uniform mat4 u_ShadowMatrix;  // Light-space transformation matrix
 uniform int u_UseShadows;      // 0 = disabled, 1 = enabled
 uniform int u_ShadowQuality;   // 0 = PCF Grid, 1 = Poisson, 2 = PCSS
 
-// Shadow parameters
+// Shadow parameters (shared)
 uniform float u_ShadowMapSize;     // Shadow map resolution (e.g., 2048.0)
 uniform float u_ShadowBias;        // Constant bias to prevent shadow acne
 uniform float u_ShadowNormalBias;  // Normal-based bias multiplier
 uniform float u_ShadowStrength;    // Shadow darkness (0.0 = no shadows, 1.0 = full shadows)
 uniform float u_LightSize;         // Light source size for PCSS (default: 0.05)
 uniform int u_PCFSamples;          // Number of PCF samples (9, 16, 25, etc.)
+
+// ============================================================================
+// CSM (Cascaded Shadow Maps) Uniforms
+// ============================================================================
+#define CSM_CASCADE_COUNT 4
+
+uniform sampler2DArrayShadow u_ShadowMapArray;  // Shadow map texture array
+uniform mat4 u_CascadeMatrices[CSM_CASCADE_COUNT];  // Light-space matrices per cascade
+uniform float u_CascadePlaneDistances[CSM_CASCADE_COUNT];  // Far plane of each cascade
+uniform int u_CSMDebugCascades;  // Visualize cascade boundaries (0 = off, 1 = on)
+uniform int u_CSMBlendCascades;  // Blend between cascades (0 = off, 1 = on)
+uniform mat4 u_ViewMatrix;  // Camera view matrix for view-space depth calculation
 
 
 // ============================================================================
@@ -199,6 +220,137 @@ float PCSS(vec2 shadowCoord, float compareDepth, float bias)
 }
 
 // ============================================================================
+// CSM (Cascaded Shadow Maps) Functions
+// ============================================================================
+
+/// Select which cascade to use based on view-space depth
+int SelectCascade(float viewSpaceDepth)
+{
+    // viewSpaceDepth is positive (distance from camera)
+    for (int i = 0; i < CSM_CASCADE_COUNT; i++)
+    {
+        if (viewSpaceDepth < u_CascadePlaneDistances[i])
+        {
+            return i;
+        }
+    }
+    return CSM_CASCADE_COUNT - 1;  // Fallback to last cascade
+}
+
+/// PCF sampling with 3x3 kernel for CSM
+float CSM_PCF_3x3(vec3 shadowCoord, int cascadeIndex, float texelSize)
+{
+    float shadow = 0.0;
+
+    // 3x3 kernel sampling
+    for (int x = -1; x <= 1; x++)
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            vec2 offset = vec2(float(x), float(y)) * texelSize;
+            vec4 sampleCoord = vec4(shadowCoord.xy + offset, float(cascadeIndex), shadowCoord.z);
+            shadow += texture(u_ShadowMapArray, sampleCoord);
+        }
+    }
+
+    return shadow / 9.0;
+}
+
+/// Calculate CSM shadow factor for a world-space position
+/// Returns: 1.0 = fully lit, 0.0 = fully shadowed
+float CalculateCSMShadow(vec3 worldPos, vec3 normal, vec3 lightDir, float viewSpaceZ)
+{
+    if (u_UseShadows == 0)
+        return 1.0;
+
+    // Select cascade based on view-space depth
+    int cascadeIndex = SelectCascade(viewSpaceZ);
+
+    // Apply normal-based bias in world space
+    float normalDot = max(dot(normal, lightDir), 0.0);
+    float slopeBias = u_ShadowBias * sqrt(1.0 - normalDot * normalDot);
+    vec3 biasedWorldPos = worldPos + normal * (u_ShadowBias + slopeBias);
+
+    // Transform to light space for selected cascade
+    vec4 lightSpacePos = u_CascadeMatrices[cascadeIndex] * vec4(biasedWorldPos, 1.0);
+
+    // CRITICAL: Check for invalid w to prevent NaN from division
+    if (abs(lightSpacePos.w) < 0.0001)
+        return 1.0; // Invalid matrix, return fully lit
+
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    // Check bounds
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z < 0.0 || projCoords.z > 1.0)
+    {
+        return 1.0;  // Outside shadow map = fully lit
+    }
+
+    // Calculate texel size for PCF
+    float texelSize = 1.0 / u_ShadowMapSize;
+
+    // Perform PCF shadow sampling
+    float shadowValue = CSM_PCF_3x3(projCoords, cascadeIndex, texelSize);
+
+    // Blend between cascades at boundaries (reduces visible seams)
+    if (u_CSMBlendCascades != 0 && cascadeIndex < CSM_CASCADE_COUNT - 1)
+    {
+        float cascadeEnd = u_CascadePlaneDistances[cascadeIndex];
+        float blendThreshold = 0.9;  // Start blending at 90% of cascade distance
+        float blendStart = cascadeEnd * blendThreshold;
+
+        if (viewSpaceZ > blendStart)
+        {
+            // Calculate blend factor
+            float cascadeBlend = (viewSpaceZ - blendStart) / (cascadeEnd - blendStart);
+            cascadeBlend = clamp(cascadeBlend, 0.0, 1.0);
+
+            // Sample next cascade
+            int nextCascade = cascadeIndex + 1;
+            vec4 nextLightSpacePos = u_CascadeMatrices[nextCascade] * vec4(biasedWorldPos, 1.0);
+            vec3 nextProjCoords = nextLightSpacePos.xyz / nextLightSpacePos.w;
+            nextProjCoords = nextProjCoords * 0.5 + 0.5;
+
+            if (nextProjCoords.x >= 0.0 && nextProjCoords.x <= 1.0 &&
+                nextProjCoords.y >= 0.0 && nextProjCoords.y <= 1.0 &&
+                nextProjCoords.z >= 0.0 && nextProjCoords.z <= 1.0)
+            {
+                float nextShadowValue = CSM_PCF_3x3(nextProjCoords, nextCascade, texelSize);
+                shadowValue = mix(shadowValue, nextShadowValue, cascadeBlend);
+            }
+        }
+    }
+
+    // Apply shadow strength
+    return mix(1.0 - u_ShadowStrength, 1.0, shadowValue);
+}
+
+/// Get cascade debug color for visualization
+vec3 GetCascadeDebugColor(int cascadeIndex)
+{
+    if (cascadeIndex == 0) return vec3(1.0, 0.0, 0.0);  // Red - cascade 0 (near)
+    if (cascadeIndex == 1) return vec3(0.0, 1.0, 0.0);  // Green - cascade 1
+    if (cascadeIndex == 2) return vec3(0.0, 0.0, 1.0);  // Blue - cascade 2
+    return vec3(1.0, 1.0, 0.0);  // Yellow - cascade 3 (far)
+}
+
+/// Apply cascade debug visualization to color
+vec3 ApplyCascadeDebug(vec3 color, float viewSpaceZ)
+{
+    if (u_CSMDebugCascades == 0 || u_ShadowTechnology != 1)
+        return color;
+
+    int cascadeIndex = SelectCascade(viewSpaceZ);
+    vec3 debugColor = GetCascadeDebugColor(cascadeIndex);
+
+    // Blend debug color with original (30% tint)
+    return mix(color, debugColor, 0.3);
+}
+
+// ============================================================================
 // Main Shadow Calculation Function
 // ============================================================================
 
@@ -227,6 +379,11 @@ float CalculateShadow(vec3 worldPos, vec3 normal, vec3 lightDir)
 
     // Transform biased world position to light space
     vec4 lightSpacePos = u_ShadowMatrix * vec4(biasedWorldPos, 1.0);
+
+    // CRITICAL: Check for invalid w to prevent NaN from division
+    // This can happen if u_ShadowMatrix is not properly initialized
+    if (abs(lightSpacePos.w) < 0.0001)
+        return 1.0; // Invalid matrix, return fully lit
 
     // Perspective divide
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
@@ -301,6 +458,11 @@ float calculateShadow(vec3 worldPos, vec3 viewPos)
 
 float calculateShadowWithNL(vec3 worldPos, vec3 viewPos, vec3 N, vec3 L)
 {
-    return CalculateShadow(worldPos, N, L);
+    // Use SimplePCF shadow calculation
+    float shadow = CalculateShadow(worldPos, N, L);
+
+    // If CSM is selected (u_ShadowTechnology == 1), use CSM instead
+    // But for now, CSM is disabled - just return SimplePCF result
+    return shadow;
 }
 

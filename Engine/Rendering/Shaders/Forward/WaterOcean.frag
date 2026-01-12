@@ -183,11 +183,11 @@ float getWaveHeight(vec2 position, int iterations) {
     
     for(int i = 0; i < iterations && i < 48; i++) {
         float angle = iter * 0.5;
+        // PERFORMANCE: Rotation of a unit vector (waveDir) preserves length - no normalize needed
         vec2 dir = vec2(
             waveDir.x * cos(angle) - waveDir.y * sin(angle),
             waveDir.x * sin(angle) + waveDir.y * cos(angle)
         );
-        dir = normalize(dir);
         
         vec2 res = wavedx(position, dir, frequency, u_Time * timeMultiplier + wavePhaseShift);
         position += dir * res.y * weight * u_WaveDrag;

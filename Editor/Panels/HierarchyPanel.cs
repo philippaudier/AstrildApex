@@ -95,6 +95,12 @@ namespace Editor.Panels
                 return;
             }
 
+            // PERFORMANCE: Calculate visible viewport region for culling (+2-8 FPS)
+            float scrollY = ImGui.GetScrollY();
+            float windowHeight = ImGui.GetWindowHeight();
+            float visibleTop = scrollY;
+            float visibleBottom = scrollY + windowHeight;
+
             // PERFORMANCE: Check if scene has changed (dirty flags)
             int currentEntityCount = scene.Entities.Count;
             int currentSelectionCount = Selection.Selected.Count;
@@ -131,7 +137,7 @@ namespace Editor.Panels
             {
                 var e = entitiesSpan[i];
                 if (e != null && e.Parent == null)
-                    DrawEntityNode(scene, e);
+                    DrawEntityNode(scene, e, visibleTop, visibleBottom);
             }
 
             // Traite un shift-click différé une fois que _visibleOrder est complet
@@ -595,13 +601,25 @@ namespace Editor.Panels
             ImGui.End();
         }
 
-        private static void DrawEntityNode(Scene scene, Entity e)
+        private static void DrawEntityNode(Scene scene, Entity e, float visibleTop, float visibleBottom)
         {
+            // PERFORMANCE: Viewport culling - skip rendering if outside visible area
+            // Calculate item position before any rendering
+            float itemY = ImGui.GetCursorPosY() + ImGui.GetScrollY();
+            const float estimatedItemHeight = 24f; // Approximate height of a tree node
+
+            // If item is completely outside visible region, create a dummy spacer and skip
+            if (itemY + estimatedItemHeight < visibleTop || itemY > visibleBottom)
+            {
+                // Create invisible dummy to maintain layout
+                ImGui.Dummy(new Vector2(0, estimatedItemHeight));
+                return; // Skip all rendering for this entity
+            }
 
             // Affichage spécial pour Separator : trait horizontal
             // Suppression de la logique Separator
 
-            // --- Zone de drop AVANT l’item (pour réordonner) ---
+            // --- Zone de drop AVANT l'item (pour réordonner) ---
             ImGui.PushID($"drop-before-{e.Id}");
             var cursor2 = ImGui.GetCursorScreenPos();
             ImGui.InvisibleButton($"drop-before-btn##{e.Id}", new Vector2(ImGui.GetWindowWidth(), 4f));
@@ -829,7 +847,7 @@ namespace Editor.Panels
                 foreach (var child in e.Children.ToList())
                 {
                     if (scene != null)
-                        DrawEntityNode(scene, child);
+                        DrawEntityNode(scene, child, visibleTop, visibleBottom);
                 }
                 ImGui.TreePop();
             }

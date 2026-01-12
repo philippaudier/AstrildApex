@@ -1087,12 +1087,25 @@ namespace Editor.Rendering
 
             try
             {
-                // Step 1: Clear vegetation batches
-                Console.WriteLine($"[ViewportRenderer] Step 1: Clearing vegetation batches...");
+                // Step 1: Clear ALL vegetation-related renderers for a clean slate
+                Console.WriteLine($"[ViewportRenderer] Step 1: Clearing all vegetation renderers...");
+
                 if (_vegetationRenderer != null)
                 {
                     _vegetationRenderer.ClearBatches();
-                    Console.WriteLine($"[ViewportRenderer] ✓ Vegetation batches cleared");
+                    Console.WriteLine($"[ViewportRenderer]   ✓ Vegetation batches cleared");
+                }
+
+                if (_grassRenderer != null)
+                {
+                    _grassRenderer.ClearAll();
+                    Console.WriteLine($"[ViewportRenderer]   ✓ Grass layers cleared");
+                }
+
+                if (_rockRenderer != null)
+                {
+                    _rockRenderer.ClearAll();
+                    Console.WriteLine($"[ViewportRenderer]   ✓ Rock layers cleared");
                 }
 
                 // Step 2: Clear terrain based on mode
@@ -1428,6 +1441,7 @@ namespace Editor.Rendering
 
     // === NEW Modern Shadow System ===
     private Engine.Rendering.Shadows.ShadowManager? _shadowManager = null;
+    private Engine.Rendering.Shadows.CascadedShadowManager? _csmManager = null;
     private Engine.Rendering.ShaderProgram? _shadowDepthShader = null;
 
     
@@ -4144,7 +4158,6 @@ void main(){
                     {
                         try 
                         { 
-                            LogManager.LogInfo($"[ANIMATION DEBUG] Frame={_frameCounter}, Time={currentTime:F2}s, WindStr={weather.WindStrength:F3}, WindSpeed={weather.WindSpeed:F3}, BranchAmp={weather.BranchAmplitude:F3}, WindDir=({windDir.X:F2},{windDir.Y:F2})", "ViewportRenderer");
                             if (weather.WindStrength < 0.01f)
                             {
                                 LogManager.LogWarning("WindStrength is near ZERO! Set WindStrength > 0.3 in WeatherComponent to see animation.", "ViewportRenderer");
@@ -4323,8 +4336,29 @@ void main(){
                         var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
                         var lighting = _scene != null ? Engine.Scene.Lighting.Build(_scene) : new Engine.Scene.LightingState();
                         bool shadowsAllowed = shadowSettings.Enabled && lighting.HasDirectional && lighting.DirCastShadows;
-                        int vegShadowTexture = (shadowsAllowed && _shadowManager != null) ? _shadowManager.ShadowTexture : 0;
-                        OpenTK.Mathematics.Matrix4? vegShadowMatrix = (shadowsAllowed && _shadowManager != null) ? _shadowManager.LightSpaceMatrix : (OpenTK.Mathematics.Matrix4?)null;
+                        bool useCSMForVegetation = shadowsAllowed && shadowSettings.Technology == Editor.State.EditorSettings.ShadowTechnology.CSM && _csmManager != null;
+
+                        // SimplePCF parameters (used when CSM is not active)
+                        int vegShadowTexture = (shadowsAllowed && !useCSMForVegetation && _shadowManager != null) ? _shadowManager.ShadowTexture : 0;
+                        OpenTK.Mathematics.Matrix4? vegShadowMatrix = (shadowsAllowed && !useCSMForVegetation && _shadowManager != null) ? _shadowManager.LightSpaceMatrix : (OpenTK.Mathematics.Matrix4?)null;
+
+                        // CSM parameters (used when CSM is active)
+                        Engine.Rendering.CSMShadowData? csmDataForVegetation = null;
+                        if (useCSMForVegetation)
+                        {
+                            csmDataForVegetation = new Engine.Rendering.CSMShadowData
+                            {
+                                ShadowTextureArray = _csmManager!.ShadowTextureArray,
+                                CascadeMatrices = _csmManager.LightSpaceMatrices,
+                                CascadePlaneDistances = _csmManager.CascadePlaneDistances,
+                                ViewMatrix = _viewGL,
+                                ShadowMapSize = _csmManager.ShadowMapSize,
+                                ShadowBias = shadowSettings.ShadowBias,
+                                ShadowStrength = shadowSettings.ShadowStrength,
+                                DebugCascades = shadowSettings.CSM_DebugCascades,
+                                BlendCascades = shadowSettings.CSM_BlendCascades
+                            };
+                        }
 
                         _vegetationRenderer.Render(
                             _viewGL, _projGL, currentTime,
@@ -4336,11 +4370,13 @@ void main(){
                             weather.SnowSlopeMin, weather.SnowSlopeMax, weather.SnowSparkle, weather.SnowDisplacement,
                             vegetationCamPos, lightDir, lightColor, ambientColor,
                             0, // objectId
-                            // Shadow parameters
-                            vegShadowTexture, vegShadowMatrix, shadowsAllowed,
+                            // Shadow parameters (SimplePCF - ignored when CSM is used)
+                            vegShadowTexture, vegShadowMatrix, shadowsAllowed && !useCSMForVegetation,
                             shadowSettings.ShadowBias, _shadowManager?.ShadowMapSize ?? 2048f, shadowSettings.ShadowStrength,
                             // Shadow quality parameters (improved shadow system)
-                            shadowSettings.ShadowQuality, shadowSettings.ShadowNormalBias, shadowSettings.PCFSamples, shadowSettings.LightSize
+                            shadowSettings.ShadowQuality, shadowSettings.ShadowNormalBias, shadowSettings.PCFSamples, shadowSettings.LightSize,
+                            // CSM shadow data (if CSM is enabled)
+                            csmDataForVegetation
                         );
                         // (no max draw distance) - vegetation always rendered regardless of per-layer distance
                     }
@@ -5174,8 +5210,8 @@ void main(){
         // ========================================================================
 
         /// <summary>
-        /// NEW: Modern shadow rendering using single directional light shadow map.
-        /// Renders the scene from the light's perspective to generate the shadow map.
+        /// NEW: Modern shadow rendering supporting both SimplePCF and CSM technologies.
+        /// Renders the scene from the light's perspective to generate shadow map(s).
         /// </summary>
         private void RenderShadowPass()
         {
@@ -5193,20 +5229,36 @@ void main(){
             if (_shadowDepthShader == null || !shadowSettings.Enabled)
                 return;
 
-            // Check if shadow map size changed and recreate if needed
-            int shadowMapSize = Math.Clamp(shadowSettings.ShadowMapSize, 512, 8192);
-            if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
-            {
-                _shadowManager?.Dispose();
-                _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
-            }
-
             // Get directional light direction from global uniforms
             Vector3 lightDir = _globalUniforms.DirLightDirection;
             if (lightDir.Length < 0.01f)
             {
                 // Fallback to default light direction if not set
                 lightDir = new Vector3(0.5f, -1.0f, 0.3f);
+            }
+
+            // Choose shadow technology
+            if (shadowSettings.Technology == Editor.State.EditorSettings.ShadowTechnology.CSM)
+            {
+                RenderCSMShadowPass(shadowSettings, lightDir);
+            }
+            else
+            {
+                RenderSimpleShadowPass(shadowSettings, lightDir);
+            }
+        }
+
+        /// <summary>
+        /// Render shadows using SimplePCF (single shadow map).
+        /// </summary>
+        private void RenderSimpleShadowPass(Editor.State.EditorSettings.ShadowsSettingsData shadowSettings, Vector3 lightDir)
+        {
+            // Check if shadow map size changed and recreate if needed
+            int shadowMapSize = Math.Clamp(shadowSettings.ShadowMapSize, 512, 8192);
+            if (_shadowManager == null || _shadowManager.ShadowMapSize != shadowMapSize)
+            {
+                _shadowManager?.Dispose();
+                _shadowManager = new Engine.Rendering.Shadows.ShadowManager(shadowMapSize);
             }
 
             // Calculate scene bounds
@@ -5221,7 +5273,7 @@ void main(){
             _shadowManager.BeginShadowPass();
 
             // Use shadow depth shader
-            _shadowDepthShader.Use();
+            _shadowDepthShader!.Use();
             _shadowDepthShader.SetMat4("u_LightSpaceMatrix", _shadowManager.LightSpaceMatrix);
 
             // Render all shadow-casting objects
@@ -5232,10 +5284,56 @@ void main(){
         }
 
         /// <summary>
+        /// Render shadows using Cascaded Shadow Maps (CSM).
+        /// Renders multiple cascades for better shadow quality at different distances.
+        /// </summary>
+        private void RenderCSMShadowPass(Editor.State.EditorSettings.ShadowsSettingsData shadowSettings, Vector3 lightDir)
+        {
+            // Check if CSM manager needs to be created or resized
+            int shadowMapSize = Math.Clamp(shadowSettings.ShadowMapSize, 512, 4096);
+            if (_csmManager == null || _csmManager.ShadowMapSize != shadowMapSize)
+            {
+                _csmManager?.Dispose();
+                _csmManager = new Engine.Rendering.Shadows.CascadedShadowManager(shadowMapSize);
+            }
+
+            // Update cascade split lambda from settings
+            _csmManager.CascadeSplitLambda = shadowSettings.CSM_SplitLambda;
+
+            // Calculate cascade splits based on camera frustum
+            float nearPlane = _nearClip;
+            float farPlane = Math.Min(_farClip, shadowSettings.ShadowDistance);
+            _csmManager.CalculateCascadeSplits(nearPlane, farPlane);
+
+            // Calculate light matrices for all cascades
+            _csmManager.CalculateLightMatrices(lightDir, _viewGL, _projGL);
+
+            // Render each cascade
+            _shadowDepthShader!.Use();
+
+            for (int cascade = 0; cascade < _csmManager.CascadeCount; cascade++)
+            {
+                // Begin rendering to this cascade's framebuffer
+                _csmManager.BeginCascadePass(cascade);
+
+                // Get light-space matrix for this cascade
+                Matrix4 cascadeLightSpaceMatrix = _csmManager.GetLightSpaceMatrix(cascade);
+                _shadowDepthShader.SetMat4("u_LightSpaceMatrix", cascadeLightSpaceMatrix);
+
+                // Render all shadow-casting objects (pass cascade matrix for vegetation)
+                RenderShadowCasters(cascadeLightSpaceMatrix);
+
+                // End cascade pass
+                _csmManager.EndCascadePass();
+            }
+        }
+
+        /// <summary>
         /// Render all objects that should cast shadows.
         /// This includes terrain and all objects with mesh filters.
         /// </summary>
-        private void RenderShadowCasters()
+        /// <param name="lightSpaceMatrixForVegetation">Light space matrix to use for vegetation. If null, uses _shadowManager.LightSpaceMatrix.</param>
+        private void RenderShadowCasters(Matrix4? lightSpaceMatrixForVegetation = null)
         {
             if (_scene == null || _shadowDepthShader == null)
                 return;
@@ -5345,17 +5443,24 @@ void main(){
             }
 
             // === Render Vegetation Instances (GPU Instancing) ===
-            if (_vegetationRenderer != null && _shadowManager != null)
+            if (_vegetationRenderer != null)
             {
-                try
+                // Determine which light space matrix to use:
+                // - If lightSpaceMatrixForVegetation is provided (CSM), use it
+                // - Otherwise fallback to SimplePCF shadow manager
+                Matrix4? vegLightSpaceMatrix = lightSpaceMatrixForVegetation ?? (_shadowManager?.LightSpaceMatrix);
+                if (vegLightSpaceMatrix.HasValue)
                 {
-                    var camPos = CameraPosition();
-                    float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
-                    _vegetationRenderer.RenderShadowPass(_shadowManager.LightSpaceMatrix, camPos, time);
-                }
-                catch (Exception ex)
-                {
-                    LogManager.LogWarning($"Shadow: Failed to render vegetation: {ex.Message}", "ViewportRenderer");
+                    try
+                    {
+                        var camPos = CameraPosition();
+                        float time = (float)_timeStopwatch.Elapsed.TotalSeconds;
+                        _vegetationRenderer.RenderShadowPass(vegLightSpaceMatrix.Value, camPos, time);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogManager.LogWarning($"Shadow: Failed to render vegetation: {ex.Message}", "ViewportRenderer");
+                    }
                 }
             }
 
@@ -5366,64 +5471,127 @@ void main(){
         // === END NEW MODERN SHADOW SYSTEM ===
         // ========================================================================
 
-        // Set shadow-related uniforms on a shader (both legacy and CSM)
+        // Set shadow-related uniforms on a shader (supports both SimplePCF and CSM)
         private void SetShadowUniforms(Engine.Rendering.ShaderProgram shader, bool enabled)
         {
-            if (_shadowManager == null || !enabled)
+            var shadowSettings = Editor.State.EditorSettings.ShadowsSettings;
+            bool useCSM = shadowSettings.Technology == Editor.State.EditorSettings.ShadowTechnology.CSM;
+
+            // Always send view matrix (needed for CSM cascade debug visualization and view-space depth)
+            Matrix4 viewMatrix = _viewGL;
+            int locView = GL.GetUniformLocation(shader.Handle, "u_ViewMatrix");
+            if (locView >= 0) GL.UniformMatrix4(locView, false, ref viewMatrix);
+
+            // Check if shadow system is ready
+            bool shadowSystemReady = useCSM ? (_csmManager != null) : (_shadowManager != null);
+
+            if (!shadowSystemReady || !enabled)
             {
                 shader.SetInt("u_UseShadows", 0);
-                shader.SetInt("u_CascadeCount", 1); // Default to avoid shader errors
+                shader.SetInt("u_ShadowTechnology", 0);
+                shader.SetInt("u_CSMDebugCascades", 0);
+                shader.SetInt("u_CSMBlendCascades", 0);
 
-                // Initialize default cascade data to avoid uninitialized uniforms
-                for (int i = 0; i < 4; i++)
-                {
-                    Matrix4 identity = Matrix4.Identity;
-                    int locMat = GL.GetUniformLocation(shader.Handle, $"u_CascadeMatrices[{i}]");
-                    if (locMat >= 0) GL.UniformMatrix4(locMat, false, ref identity);
+                // CRITICAL: Always set valid shadow matrix and texture to prevent NaN in shaders
+                // Even when shadows are disabled, the shader may still sample these
+                Matrix4 identity = Matrix4.Identity;
+                int locShadowMat = GL.GetUniformLocation(shader.Handle, "u_ShadowMatrix");
+                if (locShadowMat >= 0) GL.UniformMatrix4(locShadowMat, false, ref identity);
 
-                    shader.SetFloat($"u_CascadeSplits[{i}]", 1000.0f);
-                    shader.SetVec4($"u_AtlasTransforms[{i}]", new Vector4(1, 1, 0, 0));
-                }
+                // Bind fallback shadow textures
+                GL.ActiveTexture(TextureUnit.Texture17);
+                GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.WhiteShadow2D);
+                shader.SetInt("u_ShadowMap", 17);
+
+                GL.ActiveTexture(TextureUnit.Texture18);
+                GL.BindTexture(TextureTarget.Texture2DArray, Engine.Rendering.TextureCache.WhiteShadowArray);
+                shader.SetInt("u_ShadowMapArray", 18);
+
+                GL.ActiveTexture(TextureUnit.Texture0);
                 return;
             }
 
+            // Common shadow settings
             shader.SetInt("u_UseShadows", 1);
-            shader.SetFloat("u_ShadowBias", Editor.State.EditorSettings.ShadowsSettings.ShadowBias);
-            shader.SetFloat("u_ShadowMapSize", _shadowManager.ShadowMapSize);
-            shader.SetFloat("u_ShadowStrength", Editor.State.EditorSettings.ShadowsSettings.ShadowStrength);
-            shader.SetFloat("u_ShadowDistance", Editor.State.EditorSettings.ShadowsSettings.ShadowDistance);
+            shader.SetInt("u_ShadowTechnology", useCSM ? 1 : 0);
+            shader.SetFloat("u_ShadowBias", shadowSettings.ShadowBias);
+            shader.SetFloat("u_ShadowStrength", shadowSettings.ShadowStrength);
+            shader.SetFloat("u_ShadowDistance", shadowSettings.ShadowDistance);
 
-            // === Shadow Quality Settings (new improved shadow system) ===
-            shader.SetInt("u_ShadowQuality", Editor.State.EditorSettings.ShadowsSettings.ShadowQuality);
-            shader.SetFloat("u_ShadowNormalBias", Editor.State.EditorSettings.ShadowsSettings.ShadowNormalBias);
-            shader.SetInt("u_PCFSamples", Editor.State.EditorSettings.ShadowsSettings.PCFSamples);
-            shader.SetFloat("u_LightSize", Editor.State.EditorSettings.ShadowsSettings.LightSize);
-
-            // Bind shadow map texture
-            GL.ActiveTexture(TextureUnit.Texture17);
-            GL.BindTexture(TextureTarget.Texture2D, _shadowManager.ShadowTexture);
-            shader.SetInt("u_ShadowMap", 17);
-
-            // === OLD CSM CODE (DEPRECATED - NEW SYSTEM HANDLES THIS DIFFERENTLY) ===
-            // CSM uniforms - determine cascade count from settings
-            int cascadeCount = 1; // Default to legacy mode - CSM disabled in new system
-            shader.SetInt("u_CascadeCount", cascadeCount);
-
-            // Send default cascade data (CSM methods removed from new ShadowManager)
-            for (int i = 0; i < 4; i++)
+            if (useCSM)
             {
-                Matrix4 identity = Matrix4.Identity;
-                int locMat = GL.GetUniformLocation(shader.Handle, $"u_CascadeMatrices[{i}]");
-                if (locMat >= 0) GL.UniformMatrix4(locMat, false, ref identity);
+                // === CSM (Cascaded Shadow Maps) ===
+                shader.SetFloat("u_ShadowMapSize", _csmManager!.ShadowMapSize);
 
-                shader.SetFloat($"u_CascadeSplits[{i}]", 1000.0f);
-                shader.SetVec4($"u_AtlasTransforms[{i}]", new Vector4(1, 1, 0, 0));
+                // Bind CSM texture array to unit 18
+                GL.ActiveTexture(TextureUnit.Texture18);
+                GL.BindTexture(TextureTarget.Texture2DArray, _csmManager.ShadowTextureArray);
+                shader.SetInt("u_ShadowMapArray", 18);
+
+                // Send cascade matrices and plane distances
+                for (int i = 0; i < _csmManager.CascadeCount; i++)
+                {
+                    Matrix4 cascadeMatrix = _csmManager.LightSpaceMatrices[i];
+                    int locMat = GL.GetUniformLocation(shader.Handle, $"u_CascadeMatrices[{i}]");
+                    if (locMat >= 0) GL.UniformMatrix4(locMat, false, ref cascadeMatrix);
+
+                    shader.SetFloat($"u_CascadePlaneDistances[{i}]", _csmManager.CascadePlaneDistances[i]);
+                }
+
+                // CSM-specific settings
+                shader.SetInt("u_CSMDebugCascades", shadowSettings.CSM_DebugCascades ? 1 : 0);
+                shader.SetInt("u_CSMBlendCascades", shadowSettings.CSM_BlendCascades ? 1 : 0);
+
+                // IMPORTANT: Bind a valid shadow texture to avoid undefined behavior
+                // Some drivers have issues with unbound sampler2DShadow even when not sampled
+                GL.ActiveTexture(TextureUnit.Texture17);
+                GL.BindTexture(TextureTarget.Texture2D, Engine.Rendering.TextureCache.WhiteShadow2D);
+                shader.SetInt("u_ShadowMap", 17);
+                Matrix4 identity = Matrix4.Identity;
+                int locShadowMat = GL.GetUniformLocation(shader.Handle, "u_ShadowMatrix");
+                if (locShadowMat >= 0) GL.UniformMatrix4(locShadowMat, false, ref identity);
+            }
+            else
+            {
+                // === SimplePCF (single shadow map) ===
+                shader.SetFloat("u_ShadowMapSize", _shadowManager!.ShadowMapSize);
+                shader.SetInt("u_CSMDebugCascades", 0);
+                shader.SetInt("u_CSMBlendCascades", 0);
+
+                // Shadow Quality Settings
+                shader.SetInt("u_ShadowQuality", shadowSettings.ShadowQuality);
+                shader.SetFloat("u_ShadowNormalBias", shadowSettings.ShadowNormalBias);
+                shader.SetInt("u_PCFSamples", shadowSettings.PCFSamples);
+                shader.SetFloat("u_LightSize", shadowSettings.LightSize);
+
+                // Bind shadow map texture to unit 17
+                GL.ActiveTexture(TextureUnit.Texture17);
+                GL.BindTexture(TextureTarget.Texture2D, _shadowManager.ShadowTexture);
+                shader.SetInt("u_ShadowMap", 17);
+
+                // Single shadow matrix
+                Matrix4 shadowMatrix = _shadowManager.LightSpaceMatrix;
+                int locMat = GL.GetUniformLocation(shader.Handle, "u_ShadowMatrix");
+                if (locMat >= 0) GL.UniformMatrix4(locMat, false, ref shadowMatrix);
+
+                // IMPORTANT: Initialize CSM uniforms with defaults to avoid shader errors
+                for (int i = 0; i < 4; i++)
+                {
+                    Matrix4 identity = Matrix4.Identity;
+                    int locCascade = GL.GetUniformLocation(shader.Handle, $"u_CascadeMatrices[{i}]");
+                    if (locCascade >= 0) GL.UniformMatrix4(locCascade, false, ref identity);
+                    shader.SetFloat($"u_CascadePlaneDistances[{i}]", 1000.0f);
+                }
+
+                // CRITICAL: Bind default shadow array to avoid undefined behavior when CSM is disabled
+                // Even though u_ShadowTechnology == 0, some drivers may have issues with unbound samplers
+                GL.ActiveTexture(TextureUnit.Texture18);
+                GL.BindTexture(TextureTarget.Texture2DArray, Engine.Rendering.TextureCache.WhiteShadowArray);
+                shader.SetInt("u_ShadowMapArray", 18);
             }
 
-            // Legacy: single shadow matrix (use LightSpaceMatrix from new system)
-            Matrix4 legacyMat = _shadowManager.LightSpaceMatrix;
-            int locLegacy = GL.GetUniformLocation(shader.Handle, "u_ShadowMatrix");
-            if (locLegacy >= 0) GL.UniformMatrix4(locLegacy, false, ref legacyMat);
+            // Restore texture unit 0
+            GL.ActiveTexture(TextureUnit.Texture0);
         }
 
         // Bind default white textures for snow material fallback
@@ -6901,6 +7069,9 @@ void main(){
                                     terrainShader.SetFloat("u_SnowSlopeMax", snowSlopeMax);
                                     terrainShader.SetFloat("u_SnowSparkle", snowSparkle);
                                     terrainShader.SetFloat("u_SnowDisplacement", snowDisplacement);
+
+                                    // CRITICAL: Set shadow uniforms for terrain shader (supports both SimplePCF and CSM)
+                                    SetShadowUniforms(terrainShader, shadowsEnabled);
                                 }
                             }
                             catch { } // Non-critical if fails
@@ -7405,6 +7576,10 @@ void main(){
             SetShadowUniforms(pbr, shadowsAllowed);
             pbr.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
 
+            // CRITICAL: Set LOD transition to 1.0 for all objects using _pbrShader
+            // Without this, u_LodTransition defaults to 0.0 and ALL fragments are discarded!
+            pbr.SetFloat("u_LodTransition", 1.0f);
+
             // SSAO is now handled as a post-effect, not in PBR shader
             // Set disabled defaults to avoid shader errors
             pbr.SetInt("u_SSAOEnabled", 0);
@@ -7463,29 +7638,7 @@ void main(){
             // === QUEUE 2600: SSAO POST-PROCESSING ===
             // SSAO is now handled as a post-effect, not during main rendering pipeline
 
-            // === Configure Simple Shadow Uniforms ===
-                if (_pbrShader != null && shadowsAllowed && _shadowManager != null)
-                {
-                    // Bind shadow texture to TextureUnit.Texture5
-                    _shadowManager.BindShadowTexture(TextureUnit.Texture5);
-
-                    // Set shadow uniforms for simple system
-                    _pbrShader.SetInt("u_ShadowMap", 5);
-                    _pbrShader.SetMat4("u_ShadowMatrix", _shadowManager.LightSpaceMatrix);
-                    _pbrShader.SetInt("u_UseShadows", 1);
-                    _pbrShader.SetFloat("u_ShadowMapSize", (float)_shadowManager.ShadowMapSize);
-                    _pbrShader.SetFloat("u_ShadowBias", shadowSettings.ShadowBias);
-                    _pbrShader.SetFloat("u_ShadowStrength", shadowSettings.ShadowStrength);
-                    _pbrShader.SetFloat("u_ShadowDistance", shadowSettings.ShadowDistance);
-
-                    // Shadow settings applied to shader (debug logging removed to avoid spam)
-                }
-                else if (_pbrShader != null)
-                {
-                    // Shadows disabled
-                    _pbrShader.SetInt("u_UseShadows", 0);
-                }
-
+            // === Configure Shadow Uniforms (supports both SimplePCF and CSM) ===
                 // Terrain rendering moved to line ~4412 (before SSAO branches)
 
                 // CRITICAL: Re-activate PBR shader (terrain renderer may have changed it)
@@ -7493,9 +7646,13 @@ void main(){
                 {
                     _pbrShader.Use();
 
-                    // Re-bind shadow uniforms for subsequent objects (using CSM-aware helper)
+                    // Bind shadow uniforms using technology-aware helper (SimplePCF or CSM)
                     SetShadowUniforms(_pbrShader, shadowsAllowed);
                     _pbrShader.SetInt("u_DebugShowShadows", shadowSettings.DebugShowShadowMap ? 1 : 0);
+
+                    // CRITICAL: Set LOD transition to 1.0 for all objects
+                    // Without this, u_LodTransition defaults to 0.0 and ALL fragments are discarded!
+                    _pbrShader.SetFloat("u_LodTransition", 1.0f);
 
                     // CRITICAL: Bind default snow textures FIRST (always) to avoid shader crash
                     BindDefaultSnowTextures(_pbrShader);
@@ -7839,6 +7996,11 @@ void main(){
                         catch { } // Ignore if shader doesn't have these uniforms
 
                         SetShadowUniforms(shaderToUse, shadowsAllowed);
+
+                        // CRITICAL: Set LOD transition to 1.0 for non-LOD objects
+                        // Without this, u_LodTransition defaults to 0.0 and ALL fragments are discarded!
+                        try { shaderToUse.SetFloat("u_LodTransition", 1.0f); } catch { }
+
                         // SSAO is now handled as a post-effect, not during main rendering
                         // Set disabled defaults for legacy shaders that still have SSAO uniforms
                         try
@@ -10699,6 +10861,7 @@ void main(){
 
             // === NEW: Dispose Modern Shadow System ===
             _shadowManager?.Dispose();
+            _csmManager?.Dispose();
             _shadowDepthShader?.Dispose();
 
             // Planar reflection system removed

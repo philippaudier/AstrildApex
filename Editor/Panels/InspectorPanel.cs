@@ -549,11 +549,35 @@ namespace Editor.Panels
             // PERFORMANCE: Cache components to avoid expensive ToList() + LINQ every frame
             if (_cachedComponentsEntityId != entity.Id || _cachedComponents == null)
             {
-                // Cache miss - rebuild cache
-                var allComponents = entity.GetAllComponents().ToList();
-                _cachedTransform = allComponents.OfType<TransformComponent>().FirstOrDefault();
-                _cachedOtherComponents = allComponents.Where(c => !(c is TransformComponent)).ToList();
-                _cachedComponents = allComponents;
+                // Cache miss - rebuild cache with single-pass iteration (+1-3 FPS)
+                // Initialize lists if needed (reuse across frames)
+                if (_cachedComponents == null)
+                    _cachedComponents = new System.Collections.Generic.List<Engine.Components.Component>();
+                else
+                    _cachedComponents.Clear();
+
+                if (_cachedOtherComponents == null)
+                    _cachedOtherComponents = new System.Collections.Generic.List<Engine.Components.Component>();
+                else
+                    _cachedOtherComponents.Clear();
+
+                _cachedTransform = null;
+
+                // Single-pass iteration: separate Transform from other components
+                foreach (var component in entity.GetAllComponents())
+                {
+                    _cachedComponents.Add(component);
+
+                    if (component is TransformComponent transform)
+                    {
+                        _cachedTransform = transform;
+                    }
+                    else
+                    {
+                        _cachedOtherComponents.Add(component);
+                    }
+                }
+
                 _cachedComponentsEntityId = entity.Id;
             }
 

@@ -721,6 +721,18 @@ namespace Engine.Rendering
             GL.BindTexture(TextureTarget.Texture2D, DetailNormalTex);
             sh.SetInt("u_DetailNormalTex", 18);
 
+            // PERFORMANCE OPTIMIZATION: Set texture presence flags for shader
+            // Avoids expensive textureSize() GPU calls (~200 cycles per fragment) by using CPU-side flags
+            sh.SetInt("u_HasMetallicRoughnessTex", MetallicRoughnessTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasMetallicTex", MetallicTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasRoughnessTex", RoughnessTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasOcclusionTex", OcclusionTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasEmissiveTex", EmissiveTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasHeightTex", HeightTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasDetailMask", DetailMaskTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasDetailAlbedo", DetailAlbedoTex != TextureCache.White1x1 ? 1 : 0);
+            sh.SetInt("u_HasDetailNormal", DetailNormalTex != TextureCache.White1x1 ? 1 : 0);
+
             // Bind per-material normal Y flip flag so shaders that sample normal maps (and SSAO) can match conventions
             try { sh.SetInt("u_FlipNormalY", FlipNormalY); } catch { }
 

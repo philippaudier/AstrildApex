@@ -7,6 +7,8 @@ uniform float u_Threshold = 1.0;
 uniform float u_SoftKnee = 0.5;
 uniform float u_Clamp = 65472.0;
 uniform int u_FirstPass = 0;
+// PERFORMANCE: Texel size passed from CPU (avoids expensive textureSize() call)
+uniform vec2 u_TexelSize;
 
 in vec2 vTexCoord;
 
@@ -76,13 +78,13 @@ vec3 DownsampleBox4Tap(sampler2D tex, vec2 uv, vec2 texelSize)
 
 void main()
 {
-    vec2 texelSize = 1.0 / textureSize(u_SourceTexture, 0);
+    // PERFORMANCE: Use uniform texel size instead of computing from textureSize()
     vec3 color;
 
     if (u_FirstPass == 1)
     {
         // First pass: high-quality downsampling with anti-aliasing + threshold extraction
-        color = DownsampleBox13Tap(u_SourceTexture, vTexCoord, texelSize);
+        color = DownsampleBox13Tap(u_SourceTexture, vTexCoord, u_TexelSize);
         color = QuadraticThreshold(color, u_Threshold, u_SoftKnee);
 
         // Clamp to avoid infinite values
@@ -91,7 +93,7 @@ void main()
     else
     {
         // Subsequent passes: faster 4-tap downsampling
-        color = DownsampleBox4Tap(u_SourceTexture, vTexCoord, texelSize);
+        color = DownsampleBox4Tap(u_SourceTexture, vTexCoord, u_TexelSize);
 
         // Apply clamp to all passes to prevent blow-up
         color = min(color, vec3(u_Clamp));

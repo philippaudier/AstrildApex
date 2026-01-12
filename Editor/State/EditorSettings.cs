@@ -278,12 +278,28 @@ namespace Editor.State
             }
         }
 
+        /// <summary>
+        /// Shadow technology selection
+        /// </summary>
+        public enum ShadowTechnology
+        {
+            /// <summary>Simple single shadow map with PCF filtering</summary>
+            SimplePCF = 0,
+
+            /// <summary>Cascaded Shadow Maps for better quality at all distances</summary>
+            CSM = 1
+        }
+
         public class ShadowsSettingsData
         {
             // === Core Settings ===
             public bool Enabled { get; set; } = true;
             public int ShadowMapSize { get; set; } = 2048; // 1024, 2048, 4096, 8192
             public float ShadowStrength { get; set; } = 0.7f; // Shadow darkness (0.0 = no shadows, 1.0 = full black)
+
+            // === Shadow Technology Selection ===
+            /// <summary>Which shadow technology to use (SimplePCF or CSM)</summary>
+            public ShadowTechnology Technology { get; set; } = ShadowTechnology.SimplePCF;
 
             // === Bias Settings (prevent shadow acne) ===
             public float ShadowBias { get; set; } = 0.1f; // Depth bias to prevent shadow acne
@@ -294,7 +310,7 @@ namespace Editor.State
             // === Debug ===
             public bool DebugShowShadowMap { get; set; } = false;
 
-            // === Shadow Quality Settings ===
+            // === Shadow Quality Settings (SimplePCF) ===
             // Shadow quality mode: 0 = PCF Grid, 1 = Rotated Poisson Disk (recommended), 2 = PCSS
             public int ShadowQuality { get; set; } = 1;
 
@@ -306,6 +322,16 @@ namespace Editor.State
 
             // Light source size for PCSS soft shadows - only used when ShadowQuality = 2
             public float LightSize { get; set; } = 0.05f;
+
+            // === CSM Settings ===
+            /// <summary>Lambda for cascade split distribution (0 = linear, 1 = logarithmic). Higher = more detail near camera.</summary>
+            public float CSM_SplitLambda { get; set; } = 0.75f;
+
+            /// <summary>Show cascade boundaries as colored overlay for debugging</summary>
+            public bool CSM_DebugCascades { get; set; } = false;
+
+            /// <summary>Enable smooth blending between cascades to reduce visible seams</summary>
+            public bool CSM_BlendCascades { get; set; } = true;
 
             // === Legacy/Deprecated (kept for compatibility) ===
             [Obsolete("Use ShadowBias instead")]
@@ -338,14 +364,23 @@ namespace Editor.State
             [Obsolete("Not used in new shadow system")]
             public float PCFRadius { get; set; } = 1.5f;
 
-            [Obsolete("CSM not implemented yet")]
-            public bool UseCascadedShadows { get; set; } = false;
+            // Legacy CSM properties - now use Technology and CSM_* properties instead
+            [Obsolete("Use Technology == ShadowTechnology.CSM instead")]
+            public bool UseCascadedShadows
+            {
+                get => Technology == ShadowTechnology.CSM;
+                set => Technology = value ? ShadowTechnology.CSM : ShadowTechnology.SimplePCF;
+            }
 
-            [Obsolete("CSM not implemented yet")]
+            [Obsolete("CSM cascade count is fixed at 4")]
             public int CascadeCountCSM { get; set; } = 4;
 
-            [Obsolete("CSM not implemented yet")]
-            public float CascadeLambda { get; set; } = 0.5f;
+            [Obsolete("Use CSM_SplitLambda instead")]
+            public float CascadeLambda
+            {
+                get => CSM_SplitLambda;
+                set => CSM_SplitLambda = value;
+            }
 
             [Obsolete("Use ShadowMapSize instead")]
             public int AtlasSize

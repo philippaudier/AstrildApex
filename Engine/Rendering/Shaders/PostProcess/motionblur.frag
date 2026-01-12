@@ -99,6 +99,10 @@ void main()
     int samples = max(4, int(float(u_SampleCount) * velocityMag * 10.0));
     samples = min(samples, u_SampleCount);
 
+    // PERFORMANCE: Pre-compute constant values outside the loop
+    float invSamples = 1.0 / float(samples);
+    float linearDepth = LinearizeDepth(depth); // Linearize once, not in every iteration
+
     // Accumulate samples along motion vector
     vec3 color = vec3(0.0);
     float totalWeight = 0.0;
@@ -108,7 +112,7 @@ void main()
     {
         // Random jitter for better distribution (using interleaved gradient noise)
         float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-        float t = (float(i) + noise) / float(samples);
+        float t = (float(i) + noise) * invSamples;
 
         // Sample offset from center
         vec2 offset = velocity * (t - 0.5);
@@ -120,7 +124,8 @@ void main()
 
         // Depth-aware weighting (avoid bleeding from foreground to background)
         float sampleDepth = texture(u_DepthTexture, sampleUV).r;
-        float depthDiff = abs(LinearizeDepth(depth) - LinearizeDepth(sampleDepth));
+        // PERFORMANCE: Use pre-computed linearDepth instead of calling LinearizeDepth(depth) each iteration
+        float depthDiff = abs(linearDepth - LinearizeDepth(sampleDepth));
         float depthWeight = exp(-depthDiff * 0.5); // Soft falloff
 
         // Sample color
