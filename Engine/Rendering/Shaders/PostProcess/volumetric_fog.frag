@@ -1,298 +1,521 @@
 #version 330 core
 
+// ============================================================================
+// PHYSICALLY BASED VOLUMETRIC FOG
+// ============================================================================
+// Based on:
+// - Beer-Lambert law for light extinction (absorption)
+// - Henyey-Greenstein phase function for anisotropic scattering
+// - Single + Multi-scattering approximation
+// - Physically correct light transport
+//
+// Like Microsoft Flight Simulator clouds - fog ABSORBS light and only
+// scatters it where the sun is visible, creating natural light shafts.
+// ============================================================================
+
 in vec2 vTexCoord;
 out vec4 FragColor;
 
-uniform sampler2D u_SourceTexture;    // HDR scene color
-uniform sampler2D u_DepthTexture;     // Depth buffer
+// Textures
+uniform sampler2D u_SourceTexture;
+uniform sampler2D u_DepthTexture;
 
-// Camera parameters for depth reconstruction
+// Camera
 uniform mat4 u_InvProjection;
 uniform mat4 u_InvView;
 uniform vec3 u_CameraPos;
+uniform float u_Time;
+uniform vec2 u_ScreenSize;
 
-// Fog parameters
-uniform vec3 u_FogColor;
-uniform float u_Density;
-uniform float u_DepthStart;
-uniform float u_DepthEnd;
-uniform bool u_UseExponential;
+// === FOG PARAMETERS ===
+uniform vec3 u_FogColor;              // Fog albedo (how much light it scatters)
+uniform float u_Density;              // Base fog density
+uniform float u_DepthStart;           // Distance where fog starts
+uniform float u_DepthEnd;             // Maximum fog distance
 
-// Height-based fog
+// === RAY MARCHING ===
+uniform int u_RayMarchSteps;          // Number of ray march steps (16-64)
+uniform float u_MaxRayDistance;       // Maximum ray march distance
+
+// === HEIGHT FOG ===
 uniform bool u_UseHeightFog;
-uniform float u_HeightFalloff;
-uniform float u_BaseHeight;
-uniform float u_MaxHeight;
+uniform float u_HeightFalloff;        // Exponential height falloff
+uniform float u_BaseHeight;           // Height where fog is densest
+uniform float u_MaxHeight;            // Height where fog disappears
 
-// Scattering & atmosphere
-uniform float u_ScatteringIntensity;
-uniform float u_ExtinctionFactor;
-uniform vec3 u_SunScatteringColor;
+// === PHYSICALLY BASED SCATTERING ===
 uniform bool u_UseSunScattering;
-uniform vec3 u_SunDirection; // Directional light direction
+uniform vec3 u_SunDirection;          // Direction TO the sun (normalized)
+uniform vec3 u_SunScatteringColor;    // Sun light color
+uniform float u_ScatteringIntensity;  // Sun intensity multiplier
+uniform float u_MieG;                 // Henyey-Greenstein anisotropy (0.7-0.95 for forward scatter)
+uniform float u_ExtinctionFactor;     // Extinction coefficient (absorption + out-scatter)
+uniform float u_AmbientIntensity;     // Ambient light in fog (sky contribution)
 
-// Noise (optional)
+// === GOD RAYS (Radial Blur with Occlusion) ===
+uniform vec2 u_SunScreenPos;          // Sun position in screen space [0,1]
+uniform float u_GodRaysIntensity;     // God rays strength
+uniform float u_GodRaysDensity;       // Radial blur density
+uniform float u_GodRaysDecay;         // Decay per sample
+
+// === NOISE ===
 uniform bool u_UseNoise;
 uniform float u_NoiseScale;
 uniform float u_NoiseSpeed;
 uniform float u_NoiseStrength;
-uniform float u_Time;
+uniform int u_NoiseOctaves;
 
-// Screen resolution for depth buffer analysis
-uniform vec2 u_ScreenSize;
+// ============================================================================
+// CONSTANTS
+// ============================================================================
 
-// Simple 3D noise function
-float hash(vec3 p) {
-    p = fract(p * 0.3183099 + 0.1);
-    p *= 17.0;
-    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+const float PI = 3.14159265359;
+
+// ============================================================================
+// NOISE FUNCTIONS - 3D Simplex noise
+// ============================================================================
+
+vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+float snoise(vec3 v) {
+    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+    vec3 i = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+        + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+        + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+
+    vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+
+    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
 
-float noise3D(vec3 p) {
-    vec3 i = floor(p);
-    vec3 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
+float fbm(vec3 p, int octaves) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    float maxValue = 0.0;
 
-    return mix(
-        mix(mix(hash(i + vec3(0, 0, 0)), hash(i + vec3(1, 0, 0)), f.x),
-            mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
-        mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
-            mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
-        f.z
-    );
-}
-
-// Reconstruct world position from depth
-vec3 worldPositionFromDepth(float depth, vec2 texCoord) {
-    // Convert depth to NDC
-    float z = depth * 2.0 - 1.0;
-
-    // Reconstruct clip space position
-    vec4 clipSpacePosition = vec4(texCoord * 2.0 - 1.0, z, 1.0);
-
-    // Transform to view space
-    vec4 viewSpacePosition = u_InvProjection * clipSpacePosition;
-    
-    // Safety check to avoid division by zero
-    if (abs(viewSpacePosition.w) < 0.0001) {
-        return u_CameraPos; // Fallback to camera position
+    for (int i = 0; i < 6; i++) {
+        if (i >= octaves) break;
+        value += amplitude * snoise(p * frequency);
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
     }
-    
-    viewSpacePosition /= viewSpacePosition.w;
-
-    // Transform to world space
-    vec4 worldSpacePosition = u_InvView * viewSpacePosition;
-
-    return worldSpacePosition.xyz;
+    return value / maxValue;
 }
 
-// Analyze local depth buffer to detect valleys and depressions
-// Returns a factor [0,1] where 1 = deep valley (more fog), 0 = peak (less fog)
-float calculateValleyFactor(vec2 texCoord, float centerDepth) {
-    if (centerDepth >= 0.9999) return 0.0; // Skybox
-    
-    // Safety check for screen size
-    if (u_ScreenSize.x < 1.0 || u_ScreenSize.y < 1.0) return 0.0;
-    
-    vec2 texelSize = 1.0 / u_ScreenSize;
-    float valleyAccumulation = 0.0;
-    float sampleCount = 0.0;
-    
-    // Sample surrounding pixels in a 5x5 pattern
-    const int radius = 2;
-    for (int x = -radius; x <= radius; x++) {
-        for (int y = -radius; y <= radius; y++) {
-            if (x == 0 && y == 0) continue; // Skip center
-            
-            vec2 offset = vec2(float(x), float(y)) * texelSize;
-            vec2 sampleCoord = texCoord + offset;
-            
-            // Clamp to valid texture coordinates
-            if (sampleCoord.x < 0.0 || sampleCoord.x > 1.0 || 
-                sampleCoord.y < 0.0 || sampleCoord.y > 1.0) continue;
-            
-            float sampleDepth = texture(u_DepthTexture, sampleCoord).r;
-            if (sampleDepth >= 0.9999) continue; // Skip skybox
-            
-            // If surrounding pixels are closer to camera (smaller depth),
-            // this pixel is in a valley
-            float depthDiff = sampleDepth - centerDepth;
-            if (depthDiff < 0.0) {
-                // This pixel is further = in a depression
-                valleyAccumulation += abs(depthDiff);
-                sampleCount += 1.0;
+// ============================================================================
+// PHASE FUNCTIONS
+// ============================================================================
+
+// Henyey-Greenstein phase function
+// g: anisotropy (-1 = backscatter, 0 = isotropic, 1 = forward scatter)
+float phaseHG(float cosTheta, float g) {
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * PI * pow(max(denom, 0.0001), 1.5));
+}
+
+// Dual-lobe phase function (combines forward and back scatter)
+// More realistic for fog/clouds
+float phaseDualLobe(float cosTheta, float g) {
+    // 80% forward scatter, 20% back scatter
+    float forward = phaseHG(cosTheta, g);
+    float back = phaseHG(cosTheta, -g * 0.5);
+    return mix(back, forward, 0.8);
+}
+
+// ============================================================================
+// INTERLEAVED GRADIENT NOISE (anti-banding)
+// ============================================================================
+
+float interleavedGradientNoise(vec2 screenPos) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(screenPos, magic.xy)));
+}
+
+// ============================================================================
+// GOD RAYS - Radial Blur with Scene Occlusion (GPU Gems technique)
+// Objects naturally block light because dark pixels don't contribute
+// ============================================================================
+
+vec3 calculateGodRays(vec2 screenUV) {
+    if (!u_UseSunScattering || u_GodRaysIntensity < 0.001) return vec3(0.0);
+
+    vec2 lightScreenPos = u_SunScreenPos;
+
+    // Edge fade to prevent artifacts when sun is near/off screen
+    float edgeMargin = 0.15;
+    float sunEdgeFade = 1.0;
+
+    if (lightScreenPos.x < 0.0) {
+        sunEdgeFade *= smoothstep(-0.6, edgeMargin, lightScreenPos.x);
+    } else if (lightScreenPos.x > 1.0) {
+        sunEdgeFade *= smoothstep(1.6, 1.0 - edgeMargin, lightScreenPos.x);
+    }
+    if (lightScreenPos.y < 0.0) {
+        sunEdgeFade *= smoothstep(-0.6, edgeMargin, lightScreenPos.y);
+    } else if (lightScreenPos.y > 1.0) {
+        sunEdgeFade *= smoothstep(1.6, 1.0 - edgeMargin, lightScreenPos.y);
+    }
+
+    if (sunEdgeFade < 0.01) return vec3(0.0);
+
+    // Radial blur parameters
+    const int NUM_SAMPLES = 64;
+    float density = u_GodRaysDensity;
+    float decay = u_GodRaysDecay;
+    float weight = 0.5;
+    float exposure = u_GodRaysIntensity * 0.5;
+
+    // Direction from pixel toward light source
+    vec2 deltaTexCoord = screenUV - lightScreenPos;
+    deltaTexCoord *= (1.0 / float(NUM_SAMPLES)) * density;
+
+    // Dithering to reduce banding
+    vec2 pixelCoord = screenUV * u_ScreenSize;
+    float dither = interleavedGradientNoise(pixelCoord);
+
+    // Start sampling with dithered offset
+    vec2 sampleUV = screenUV - deltaTexCoord * dither;
+    vec3 godRayColor = vec3(0.0);
+    float illuminationDecay = pow(decay, dither);
+
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        // Step toward the light source
+        sampleUV -= deltaTexCoord;
+
+        // Check bounds
+        bool outOfBounds = sampleUV.x < 0.0 || sampleUV.x > 1.0 ||
+                          sampleUV.y < 0.0 || sampleUV.y > 1.0;
+
+        if (outOfBounds) {
+            illuminationDecay *= decay;
+            continue;
+        }
+
+        // Edge fade for samples near screen border
+        float sampleEdgeFade = 1.0;
+        float fadeMargin = 0.05;
+        sampleEdgeFade *= smoothstep(0.0, fadeMargin, sampleUV.x);
+        sampleEdgeFade *= smoothstep(1.0, 1.0 - fadeMargin, sampleUV.x);
+        sampleEdgeFade *= smoothstep(0.0, fadeMargin, sampleUV.y);
+        sampleEdgeFade *= smoothstep(1.0, 1.0 - fadeMargin, sampleUV.y);
+
+        // Sample the scene - THIS IS WHERE OCCLUSION HAPPENS
+        // Bright areas (sky/sun) contribute to god rays
+        // Dark areas (trees/objects) BLOCK the light
+        vec3 sampleColor = texture(u_SourceTexture, sampleUV).rgb;
+
+        // Luminance-based contribution - only bright areas create rays
+        float lum = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
+
+        // Threshold to extract bright areas (sky, sun)
+        // Lower threshold = more rays, higher = only very bright areas
+        float brightMask = smoothstep(0.3, 1.0, lum);
+
+        // Apply mask - dark objects don't contribute (occlusion!)
+        sampleColor *= brightMask;
+
+        // Accumulate with decay
+        float sampleWeight = illuminationDecay * weight * sampleEdgeFade;
+        godRayColor += sampleColor * sampleWeight;
+
+        // Decay for next iteration
+        illuminationDecay *= decay;
+    }
+
+    // Apply exposure and sun color tint
+    godRayColor *= exposure * sunEdgeFade;
+    godRayColor *= u_SunScatteringColor;
+
+    return godRayColor;
+}
+
+// ============================================================================
+// DEPTH RECONSTRUCTION
+// ============================================================================
+
+vec3 reconstructWorldPos(vec2 uv, float depth) {
+    vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 viewPos = u_InvProjection * ndc;
+    viewPos /= viewPos.w;
+    vec4 worldPos = u_InvView * viewPos;
+    return worldPos.xyz;
+}
+
+// ============================================================================
+// DENSITY SAMPLING
+// ============================================================================
+
+float sampleDensity(vec3 pos) {
+    float density = u_Density;
+
+    // Height-based density falloff
+    if (u_UseHeightFog) {
+        float heightAboveBase = pos.y - u_BaseHeight;
+
+        if (heightAboveBase > 0.0) {
+            // Exponential falloff above base height
+            density *= exp(-heightAboveBase * u_HeightFalloff);
+        } else {
+            // Below base height - increase density
+            density *= 1.0 + abs(heightAboveBase) * u_HeightFalloff * 0.3;
+        }
+
+        // Cutoff above max height
+        if (pos.y > u_MaxHeight) {
+            float aboveMax = pos.y - u_MaxHeight;
+            density *= exp(-aboveMax * u_HeightFalloff * 3.0);
+        }
+    }
+
+    // Noise-based density variation
+    if (u_UseNoise && density > 0.0001) {
+        vec3 noisePos = pos * u_NoiseScale;
+        noisePos += vec3(u_Time * u_NoiseSpeed * 0.3, u_Time * u_NoiseSpeed * 0.2, u_Time * u_NoiseSpeed * 0.25);
+
+        float noiseValue = fbm(noisePos, u_NoiseOctaves);
+        noiseValue = noiseValue * 0.5 + 0.5; // Remap to [0, 1]
+
+        // Apply noise - can create holes in fog for light shafts
+        density *= mix(1.0 - u_NoiseStrength, 1.0 + u_NoiseStrength * 0.5, noiseValue);
+    }
+
+    return max(density, 0.0);
+}
+
+// ============================================================================
+// PHYSICALLY BASED RAY MARCHING
+// ============================================================================
+//
+// The fog ABSORBS light (Beer-Lambert) and only ADDS light where sun reaches.
+// This creates the natural darkening effect and visible light shafts.
+//
+// Transmittance T = exp(-extinction * distance)
+// In-scattered light L = integral of (phase * sunLight * density * T) along ray
+//
+
+struct FogResult {
+    vec3 inScattering;    // Light scattered INTO the viewing ray
+    float transmittance;  // How much background light passes through
+};
+
+FogResult rayMarchFog(vec3 rayOrigin, vec3 rayDir, float maxDist) {
+    FogResult result;
+    result.inScattering = vec3(0.0);
+    result.transmittance = 1.0;
+
+    // Clamp ray distance
+    float rayDist = min(maxDist, u_MaxRayDistance);
+
+    // Skip if too close
+    if (rayDist < u_DepthStart) {
+        return result;
+    }
+
+    float startDist = max(u_DepthStart, 0.1);
+    float effectiveRayDist = rayDist - startDist;
+
+    if (effectiveRayDist < 0.01) {
+        return result;
+    }
+
+    // Step size
+    int steps = max(u_RayMarchSteps, 8);
+    float stepSize = effectiveRayDist / float(steps);
+
+    // Dithering to reduce banding
+    float dither = fract(sin(dot(vTexCoord * u_ScreenSize, vec2(12.9898, 78.233))) * 43758.5453);
+
+    // Pre-calculate sun scattering
+    vec3 sunDir = normalize(u_SunDirection);
+    float cosTheta = dot(rayDir, sunDir);
+
+    // Phase function - how much light scatters toward camera
+    float phase = phaseDualLobe(cosTheta, u_MieG);
+
+    // Sun light contribution (directional)
+    vec3 sunLight = u_SunScatteringColor * u_ScatteringIntensity;
+
+    // Ambient light (from sky, fills shadows)
+    vec3 ambientLight = u_FogColor * u_AmbientIntensity;
+
+    // Ray march
+    for (int i = 0; i < 64; i++) {
+        if (i >= steps) break;
+        if (result.transmittance < 0.005) break; // Early termination
+
+        float t = startDist + (float(i) + dither) * stepSize;
+        vec3 samplePos = rayOrigin + rayDir * t;
+
+        // Sample density
+        float density = sampleDensity(samplePos);
+
+        if (density > 0.0001) {
+            // ======================
+            // EXTINCTION (absorption + out-scattering)
+            // ======================
+            // Beer-Lambert: light is absorbed/scattered away
+            float extinction = density * u_ExtinctionFactor * stepSize;
+            float sampleTransmittance = exp(-extinction);
+
+            // ======================
+            // IN-SCATTERING
+            // ======================
+            // Light that gets scattered INTO our viewing ray
+
+            // Sun visibility based on height (simple approximation)
+            // Higher = more sun, lower = more shadow
+            float sunVisibility = 1.0;
+            if (u_UseHeightFog) {
+                float heightFactor = clamp((samplePos.y - u_BaseHeight) / max(u_MaxHeight - u_BaseHeight, 1.0), 0.0, 1.0);
+                // Exponential falloff for more dramatic light shafts
+                sunVisibility = pow(heightFactor, 0.5);
             }
+
+            // Direct sun scattering (creates light shafts)
+            vec3 directScatter = vec3(0.0);
+            if (u_UseSunScattering) {
+                directScatter = sunLight * phase * sunVisibility;
+            }
+
+            // Ambient scattering (fills shadows, prevents pure black)
+            vec3 ambientScatter = ambientLight * (1.0 - sunVisibility * 0.5);
+
+            // Total in-scattered light at this sample
+            // Multiply by fog albedo (u_FogColor) to tint the scattered light
+            vec3 inScatter = (directScatter + ambientScatter) * u_FogColor;
+
+            // Integrate using emission-absorption model
+            // The (1 - sampleTransmittance) term ensures energy conservation
+            vec3 scatterContrib = inScatter * (1.0 - sampleTransmittance) * result.transmittance;
+            result.inScattering += scatterContrib;
+
+            // Update transmittance (light absorbed/scattered away)
+            result.transmittance *= sampleTransmittance;
         }
     }
-    
-    if (sampleCount < 1.0) return 0.0;
-    
-    // Normalize and amplify the valley detection
-    float avgValley = valleyAccumulation / sampleCount;
-    return clamp(avgValley * 50.0, 0.0, 1.0); // Amplify by 50x for visibility
+
+    return result;
 }
 
-// Calculate relative height compared to nearby geometry
-// Returns negative value if in a depression, positive if on a peak
-float calculateRelativeHeight(vec2 texCoord, vec3 worldPos) {
-    // Safety check for screen size
-    if (u_ScreenSize.x < 1.0 || u_ScreenSize.y < 1.0) return 0.0;
-    
-    vec2 texelSize = 1.0 / u_ScreenSize;
-    float avgHeight = 0.0;
-    float sampleCount = 0.0;
-    
-    // Sample surrounding world positions
-    const int radius = 3;
-    for (int x = -radius; x <= radius; x += radius) {
-        for (int y = -radius; y <= radius; y += radius) {
-            if (x == 0 && y == 0) continue;
-            
-            vec2 offset = vec2(float(x), float(y)) * texelSize * 2.0;
-            vec2 sampleCoord = texCoord + offset;
-            
-            if (sampleCoord.x < 0.0 || sampleCoord.x > 1.0 || 
-                sampleCoord.y < 0.0 || sampleCoord.y > 1.0) continue;
-            
-            float sampleDepth = texture(u_DepthTexture, sampleCoord).r;
-            if (sampleDepth >= 0.9999) continue;
-            
-            vec3 sampleWorldPos = worldPositionFromDepth(sampleDepth, sampleCoord);
-            avgHeight += sampleWorldPos.y;
-            sampleCount += 1.0;
-        }
-    }
-    
-    if (sampleCount < 1.0) return 0.0;
-    
-    avgHeight /= sampleCount;
-    return avgHeight - worldPos.y; // Negative if we're lower than average (valley)
-}
+// ============================================================================
+// MAIN
+// ============================================================================
 
-void main()
-{
+void main() {
     vec3 sceneColor = texture(u_SourceTexture, vTexCoord).rgb;
     float depth = texture(u_DepthTexture, vTexCoord).r;
 
-    // DEBUG MODE: Uncomment to visualize depth buffer
-    // FragColor = vec4(vec3(depth), 1.0);
-    // return;
-
-    // Skip fog on skybox (depth = 1.0)
-    // IMPORTANT: Skybox should NOT have fog applied to it
+    // Skybox - apply subtle atmospheric scattering
     if (depth >= 0.9999) {
+        if (u_UseSunScattering) {
+            vec3 rayDir = normalize(reconstructWorldPos(vTexCoord, 0.5) - u_CameraPos);
+            vec3 sunDir = normalize(u_SunDirection);
+            float cosTheta = dot(rayDir, sunDir);
+            float phase = phaseDualLobe(cosTheta, u_MieG);
+
+            // Subtle sun glow on sky
+            float sunGlow = phase * u_ScatteringIntensity * 0.1 * u_Density;
+            sceneColor += u_SunScatteringColor * sunGlow;
+        }
         FragColor = vec4(sceneColor, 1.0);
         return;
     }
 
     // Reconstruct world position
-    vec3 worldPos = worldPositionFromDepth(depth, vTexCoord);
-    
-    // Safety check for invalid world positions (NaN/Inf)
+    vec3 worldPos = reconstructWorldPos(vTexCoord, depth);
+
     if (any(isnan(worldPos)) || any(isinf(worldPos))) {
         FragColor = vec4(sceneColor, 1.0);
         return;
     }
 
-    // Calculate distance from camera
-    float distance = length(worldPos - u_CameraPos);
-    
-    // Safety check for invalid distances
-    if (isnan(distance) || isinf(distance)) {
+    vec3 rayDir = normalize(worldPos - u_CameraPos);
+    float dist = length(worldPos - u_CameraPos);
+
+    if (isnan(dist) || isinf(dist) || dist < 0.01) {
         FragColor = vec4(sceneColor, 1.0);
         return;
     }
 
-    // === DEPTH-BASED FOG DENSITY ===
-    float depthFactor = 0.0;
-    if (u_UseExponential) {
-        // Exponential fog
-        depthFactor = 1.0 - exp(-distance * u_Density);
-    } else {
-        // Linear fog
-        depthFactor = smoothstep(u_DepthStart, u_DepthEnd, distance);
-    }
-    
-    // Clamp to prevent issues
-    depthFactor = clamp(depthFactor, 0.0, 1.0);
+    // Ray march through fog
+    FogResult fog = rayMarchFog(u_CameraPos, rayDir, dist);
 
-    // === HEIGHT-BASED FOG DENSITY ===
-    float heightFactor = 1.0;
-    if (u_UseHeightFog) {
-        // Exponential height falloff
-        float heightAboveBase = max(0.0, worldPos.y - u_BaseHeight);
-        heightFactor = exp(-heightAboveBase * u_HeightFalloff);
+    // ======================
+    // PHYSICALLY CORRECT COMPOSITING
+    // ======================
+    // final = sceneColor * transmittance + inScattering
+    //
+    // - transmittance < 1 means fog ABSORBS light (darkens scene)
+    // - inScattering adds light only where sun reaches
 
-        // Clamp at max height
-        if (worldPos.y > u_MaxHeight) {
-            heightFactor *= exp(-(worldPos.y - u_MaxHeight) * u_HeightFalloff * 2.0);
-        }
-        
-        // === VALLEY DETECTION FOR RELIEF ===
-        // Detect if this pixel is in a valley/depression
-        float valleyFactor = calculateValleyFactor(vTexCoord, depth);
-        
-        // Calculate relative height compared to nearby geometry
-        float relativeHeight = calculateRelativeHeight(vTexCoord, worldPos);
-        
-        // If we're in a valley (negative relative height), increase fog density
-        float depressionBoost = 1.0;
-        if (relativeHeight < 0.0) {
-            // More fog in depressions - exponential boost
-            depressionBoost = 1.0 + abs(relativeHeight) * 0.5; // Scale by relative depth
-            depressionBoost = clamp(depressionBoost, 1.0, 3.0);
-        } else {
-            // Less fog on peaks
-            depressionBoost = max(0.3, 1.0 - relativeHeight * 0.2);
-        }
-        
-        // Apply valley factor - combines depth analysis and height analysis
-        heightFactor *= mix(1.0, depressionBoost, valleyFactor);
-        
-        // Additional boost for very low areas (below base height)
-        if (worldPos.y < u_BaseHeight) {
-            float belowBase = u_BaseHeight - worldPos.y;
-            heightFactor *= 1.0 + belowBase * 0.1; // More fog the deeper we go
-        }
-    }
+    vec3 finalColor = sceneColor * fog.transmittance + fog.inScattering;
 
-    // === COMBINED DENSITY ===
-    float combinedDensity = depthFactor * heightFactor;
-    
-    // Safety clamp - prevent extreme values
-    combinedDensity = clamp(combinedDensity, 0.0, 10.0);
+    // ======================
+    // GOD RAYS (Radial Blur with Occlusion)
+    // ======================
+    // Objects block light naturally because dark pixels don't contribute
+    // This creates the light shaft effect like in the underwater shader
 
-    // === NOISE (optional detail) ===
-    if (u_UseNoise) {
-        vec3 noiseCoord = worldPos * u_NoiseScale + vec3(u_Time * u_NoiseSpeed);
-        float noiseValue = noise3D(noiseCoord);
-        combinedDensity *= (1.0 - u_NoiseStrength) + noiseValue * u_NoiseStrength;
-    }
+    vec3 godRays = calculateGodRays(vTexCoord);
 
-    // === SUN SCATTERING (optional) ===
-    vec3 finalFogColor = u_FogColor;
-    if (u_UseSunScattering) {
-        vec3 viewDir = normalize(worldPos - u_CameraPos);
-        float sunAlignment = max(0.0, dot(viewDir, normalize(-u_SunDirection)));
+    // God rays are attenuated by fog (scattered through the medium)
+    // More fog = softer god rays
+    float godRayAttenuation = mix(0.3, 1.0, fog.transmittance);
+    finalColor += godRays * godRayAttenuation;
 
-        // Mie scattering approximation (forward scattering)
-        float mieScatter = pow(sunAlignment, 8.0) * u_ScatteringIntensity;
-
-        finalFogColor = mix(u_FogColor, u_SunScatteringColor, mieScatter);
-    }
-
-    // === APPLY FOG ===
-    // Beer's law for light extinction through fog
-    float transmission = exp(-combinedDensity * u_ExtinctionFactor);
-    transmission = clamp(transmission, 0.0, 1.0);
-
-    vec3 finalColor = mix(finalFogColor, sceneColor, transmission);
-    
-    // Final safety check
-    if (any(isnan(finalColor)) || any(isinf(finalColor))) {
-        FragColor = vec4(sceneColor, 1.0);
-        return;
-    }
+    // Clamp
+    finalColor = max(finalColor, vec3(0.0));
 
     FragColor = vec4(finalColor, 1.0);
 }

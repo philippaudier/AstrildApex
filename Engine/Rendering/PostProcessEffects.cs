@@ -8,6 +8,226 @@ using OpenTK.Mathematics;
 namespace Engine.Rendering
 {
     /// <summary>
+    /// Helper to get shader paths that work in both Editor and Standalone builds.
+    /// </summary>
+    internal static class ShaderPathHelper
+    {
+        /// <summary>
+        /// Gets the base directory for post-process shaders.
+        /// Both Editor and Standalone use the same path since Game.csproj copies shaders
+        /// to Engine/Rendering/Shaders/ in the output directory.
+        /// </summary>
+        public static string GetPostProcessShaderDir()
+        {
+            return Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+        }
+    }
+
+    /// <summary>
+    /// Helper class for post-process effects that need to pass through input when they can't render.
+    /// </summary>
+    public static class PostProcessHelper
+    {
+        private static int _passthroughShader = 0;
+        private static int _fullscreenVAO = 0;
+
+        /// <summary>
+        /// Gets a shared fullscreen VAO for post-process effects.
+        /// Some OpenGL drivers require a VAO to be bound even for attribute-less rendering.
+        /// </summary>
+        public static int GetFullscreenVAO()
+        {
+            EnsureInitialized();
+            return _fullscreenVAO;
+        }
+
+        /// <summary>
+        /// Draws a fullscreen triangle using the shared VAO.
+        /// Call this instead of GL.DrawArrays directly.
+        /// </summary>
+        public static void DrawFullscreenTriangle()
+        {
+            EnsureInitialized();
+            int currentVAO = GL.GetInteger(GetPName.VertexArrayBinding);
+            if (currentVAO == 0)
+            {
+                GL.BindVertexArray(_fullscreenVAO);
+            }
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+            if (currentVAO == 0)
+            {
+                GL.BindVertexArray(0);
+            }
+        }
+
+        /// <summary>
+        /// Passes through the source texture to the target framebuffer without any modifications.
+        /// Use this when an effect can't render (missing shaders, resources, etc.) to avoid breaking the chain.
+        /// </summary>
+        private static int _passDebugFrame = 0;
+        public static void PassThrough(PostProcessContext context)
+        {
+            _passDebugFrame++;
+            bool debug = _passDebugFrame <= 5;
+
+            EnsureInitialized();
+
+            // Check GL error before starting
+            var err = GL.GetError();
+            if (err != ErrorCode.NoError && debug)
+                Console.WriteLine($"[PassThrough] GL error before start: {err}");
+
+            if (debug)
+                Console.WriteLine($"[PassThrough] src={context.SourceTexture}, dst={context.TargetFramebuffer}, shader={_passthroughShader}, vao={_fullscreenVAO}, size={context.Width}x{context.Height}");
+
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
+            err = GL.GetError();
+            if (err != ErrorCode.NoError && debug)
+                Console.WriteLine($"[PassThrough] GL error after BindFramebuffer: {err}");
+
+            // Check FBO completeness
+            var fboStatus = GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer);
+            if (fboStatus != FramebufferErrorCode.FramebufferComplete && debug)
+                Console.WriteLine($"[PassThrough] FBO not complete: {fboStatus}");
+
+            GL.Viewport(0, 0, context.Width, context.Height);
+            GL.Disable(EnableCap.DepthTest);
+            GL.Disable(EnableCap.Blend);
+
+            GL.UseProgram(_passthroughShader);
+            err = GL.GetError();
+            if (err != ErrorCode.NoError && debug)
+                Console.WriteLine($"[PassThrough] GL error after UseProgram: {err}");
+
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, (int)context.SourceTexture);
+
+            // Verify texture is valid
+            if (debug)
+            {
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureWidth, out int texW);
+                GL.GetTexLevelParameter(TextureTarget.Texture2D, 0, GetTextureParameter.TextureHeight, out int texH);
+                Console.WriteLine($"[PassThrough] Source texture {context.SourceTexture} size: {texW}x{texH}");
+            }
+
+            int uniformLoc = GL.GetUniformLocation(_passthroughShader, "u_Texture");
+            GL.Uniform1(uniformLoc, 0);
+            if (debug)
+                Console.WriteLine($"[PassThrough] u_Texture uniform location: {uniformLoc}");
+
+            GL.BindVertexArray(_fullscreenVAO);
+            err = GL.GetError();
+            if (err != ErrorCode.NoError && debug)
+                Console.WriteLine($"[PassThrough] GL error after BindVertexArray: {err}");
+
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+            err = GL.GetError();
+            if (err != ErrorCode.NoError && debug)
+                Console.WriteLine($"[PassThrough] GL error after DrawArrays: {err}");
+
+            GL.BindVertexArray(0);
+            GL.UseProgram(0);
+            GL.Enable(EnableCap.DepthTest);
+
+            if (debug)
+                Console.WriteLine($"[PassThrough] Complete");
+        }
+
+        private static void EnsureInitialized()
+        {
+            if (_passthroughShader != 0) return;
+
+            // Create simple passthrough shader with vertex attributes
+            string vertexSource = @"
+#version 330 core
+layout(location = 0) in vec2 a_Position;
+layout(location = 1) in vec2 a_TexCoord;
+out vec2 v_TexCoord;
+void main() {
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+    v_TexCoord = a_TexCoord;
+}";
+            string fragmentSource = @"
+#version 330 core
+in vec2 v_TexCoord;
+out vec4 FragColor;
+uniform sampler2D u_Texture;
+void main() {
+    FragColor = texture(u_Texture, v_TexCoord);
+}";
+
+            int vs = GL.CreateShader(ShaderType.VertexShader);
+            GL.ShaderSource(vs, vertexSource);
+            GL.CompileShader(vs);
+
+            // Check vertex shader compilation
+            GL.GetShader(vs, ShaderParameter.CompileStatus, out int vsSuccess);
+            if (vsSuccess == 0)
+            {
+                string log = GL.GetShaderInfoLog(vs);
+                Console.WriteLine($"[PostProcessHelper] Vertex shader compile error: {log}");
+            }
+
+            int fs = GL.CreateShader(ShaderType.FragmentShader);
+            GL.ShaderSource(fs, fragmentSource);
+            GL.CompileShader(fs);
+
+            // Check fragment shader compilation
+            GL.GetShader(fs, ShaderParameter.CompileStatus, out int fsSuccess);
+            if (fsSuccess == 0)
+            {
+                string log = GL.GetShaderInfoLog(fs);
+                Console.WriteLine($"[PostProcessHelper] Fragment shader compile error: {log}");
+            }
+
+            _passthroughShader = GL.CreateProgram();
+            GL.AttachShader(_passthroughShader, vs);
+            GL.AttachShader(_passthroughShader, fs);
+            GL.LinkProgram(_passthroughShader);
+
+            // Check program linking
+            GL.GetProgram(_passthroughShader, GetProgramParameterName.LinkStatus, out int linkSuccess);
+            if (linkSuccess == 0)
+            {
+                string log = GL.GetProgramInfoLog(_passthroughShader);
+                Console.WriteLine($"[PostProcessHelper] Program link error: {log}");
+            }
+
+            GL.DeleteShader(vs);
+            GL.DeleteShader(fs);
+
+            // Create fullscreen triangle VAO with actual vertex data
+            // Using a triangle that covers the entire screen: (-1,-1), (3,-1), (-1,3)
+            float[] vertices = {
+                // Position    // TexCoord
+                -1.0f, -1.0f,  0.0f, 0.0f,  // Bottom-left
+                 3.0f, -1.0f,  2.0f, 0.0f,  // Bottom-right (extends past screen)
+                -1.0f,  3.0f,  0.0f, 2.0f   // Top-left (extends past screen)
+            };
+
+            _fullscreenVAO = GL.GenVertexArray();
+            int vbo = GL.GenBuffer();
+
+            GL.BindVertexArray(_fullscreenVAO);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
+            GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
+
+            // Position attribute (location 0)
+            GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
+            GL.EnableVertexAttribArray(0);
+
+            // TexCoord attribute (location 1)
+            GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
+            GL.EnableVertexAttribArray(1);
+
+            GL.BindVertexArray(0);
+            GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+
+            Console.WriteLine($"[PostProcessHelper] Initialized: VAO={_fullscreenVAO}, Shader={_passthroughShader}");
+        }
+    }
+
+    /// <summary>
     /// Effet de tone mapping pour convertir HDR vers LDR
     /// </summary>
     public class ToneMappingEffect : PostProcessEffect
@@ -582,8 +802,13 @@ namespace Engine.Rendering
     }
 
     /// <summary>
-    /// Volumetric Fog effect - depth-based and height-based post-process fog.
-    /// More advanced than forward rendering fog with height falloff and better control.
+    /// True Volumetric Fog with Ray Marching
+    /// Features:
+    /// - Ray marching through 3D fog volume
+    /// - Beer-Lambert light extinction
+    /// - Henyey-Greenstein phase function for god rays (Mie scattering)
+    /// - Height-based density falloff
+    /// - 3D Simplex noise for density variation
     /// </summary>
     public class VolumetricFogEffect : PostProcessEffect
     {
@@ -609,16 +834,21 @@ namespace Engine.Rendering
         public Vector3 FogColor { get; set; } = new Vector3(0.7f, 0.7f, 0.8f);
 
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 0.01f; // Exponential fog density
+        public float Density { get; set; } = 0.05f; // Base fog density (0.02-0.1 typical)
 
         [Engine.Serialization.SerializableAttribute("depthStart")]
         public float DepthStart { get; set; } = 0.0f; // Distance where fog starts
 
         [Engine.Serialization.SerializableAttribute("depthEnd")]
-        public float DepthEnd { get; set; } = 1000.0f; // Distance where fog is maximum
+        public float DepthEnd { get; set; } = 500.0f; // Maximum fog distance
 
-        [Engine.Serialization.SerializableAttribute("useExponential")]
-        public bool UseExponential { get; set; } = true; // Exponential (true) vs Linear (false)
+        // === RAY MARCHING ===
+
+        [Engine.Serialization.SerializableAttribute("rayMarchSteps")]
+        public int RayMarchSteps { get; set; } = 32; // Number of ray march steps (8-64, higher = better quality)
+
+        [Engine.Serialization.SerializableAttribute("maxRayDistance")]
+        public float MaxRayDistance { get; set; } = 500.0f; // Maximum ray march distance
 
         // === HEIGHT-BASED FOG ===
 
@@ -626,7 +856,7 @@ namespace Engine.Rendering
         public bool UseHeightFog { get; set; } = true;
 
         [Engine.Serialization.SerializableAttribute("heightFalloff")]
-        public float HeightFalloff { get; set; } = 0.1f; // How quickly fog density decreases with height
+        public float HeightFalloff { get; set; } = 0.05f; // How quickly fog density decreases with height
 
         [Engine.Serialization.SerializableAttribute("baseHeight")]
         public float BaseHeight { get; set; } = 0.0f; // World height where fog is thickest
@@ -634,33 +864,53 @@ namespace Engine.Rendering
         [Engine.Serialization.SerializableAttribute("maxHeight")]
         public float MaxHeight { get; set; } = 100.0f; // World height where fog is thinnest
 
-        // === SCATTERING & ATMOSPHERE ===
-
-        [Engine.Serialization.SerializableAttribute("scatteringIntensity")]
-        public float ScatteringIntensity { get; set; } = 0.5f; // How much fog scatters light
-
-        [Engine.Serialization.SerializableAttribute("extinctionFactor")]
-        public float ExtinctionFactor { get; set; } = 1.0f; // Light absorption through fog
-
-        [Engine.Serialization.SerializableAttribute("sunScatteringColor")]
-        public Vector3 SunScatteringColor { get; set; } = new Vector3(1.0f, 0.9f, 0.7f); // Color of sun scattered through fog
+        // === SCATTERING & GOD RAYS ===
 
         [Engine.Serialization.SerializableAttribute("useSunScattering")]
-        public bool UseSunScattering { get; set; } = false; // Enable directional light scattering
+        public bool UseSunScattering { get; set; } = true; // Enable god rays (Mie scattering)
+
+        [Engine.Serialization.SerializableAttribute("scatteringIntensity")]
+        public float ScatteringIntensity { get; set; } = 1.0f; // God rays intensity
+
+        [Engine.Serialization.SerializableAttribute("mieG")]
+        public float MieG { get; set; } = 0.8f; // Henyey-Greenstein anisotropy (-1 to 1, 0.7-0.9 = forward scatter for god rays)
+
+        [Engine.Serialization.SerializableAttribute("extinctionFactor")]
+        public float ExtinctionFactor { get; set; } = 1.0f; // Light absorption coefficient (Beer-Lambert)
+
+        [Engine.Serialization.SerializableAttribute("sunScatteringColor")]
+        public Vector3 SunScatteringColor { get; set; } = new Vector3(1.0f, 0.95f, 0.8f); // Sun light color
+
+        [Engine.Serialization.SerializableAttribute("ambientIntensity")]
+        public float AmbientIntensity { get; set; } = 0.3f; // Ambient light in fog (fills shadows, 0-1)
+
+        // === GOD RAYS (Radial Blur with Occlusion) ===
+
+        [Engine.Serialization.SerializableAttribute("godRaysIntensity")]
+        public float GodRaysIntensity { get; set; } = 1.0f; // God rays intensity (0-3)
+
+        [Engine.Serialization.SerializableAttribute("godRaysDensity")]
+        public float GodRaysDensity { get; set; } = 1.0f; // Radial blur density (0.5-2.0)
+
+        [Engine.Serialization.SerializableAttribute("godRaysDecay")]
+        public float GodRaysDecay { get; set; } = 0.97f; // Decay per sample (0.9-0.99)
 
         // === NOISE/DETAIL ===
 
         [Engine.Serialization.SerializableAttribute("useNoise")]
-        public bool UseNoise { get; set; } = false; // Add animated noise to fog
+        public bool UseNoise { get; set; } = false; // Add animated 3D noise to fog density
 
         [Engine.Serialization.SerializableAttribute("noiseScale")]
-        public float NoiseScale { get; set; } = 0.1f; // Noise texture scale
+        public float NoiseScale { get; set; } = 0.02f; // 3D noise scale (smaller = larger clouds)
 
         [Engine.Serialization.SerializableAttribute("noiseSpeed")]
         public float NoiseSpeed { get; set; } = 0.1f; // Noise animation speed
 
         [Engine.Serialization.SerializableAttribute("noiseStrength")]
-        public float NoiseStrength { get; set; } = 0.2f; // How much noise affects fog density
+        public float NoiseStrength { get; set; } = 0.5f; // How much noise affects fog density (0-1)
+
+        [Engine.Serialization.SerializableAttribute("noiseOctaves")]
+        public int NoiseOctaves { get; set; } = 3; // FBM noise octaves (1-6, higher = more detail)
 
         public VolumetricFogEffect()
         {
@@ -798,7 +1048,7 @@ namespace Engine.Rendering
         {
             try
             {
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var fragPath = Path.Combine(baseDir, "tonemap.frag");
                 var lumPath = Path.Combine(baseDir, "luminance.frag");
@@ -973,10 +1223,9 @@ namespace Engine.Rendering
 
             if (_shader == null || !(effect is ToneMappingEffect toneMap))
             {
+                PostProcessHelper.PassThrough(context);
                 return;
             }
-
-            // (debug logs removed)
 
             // Use engine delta time for accurate frame timing (DateTime.Now is too imprecise)
             float deltaTime = Engine.Core.Time.DeltaTime;
@@ -1257,7 +1506,7 @@ namespace Engine.Rendering
         {
             try
             {
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
 
                 // Shaders pour bloom
@@ -1265,57 +1514,37 @@ namespace Engine.Rendering
                 var upsamplePath = Path.Combine(baseDir, "bloom_upsample.frag");
                 var combinePath = Path.Combine(baseDir, "bloom_combine.frag");
 
-
-
                 if (File.Exists(vertPath) && File.Exists(downsamplePath) && File.Exists(upsamplePath) && File.Exists(combinePath))
                 {
                     string vertexSource = File.ReadAllText(vertPath);
+                    string downsampleSource = File.ReadAllText(downsamplePath);
+                    string upsampleSource = File.ReadAllText(upsamplePath);
+                    string combineSource = File.ReadAllText(combinePath);
 
-                    // Test chaque shader individuellement pour isoler l'erreur
-                    try
-                    {
-                        string downsampleSource = File.ReadAllText(downsamplePath);
-                        _downsampleShader = ShaderProgram.FromSource(vertexSource, downsampleSource);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-
-                    try
-                    {
-                        string upsampleSource = File.ReadAllText(upsamplePath);
-                        _upsampleShader = ShaderProgram.FromSource(vertexSource, upsampleSource);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-
-                    try
-                    {
-                        string combineSource = File.ReadAllText(combinePath);
-                        _combineShader = ShaderProgram.FromSource(vertexSource, combineSource);
-                    }
-                    catch
-                    {
-                        throw;
-                    }
-
-                }
-                else
-                {
+                    _downsampleShader = ShaderProgram.FromSource(vertexSource, downsampleSource);
+                    _upsampleShader = ShaderProgram.FromSource(vertexSource, upsampleSource);
+                    _combineShader = ShaderProgram.FromSource(vertexSource, combineSource);
                 }
             }
-            catch
+            catch (Exception)
             {
             }
         }
 
         public void Render(PostProcessEffect effect, PostProcessContext context)
         {
+            // Auto-initialize if needed
+            if (_downsampleShader == null || _upsampleShader == null || _combineShader == null)
+            {
+                Initialize();
+            }
+
             if (_downsampleShader == null || _upsampleShader == null || _combineShader == null ||
-                !(effect is BloomEffect bloom)) return;
+                !(effect is BloomEffect bloom))
+            {
+                PostProcessHelper.PassThrough(context);
+                return;
+            }
 
             // Resize buffers if needed
             if (_width != context.Width || _height != context.Height)
@@ -1491,7 +1720,7 @@ namespace Engine.Rendering
             try
             {
                 // Chemins absolus pour éviter les problèmes de répertoire de travail
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var fragPath = Path.Combine(baseDir, "chromatic_aberration.frag");
                 
@@ -1517,6 +1746,7 @@ namespace Engine.Rendering
             
             if (_shader == null || !(effect is ChromaticAberrationEffect chromatic))
             {
+                PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
             }
 
@@ -1533,7 +1763,7 @@ namespace Engine.Rendering
             _shader.SetInt("u_UseSpectralLut", chromatic.UseSpectralLut ? 1 : 0);
             _shader.SetVec2("u_ScreenSize", new Vector2(context.Width, context.Height));
 
-            // Rendu fullscreen triangle (pas besoin de VAO)
+            // Rendu fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
 
@@ -1572,7 +1802,7 @@ namespace Engine.Rendering
             try
             {
                 Engine.Utils.DebugLogger.Log("[SSAO] Initializing...");
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
 
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var ssaoFragPath = Path.Combine(baseDir, "ssao.frag");
@@ -1778,6 +2008,7 @@ namespace Engine.Rendering
                 if (_ssaoShader == null || _blurShader == null)
                 {
                     Engine.Utils.DebugLogger.Log("[SSAO] ERROR: Initialize() failed, shaders still null after init!");
+                    PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                     return;
                 }
                 
@@ -1796,12 +2027,14 @@ namespace Engine.Rendering
             {
                 // Pas de texture de profondeur disponible, impossible de faire du SSAO
                 Engine.Utils.DebugLogger.Log("[SSAO] ERREUR: Pas de texture de profondeur disponible!");
+                PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
             }
 
             if (!context.ProjectionMatrix.HasValue)
             {
                 Engine.Utils.DebugLogger.Log("[SSAO] ERREUR: Pas de matrice de projection disponible!");
+                PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
             }
 
@@ -1930,7 +2163,7 @@ namespace Engine.Rendering
             {
                 try
                 {
-                    var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                    var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                     var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                     var fragPath = Path.Combine(baseDir, "ssao_combine.frag");
 
@@ -2260,7 +2493,7 @@ namespace Engine.Rendering
         {
             try
             {
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var cocFragPath = Path.Combine(baseDir, "dof_coc.frag");
                 var downsampleFragPath = Path.Combine(baseDir, "dof_downsample.frag");
@@ -2361,13 +2594,24 @@ namespace Engine.Rendering
             {
                 Initialize();
                 if (_cocShader == null || _downsampleShader == null || _bokehShader == null || _recombineShader == null)
+                {
+                    PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                     return;
+                }
             }
 
             var dof = effect as DepthOfFieldEffect;
-            if (dof == null) return;
+            if (dof == null)
+            {
+                PostProcessHelper.PassThrough(context);
+                return;
+            }
 
-            if (context.DepthTexture == 0) return; // Need depth for DOF
+            if (context.DepthTexture == 0)
+            {
+                PostProcessHelper.PassThrough(context);  // Need depth for DOF
+                return;
+            }
 
             ResizeBuffers(context.Width, context.Height);
 
@@ -2536,7 +2780,9 @@ namespace Engine.Rendering
             _bokehShader.SetVec2("u_TexelSize", new Vector2(2.0f / _width, 2.0f / _height));
             _bokehShader.SetInt("u_SampleCount", dof.SampleCount);
             _bokehShader.SetFloat("u_BokehRadius", dof.BokehRadius);
-            _bokehShader.SetFloat("u_BokehRotation", (float)(Environment.TickCount * 0.001) % (2.0f * MathF.PI)); // Temporal rotation
+            // Use fixed rotation (0) to avoid visible spinning blur pattern
+            // The golden angle spiral already provides good sample distribution
+            _bokehShader.SetFloat("u_BokehRotation", 0.0f);
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
@@ -2622,7 +2868,7 @@ namespace Engine.Rendering
         {
             try
             {
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var fragPath = Path.Combine(baseDir, "motionblur.frag");
 
@@ -2645,13 +2891,25 @@ namespace Engine.Rendering
             if (_motionBlurShader == null)
             {
                 Initialize();
-                if (_motionBlurShader == null) return;
+                if (_motionBlurShader == null)
+                {
+                    PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
+                    return;
+                }
             }
 
             var motionBlur = effect as MotionBlurEffect;
-            if (motionBlur == null) return;
+            if (motionBlur == null)
+            {
+                PostProcessHelper.PassThrough(context);
+                return;
+            }
 
-            if (context.DepthTexture == 0) return; // Need depth for motion blur
+            if (context.DepthTexture == 0)
+            {
+                PostProcessHelper.PassThrough(context);  // Need depth for motion blur
+                return;
+            }
 
             // Skip first frame (no previous matrix available)
             if (_isFirstFrame)
@@ -2756,7 +3014,7 @@ namespace Engine.Rendering
             try
             {
                 try { Engine.Utils.DebugLogger.Log("[GTAO] Initializing..."); } catch { }
-                var baseDir = Path.GetFullPath(Path.Combine(Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 
                 var vertPath = Path.Combine(baseDir, "fullscreen.vert");
                 var gtaoFragPath = Path.Combine(baseDir, "gtao.frag");
@@ -2918,11 +3176,19 @@ namespace Engine.Rendering
             if (_gtaoShader == null || _blurShader == null || _combineShader == null)
             {
                 Initialize();
-                if (_gtaoShader == null || _blurShader == null || _combineShader == null) return;
+                if (_gtaoShader == null || _blurShader == null || _combineShader == null)
+                {
+                    PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
+                    return;
+                }
             }
 
             var gtaoEffect = effect as GTAOEffect;
-            if (gtaoEffect == null) return;
+            if (gtaoEffect == null)
+            {
+                PostProcessHelper.PassThrough(context);
+                return;
+            }
 
             ResizeBuffers(context.Width, context.Height);
 
@@ -3305,7 +3571,7 @@ namespace Engine.Rendering
         {
             try
             {
-                var baseDir = System.IO.Path.GetFullPath(System.IO.Path.Combine(System.Environment.CurrentDirectory, "Engine", "Rendering", "Shaders", "PostProcess"));
+                var baseDir = ShaderPathHelper.GetPostProcessShaderDir();
                 var vertPath = System.IO.Path.Combine(baseDir, "image_sharpening.vert");
                 var fragPath = System.IO.Path.Combine(baseDir, "image_sharpening.frag");
 
@@ -3331,10 +3597,16 @@ namespace Engine.Rendering
             }
 
             if (_sharpeningShader == null || effect is not ImageSharpeningEffect sharpeningEffect)
+            {
+                PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
+            }
 
             if (!sharpeningEffect.Enabled || sharpeningEffect.Sharpness < 0.01f)
+            {
+                PostProcessHelper.PassThrough(context);  // Pass through if disabled
                 return;
+            }
 
             _sharpeningShader.Use();
 
@@ -3347,14 +3619,274 @@ namespace Engine.Rendering
             _sharpeningShader.SetFloat("u_Sharpness", sharpeningEffect.Sharpness * sharpeningEffect.Intensity);
             _sharpeningShader.SetVec2("u_TexelSize", new OpenTK.Mathematics.Vector2(1.0f / context.Width, 1.0f / context.Height));
 
-            // Draw fullscreen triangle (project convention - no VAO needed)
-            GL.DrawArrays(OpenTK.Graphics.OpenGL4.PrimitiveType.Triangles, 0, 3);
+            // Draw fullscreen triangle
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
 
         public void Dispose()
         {
             _sharpeningShader?.Dispose();
             _sharpeningShader = null;
+        }
+    }
+
+    /// <summary>
+    /// Underwater Volume Effect - Subnautica-style volumetric underwater rendering.
+    /// Applies fog, god rays, absorption, particles when camera is below water level.
+    /// </summary>
+    public class UnderwaterEffect : PostProcessEffect
+    {
+        public override string EffectName => "Underwater Volume";
+
+        // === MASTER SETTINGS ===
+        public enum WaterLevelSource
+        {
+            Auto,   // Detect from WaterPlaneComponent in scene
+            Manual  // Use manual WaterLevel value
+        }
+
+        [Engine.Serialization.SerializableAttribute("waterLevelSource")]
+        public WaterLevelSource Source { get; set; } = WaterLevelSource.Auto;
+
+        [Engine.Serialization.SerializableAttribute("waterLevel")]
+        public float WaterLevel { get; set; } = 0.0f; // Y position of water surface (used in Manual mode)
+
+        // Cached water level from auto-detection (not serialized)
+        public float DetectedWaterLevel { get; set; } = 0.0f;
+
+        // === UNDERWATER FOG ===
+        [Engine.Serialization.SerializableAttribute("fogEnabled")]
+        public bool FogEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("fogColor")]
+        public Vector3 FogColor { get; set; } = new Vector3(0.01f, 0.05f, 0.12f);
+
+        [Engine.Serialization.SerializableAttribute("fogDensity")]
+        public float FogDensity { get; set; } = 0.02f;
+
+        [Engine.Serialization.SerializableAttribute("visibility")]
+        public float Visibility { get; set; } = 50.0f; // Max visibility distance
+
+        // === LIGHT ABSORPTION (Beer-Lambert) ===
+        [Engine.Serialization.SerializableAttribute("absorptionEnabled")]
+        public bool AbsorptionEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("absorptionR")]
+        public float AbsorptionR { get; set; } = 0.45f; // Red absorbs fastest
+
+        [Engine.Serialization.SerializableAttribute("absorptionG")]
+        public float AbsorptionG { get; set; } = 0.08f; // Green moderate
+
+        [Engine.Serialization.SerializableAttribute("absorptionB")]
+        public float AbsorptionB { get; set; } = 0.02f; // Blue penetrates deepest
+
+        // === GOD RAYS (Volumetric Light Shafts) ===
+        [Engine.Serialization.SerializableAttribute("godRaysEnabled")]
+        public bool GodRaysEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("godRaysIntensity")]
+        public float GodRaysIntensity { get; set; } = 2.0f; // Increased for visibility
+
+        [Engine.Serialization.SerializableAttribute("godRaysColor")]
+        public Vector3 GodRaysColor { get; set; } = new Vector3(1.0f, 0.95f, 0.8f); // Warm sunlight color
+
+        [Engine.Serialization.SerializableAttribute("godRaysDensity")]
+        public float GodRaysDensity { get; set; } = 0.8f; // Light shaft density/frequency
+
+        [Engine.Serialization.SerializableAttribute("godRaysDecay")]
+        public float GodRaysDecay { get; set; } = 0.97f; // Higher = rays persist longer
+
+        [Engine.Serialization.SerializableAttribute("godRaysSamples")]
+        public int GodRaysSamples { get; set; } = 48; // More samples for quality
+
+        // === FLOATING PARTICLES (Volumetric with Depth and Lighting) ===
+        [Engine.Serialization.SerializableAttribute("particlesEnabled")]
+        public bool ParticlesEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("particleDensity")]
+        public float ParticleDensity { get; set; } = 0.5f;
+
+        [Engine.Serialization.SerializableAttribute("particleColor")]
+        public Vector3 ParticleColor { get; set; } = new Vector3(0.8f, 0.85f, 0.9f);
+
+        [Engine.Serialization.SerializableAttribute("particleBrightness")]
+        public float ParticleBrightness { get; set; } = 0.15f;
+
+        [Engine.Serialization.SerializableAttribute("particleSpeed")]
+        public float ParticleSpeed { get; set; } = 0.1f;
+
+        [Engine.Serialization.SerializableAttribute("particleSizeMin")]
+        public float ParticleSizeMin { get; set; } = 0.5f; // Minimum particle size
+
+        [Engine.Serialization.SerializableAttribute("particleSizeMax")]
+        public float ParticleSizeMax { get; set; } = 3.0f; // Maximum particle size
+
+        [Engine.Serialization.SerializableAttribute("particleDepthLayers")]
+        public int ParticleDepthLayers { get; set; } = 5; // Number of depth layers (1-8)
+
+        [Engine.Serialization.SerializableAttribute("particleLighting")]
+        public float ParticleLighting { get; set; } = 0.8f; // How much particles react to light (0-1)
+
+        [Engine.Serialization.SerializableAttribute("particleScattering")]
+        public float ParticleScattering { get; set; } = 0.6f; // Forward scattering when looking at sun
+
+        [Engine.Serialization.SerializableAttribute("particleTurbulence")]
+        public float ParticleTurbulence { get; set; } = 0.3f; // Random movement intensity
+
+        [Engine.Serialization.SerializableAttribute("particleGodRayGlow")]
+        public float ParticleGodRayGlow { get; set; } = 0.5f; // Extra glow when in god rays
+
+        [Engine.Serialization.SerializableAttribute("particleFocusDistance")]
+        public float ParticleFocusDistance { get; set; } = 10.0f; // Focus distance for depth blur
+
+        [Engine.Serialization.SerializableAttribute("particleFocusRange")]
+        public float ParticleFocusRange { get; set; } = 20.0f; // Focus range (DoF)
+
+        [Engine.Serialization.SerializableAttribute("particleNearFade")]
+        public float ParticleNearFade { get; set; } = 2.0f; // Fade particles too close
+
+        [Engine.Serialization.SerializableAttribute("particleFarFade")]
+        public float ParticleFarFade { get; set; } = 80.0f; // Fade particles too far
+
+        [Engine.Serialization.SerializableAttribute("particleTextureGuid")]
+        public Guid? ParticleTextureGuid { get; set; } = null; // Optional particle texture
+
+        // === CAUSTICS (GPU Gems with Chromatic Aberration) ===
+        [Engine.Serialization.SerializableAttribute("causticsEnabled")]
+        public bool CausticsEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("causticsIntensity")]
+        public float CausticsIntensity { get; set; } = 0.5f;
+
+        [Engine.Serialization.SerializableAttribute("causticsScale")]
+        public float CausticsScale { get; set; } = 1.0f;
+
+        [Engine.Serialization.SerializableAttribute("causticsSpeed")]
+        public float CausticsSpeed { get; set; } = 1.0f;
+
+        [Engine.Serialization.SerializableAttribute("causticsOctaves")]
+        public int CausticsOctaves { get; set; } = 3; // Detail layers (1-6)
+
+        [Engine.Serialization.SerializableAttribute("causticsBrightness")]
+        public float CausticsBrightness { get; set; } = 1.0f;
+
+        [Engine.Serialization.SerializableAttribute("causticsSharpness")]
+        public float CausticsSharpness { get; set; } = 3.0f; // How focused the light rays are
+
+        [Engine.Serialization.SerializableAttribute("causticsDistortion")]
+        public float CausticsDistortion { get; set; } = 0.5f; // Refraction distortion amount
+
+        [Engine.Serialization.SerializableAttribute("causticsDepthFalloff")]
+        public float CausticsDepthFalloff { get; set; } = 0.2f; // How fast caustics fade with depth
+
+        [Engine.Serialization.SerializableAttribute("causticsChromatic")]
+        public float CausticsChromatic { get; set; } = 0.05f; // RGB color separation (0 = no separation)
+
+        // === TINT & AMBIENT ===
+        [Engine.Serialization.SerializableAttribute("tintColor")]
+        public Vector3 TintColor { get; set; } = new Vector3(0.1f, 0.3f, 0.5f);
+
+        [Engine.Serialization.SerializableAttribute("ambientIntensity")]
+        public float AmbientIntensity { get; set; } = 0.15f;
+
+        [Engine.Serialization.SerializableAttribute("ambientColor")]
+        public Vector3 AmbientColor { get; set; } = new Vector3(0.1f, 0.2f, 0.3f);
+
+        // === SCREEN DISTORTION ===
+        [Engine.Serialization.SerializableAttribute("distortionEnabled")]
+        public bool DistortionEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("distortionIntensity")]
+        public float DistortionIntensity { get; set; } = 0.02f; // Overall strength
+
+        [Engine.Serialization.SerializableAttribute("distortionScale")]
+        public float DistortionScale { get; set; } = 1.0f; // Pattern scale
+
+        [Engine.Serialization.SerializableAttribute("distortionSpeed")]
+        public float DistortionSpeed { get; set; } = 1.0f; // Animation speed
+
+        [Engine.Serialization.SerializableAttribute("distortionChromatic")]
+        public float DistortionChromatic { get; set; } = 0.005f; // RGB separation
+
+        [Engine.Serialization.SerializableAttribute("distortionUseWaves")]
+        public bool DistortionUseWaves { get; set; } = true; // Use Gerstner waves
+
+        [Engine.Serialization.SerializableAttribute("distortionWaveInfluence")]
+        public float DistortionWaveInfluence { get; set; } = 0.5f; // Wave contribution
+
+        [Engine.Serialization.SerializableAttribute("distortionNoiseInfluence")]
+        public float DistortionNoiseInfluence { get; set; } = 0.5f; // Noise contribution
+
+        [Engine.Serialization.SerializableAttribute("distortionDepthFade")]
+        public float DistortionDepthFade { get; set; } = 0.02f; // Fade with depth
+
+        // === SNELL'S WINDOW (Total Internal Reflection) ===
+        [Engine.Serialization.SerializableAttribute("snellWindowEnabled")]
+        public bool SnellWindowEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("snellCriticalAngle")]
+        public float SnellCriticalAngle { get; set; } = 48.6f; // Water/air critical angle in degrees
+
+        [Engine.Serialization.SerializableAttribute("snellEdgeSoftness")]
+        public float SnellEdgeSoftness { get; set; } = 0.1f; // Softness of window edge (0 = hard, 1 = soft)
+
+        [Engine.Serialization.SerializableAttribute("snellReflectionTint")]
+        public Vector3 SnellReflectionTint { get; set; } = new Vector3(0.05f, 0.15f, 0.25f); // Color of reflected underwater
+
+        [Engine.Serialization.SerializableAttribute("snellReflectionStrength")]
+        public float SnellReflectionStrength { get; set; } = 0.8f; // How much underwater is reflected (0-1)
+
+        [Engine.Serialization.SerializableAttribute("snellFresnelPower")]
+        public float SnellFresnelPower { get; set; } = 3.0f; // Fresnel effect at window edge
+
+        [Engine.Serialization.SerializableAttribute("snellWaveDistortion")]
+        public float SnellWaveDistortion { get; set; } = 0.5f; // How much waves distort the window edge (0-1)
+
+        // === WATER TRANSITION EFFECTS ===
+        [Engine.Serialization.SerializableAttribute("transitionEnabled")]
+        public bool TransitionEnabled { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("transitionDuration")]
+        public float TransitionDuration { get; set; } = 1.5f; // Duration of the transition effect in seconds
+
+        // Entering water (air -> water): Bubble effect
+        [Engine.Serialization.SerializableAttribute("enterBubbleIntensity")]
+        public float EnterBubbleIntensity { get; set; } = 0.8f; // Bubble effect strength
+
+        [Engine.Serialization.SerializableAttribute("enterBubbleSize")]
+        public float EnterBubbleSize { get; set; } = 0.05f; // Size of bubbles
+
+        [Engine.Serialization.SerializableAttribute("enterBubbleCount")]
+        public float EnterBubbleCount { get; set; } = 30.0f; // Number of bubbles
+
+        [Engine.Serialization.SerializableAttribute("enterDistortion")]
+        public float EnterDistortion { get; set; } = 0.15f; // Screen distortion when entering
+
+        // Exiting water (water -> air): FBM distortion effect
+        [Engine.Serialization.SerializableAttribute("exitDropletIntensity")]
+        public float ExitDropletIntensity { get; set; } = 1.5f; // FBM distortion intensity
+
+        [Engine.Serialization.SerializableAttribute("exitDropletSize")]
+        public float ExitDropletSize { get; set; } = 1.0f; // FBM distortion scale
+
+        [Engine.Serialization.SerializableAttribute("exitDropletCount")]
+        public float ExitDropletCount { get; set; } = 20.0f; // (Legacy - not used in FBM mode)
+
+        [Engine.Serialization.SerializableAttribute("exitDripSpeed")]
+        public float ExitDripSpeed { get; set; } = 1.0f; // FBM animation speed
+
+        // Runtime state (not serialized)
+        public float TransitionProgress { get; set; } = 0.0f; // 0 = no transition, 1 = full effect
+        public bool IsEnteringWater { get; set; } = false; // true = entering, false = exiting
+
+        public UnderwaterEffect()
+        {
+            Priority = 5; // Early in the chain, before most effects
+        }
+
+        public override void Apply(PostProcessContext context)
+        {
+            // Rendered by UnderwaterRenderer
         }
     }
 }
