@@ -37,6 +37,7 @@ layout(std140, binding=0) uniform Global {
     vec3 uFogColor; float uFogStart;
     float uFogEnd; float uFogNoiseSpeed; float uFogLayerHeight; float uFogThickness;
     int uFogFBMOctaves; float uFogFBMLacunarity; float uFogFBMGain; float uFogScattering;
+    int uFogColorMode; float _fogpad1; float _fogpad2; float _fogpad3; // 0=Custom, 1=Ambient, 2=Skybox, 3=IBL
 
     // === CLIP PLANE ===
     float uClipPlaneEnabled; float _pad16; float _pad17; float _pad18;

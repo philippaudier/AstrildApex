@@ -93,6 +93,12 @@ namespace Editor.Inspector
                     ImGui.CloseCurrentPopup();
                 }
 
+                if (ImGui.MenuItem("Atmospheric Scattering") && !globalEffects.HasEffect<AtmosphericScatteringEffect>())
+                {
+                    globalEffects.AddEffect<AtmosphericScatteringEffect>();
+                    ImGui.CloseCurrentPopup();
+                }
+
                 if (ImGui.MenuItem("Color Grading") && !globalEffects.HasEffect<ColorGradingEffect>())
                 {
                     globalEffects.AddEffect<ColorGradingEffect>();
@@ -151,6 +157,8 @@ namespace Editor.Inspector
                     globalEffects.RemoveEffect<ImageSharpeningEffect>();
                 else if (effect is VolumetricFogEffect)
                     globalEffects.RemoveEffect<VolumetricFogEffect>();
+                else if (effect is AtmosphericScatteringEffect)
+                    globalEffects.RemoveEffect<AtmosphericScatteringEffect>();
                 else if (effect is ColorGradingEffect)
                     globalEffects.RemoveEffect<ColorGradingEffect>();
                 else if (effect is UnderwaterEffect)
@@ -207,6 +215,10 @@ namespace Editor.Inspector
                 else if (effect is VolumetricFogEffect volumetricFog)
                 {
                     DrawVolumetricFogInspector(volumetricFog, index);
+                }
+                else if (effect is AtmosphericScatteringEffect atmoScatter)
+                {
+                    DrawAtmosphericScatteringInspector(atmoScatter, index);
                 }
                 else if (effect is ColorGradingEffect colorGrading)
                 {
@@ -932,199 +944,291 @@ namespace Editor.Inspector
 
         private static void DrawVolumetricFogInspector(VolumetricFogEffect fog, int index)
         {
-            ImGui.Text("Volumetric Fog (Ray Marching)");
-            ImGui.Separator();
+            // ═══════════════════════════════════════════════════════════════
+            // SOURCE
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Source##{index}", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                var sources = new[] { "Local", "Global (Weather)", "Blend" };
+                int currentSource = (int)fog.Source;
+                if (ImGui.Combo($"Mode##{index}", ref currentSource, sources, sources.Length))
+                    fog.Source = (VolumetricFogEffect.FogSource)currentSource;
+
+                if (fog.Source == VolumetricFogEffect.FogSource.Blend)
+                    fog.BlendFactor = ImGuiHelper.SliderFloat($"Blend##{index}", fog.BlendFactor, 0.0f, 1.0f);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // FOG APPEARANCE
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Fog Appearance##{index}", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                var fogColor = new System.Numerics.Vector3(fog.FogColor.X, fog.FogColor.Y, fog.FogColor.Z);
+                if (ImGui.ColorEdit3($"Color##{index}", ref fogColor))
+                    fog.FogColor = new OpenTK.Mathematics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
+
+                fog.Density = ImGuiHelper.SliderFloat($"Density##{index}", fog.Density, 0.0f, 0.2f);
+                fog.DepthStart = ImGuiHelper.SliderFloat($"Start Distance##{index}", fog.DepthStart, 0.0f, 100.0f);
+                fog.DepthEnd = ImGuiHelper.SliderFloat($"End Distance##{index}", fog.DepthEnd, 10.0f, 2000.0f);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // HEIGHT FOG
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Height Fog##{index}"))
+            {
+                bool useHeight = fog.UseHeightFog;
+                if (ImGui.Checkbox($"Enable##{index}hf", ref useHeight))
+                    fog.UseHeightFog = useHeight;
+
+                if (fog.UseHeightFog)
+                {
+                    fog.BaseHeight = ImGuiHelper.SliderFloat($"Base Height##{index}", fog.BaseHeight, -100.0f, 100.0f);
+                    fog.MaxHeight = ImGuiHelper.SliderFloat($"Max Height##{index}", fog.MaxHeight, fog.BaseHeight + 10.0f, 500.0f);
+                    fog.HeightFalloff = ImGuiHelper.SliderFloat($"Falloff##{index}", fog.HeightFalloff, 0.0f, 0.5f);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // LIGHT SCATTERING
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Light Scattering##{index}", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                bool useSunScatter = fog.UseSunScattering;
+                if (ImGui.Checkbox($"Enable Sun Scattering##{index}", ref useSunScatter))
+                    fog.UseSunScattering = useSunScatter;
+
+                if (fog.UseSunScattering)
+                {
+                    fog.ScatteringIntensity = ImGuiHelper.SliderFloat($"Intensity##{index}sc", fog.ScatteringIntensity, 0.0f, 10.0f);
+                    fog.MieG = ImGuiHelper.SliderFloat($"Directionality (Mie G)##{index}", fog.MieG, 0.0f, 0.99f);
+
+                    var sunColor = new System.Numerics.Vector3(fog.SunScatteringColor.X, fog.SunScatteringColor.Y, fog.SunScatteringColor.Z);
+                    if (ImGui.ColorEdit3($"Sun Color##{index}", ref sunColor))
+                        fog.SunScatteringColor = new OpenTK.Mathematics.Vector3(sunColor.X, sunColor.Y, sunColor.Z);
+                }
+
+                ImGui.Spacing();
+                fog.ExtinctionFactor = ImGuiHelper.SliderFloat($"Extinction##{index}", fog.ExtinctionFactor, 0.1f, 5.0f);
+
+                var scatterSources = new[] { "Fog Color", "Sun Color", "Atmospheric", "Custom" };
+                int currentScatterSource = (int)fog.ScatterSource;
+                if (ImGui.Combo($"Scatter Color##{index}", ref currentScatterSource, scatterSources, scatterSources.Length))
+                    fog.ScatterSource = (VolumetricFogEffect.ScatterColorSource)currentScatterSource;
+
+                if (fog.ScatterSource == VolumetricFogEffect.ScatterColorSource.Custom)
+                {
+                    var inScatterColor = new System.Numerics.Vector3(fog.InScatterColor.X, fog.InScatterColor.Y, fog.InScatterColor.Z);
+                    if (ImGui.ColorEdit3($"Custom Scatter Color##{index}", ref inScatterColor))
+                        fog.InScatterColor = new OpenTK.Mathematics.Vector3(inScatterColor.X, inScatterColor.Y, inScatterColor.Z);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // AMBIENT
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Ambient##{index}"))
+            {
+                bool useAmbientFromSky = fog.UseAmbientFromSky;
+                if (ImGui.Checkbox($"Auto (from Sky)##{index}", ref useAmbientFromSky))
+                    fog.UseAmbientFromSky = useAmbientFromSky;
+
+                if (!fog.UseAmbientFromSky)
+                {
+                    var ambientColor = new System.Numerics.Vector3(fog.AmbientColor.X, fog.AmbientColor.Y, fog.AmbientColor.Z);
+                    if (ImGui.ColorEdit3($"Color##{index}amb", ref ambientColor))
+                        fog.AmbientColor = new OpenTK.Mathematics.Vector3(ambientColor.X, ambientColor.Y, ambientColor.Z);
+                }
+
+                fog.AmbientIntensity = ImGuiHelper.SliderFloat($"Intensity##{index}amb", fog.AmbientIntensity, 0.0f, 1.0f);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // GOD RAYS
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"God Rays##{index}"))
+            {
+                fog.GodRaysIntensity = ImGuiHelper.SliderFloat($"Intensity##{index}gr", fog.GodRaysIntensity, 0.0f, 5.0f);
+                fog.GodRaysDensity = ImGuiHelper.SliderFloat($"Spread##{index}", fog.GodRaysDensity, 0.3f, 2.0f);
+                fog.GodRaysDecay = ImGuiHelper.SliderFloat($"Decay##{index}", fog.GodRaysDecay, 0.9f, 0.995f);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // NOISE
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Noise##{index}"))
+            {
+                bool useNoise = fog.UseNoise;
+                if (ImGui.Checkbox($"Enable##{index}noise", ref useNoise))
+                    fog.UseNoise = useNoise;
+
+                if (fog.UseNoise)
+                {
+                    fog.NoiseScale = ImGuiHelper.SliderFloat($"Scale##{index}", fog.NoiseScale, 0.001f, 0.2f);
+                    fog.NoiseSpeed = ImGuiHelper.SliderFloat($"Speed##{index}", fog.NoiseSpeed, 0.0f, 1.0f);
+                    fog.NoiseStrength = ImGuiHelper.SliderFloat($"Strength##{index}", fog.NoiseStrength, 0.0f, 1.0f);
+
+                    int octaves = fog.NoiseOctaves;
+                    if (ImGui.SliderInt($"Octaves##{index}", ref octaves, 1, 6))
+                        fog.NoiseOctaves = octaves;
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // QUALITY
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Quality##{index}"))
+            {
+                int steps = fog.RayMarchSteps;
+                if (ImGui.SliderInt($"Ray March Steps##{index}", ref steps, 8, 64))
+                    fog.RayMarchSteps = steps;
+            }
+        }
+
+        private static void DrawAtmosphericScatteringInspector(AtmosphericScatteringEffect atmo, int index)
+        {
+            ImGui.TextDisabled("Nishita Model - Rayleigh & Mie Scattering");
             ImGui.Spacing();
 
-            // Source mode
-            var sources = Enum.GetNames(typeof(VolumetricFogEffect.FogSource));
-            int currentSource = (int)fog.Source;
-            if (ImGui.Combo($"Source##{index}", ref currentSource, sources, sources.Length))
+            // ═══════════════════════════════════════════════════════════════
+            // PRESETS
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Presets##{index}", ImGuiTreeNodeFlags.DefaultOpen))
             {
-                fog.Source = (VolumetricFogEffect.FogSource)currentSource;
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Local = manual parameters\nGlobal = WeatherComponent fog\nBlend = mix between both");
-            }
-
-            // Blend factor (only for Blend mode)
-            if (fog.Source == VolumetricFogEffect.FogSource.Blend)
-            {
-                fog.BlendFactor = ImGuiHelper.SliderFloat($"Blend Factor##{index}", fog.BlendFactor, 0.0f, 1.0f);
+                if (ImGui.Button($"Earth##{index}", new Vector2(70, 0)))
+                    atmo.ApplyPreset(AtmosphericScatteringEffect.AtmospherePreset.Earth);
                 if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("0 = Local parameters, 1 = Global (Weather)");
-                }
-            }
+                    ImGui.SetTooltip("Realistic Earth - Blue sky, golden sunsets");
 
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("Fog Parameters");
-            ImGui.Spacing();
-
-            // Color
-            var fogColor = new System.Numerics.Vector3(fog.FogColor.X, fog.FogColor.Y, fog.FogColor.Z);
-            if (ImGui.ColorEdit3($"Color##{index}", ref fogColor))
-            {
-                fog.FogColor = new OpenTK.Mathematics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
-            }
-
-            // Density
-            fog.Density = ImGuiHelper.SliderFloat($"Density##{index}", fog.Density, 0.0f, 0.2f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Base fog density\n0 = no fog, 0.02 = light fog, 0.1 = heavy fog");
-            }
-
-            // Depth range
-            fog.DepthStart = ImGuiHelper.SliderFloat($"Start Distance##{index}", fog.DepthStart, 0.0f, 100.0f);
-            fog.DepthEnd = ImGuiHelper.SliderFloat($"End Distance##{index}", fog.DepthEnd, 10.0f, 2000.0f);
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("Ray Marching");
-            ImGui.Spacing();
-
-            int steps = fog.RayMarchSteps;
-            if (ImGui.SliderInt($"Steps##{index}", ref steps, 8, 64))
-                fog.RayMarchSteps = steps;
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Number of ray march steps\nHigher = better quality but slower\n32 is a good balance");
-            }
-
-            fog.MaxRayDistance = ImGuiHelper.SliderFloat($"Max Ray Distance##{index}", fog.MaxRayDistance, 50.0f, 1000.0f);
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("Height-Based Fog");
-            ImGui.Spacing();
-
-            bool useHeight = fog.UseHeightFog;
-            if (ImGui.Checkbox($"Enable Height Fog##{index}", ref useHeight))
-                fog.UseHeightFog = useHeight;
-
-            if (fog.UseHeightFog)
-            {
-                ImGui.Indent();
-                fog.HeightFalloff = ImGuiHelper.SliderFloat($"Falloff##{index}", fog.HeightFalloff, 0.0f, 0.5f);
+                ImGui.SameLine();
+                if (ImGui.Button($"Mars##{index}", new Vector2(70, 0)))
+                    atmo.ApplyPreset(AtmosphericScatteringEffect.AtmospherePreset.Mars);
                 if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("How quickly fog density decreases with height");
-                }
-                fog.BaseHeight = ImGuiHelper.SliderFloat($"Base Height##{index}", fog.BaseHeight, -100.0f, 100.0f);
-                fog.MaxHeight = ImGuiHelper.SliderFloat($"Max Height##{index}", fog.MaxHeight, fog.BaseHeight + 10.0f, 500.0f);
-                ImGui.Unindent();
-            }
+                    ImGui.SetTooltip("Mars - Reddish/butterscotch sky");
 
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("Light Scattering (Physically Based)");
-            ImGui.Spacing();
-
-            fog.ExtinctionFactor = ImGuiHelper.SliderFloat($"Extinction##{index}", fog.ExtinctionFactor, 0.1f, 5.0f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Light absorption coefficient (Beer-Lambert)\nHigher = fog absorbs more light (darker)");
-            }
-
-            fog.AmbientIntensity = ImGuiHelper.SliderFloat($"Ambient##{index}", fog.AmbientIntensity, 0.0f, 1.0f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Ambient light in fog (fills shadows)\n0 = pure black shadows\n0.3 = natural look");
-            }
-
-            ImGui.Spacing();
-
-            bool useSunScatter = fog.UseSunScattering;
-            if (ImGui.Checkbox($"Enable Sun Scattering##{index}", ref useSunScatter))
-                fog.UseSunScattering = useSunScatter;
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Enable directional light scattering\nCreates light shafts where sun penetrates fog");
-            }
-
-            if (fog.UseSunScattering)
-            {
-                ImGui.Indent();
-
-                fog.ScatteringIntensity = ImGuiHelper.SliderFloat($"Sun Intensity##{index}", fog.ScatteringIntensity, 0.0f, 10.0f);
+                ImGui.SameLine();
+                if (ImGui.Button($"Alien##{index}", new Vector2(70, 0)))
+                    atmo.ApplyPreset(AtmosphericScatteringEffect.AtmospherePreset.Alien);
                 if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("Sun light intensity for scattering");
-                }
+                    ImGui.SetTooltip("Alien - Purple/green hues");
 
-                fog.MieG = ImGuiHelper.SliderFloat($"Mie G##{index}", fog.MieG, 0.0f, 0.99f);
+                ImGui.SameLine();
+                ImGui.TextDisabled($"({atmo.CurrentPreset})");
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // SUN & OUTPUT
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Sun & Output##{index}", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                atmo.SunIntensity = ImGuiHelper.SliderFloat($"Sun Intensity##{index}", atmo.SunIntensity, 1.0f, 50.0f);
+                atmo.Exposure = ImGuiHelper.SliderFloat($"Exposure##{index}", atmo.Exposure, 0.1f, 5.0f);
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // ATMOSPHERE
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Atmosphere##{index}"))
+            {
+                atmo.AtmosphereThickness = ImGuiHelper.SliderFloat($"Thickness##{index}", atmo.AtmosphereThickness, 10.0f, 200.0f);
                 if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("Henyey-Greenstein anisotropy\n0.7-0.95 = strong forward scatter (sun halo)\n0.5 = moderate scatter");
-                }
+                    ImGui.SetTooltip("Atmosphere height factor (×1000m)\n100 = ~100km effective height");
 
-                var sunColor = new System.Numerics.Vector3(fog.SunScatteringColor.X, fog.SunScatteringColor.Y, fog.SunScatteringColor.Z);
-                if (ImGui.ColorEdit3($"Sun Color##{index}", ref sunColor))
-                {
-                    fog.SunScatteringColor = new OpenTK.Mathematics.Vector3(sunColor.X, sunColor.Y, sunColor.Z);
-                }
-
-                ImGui.Unindent();
-            }
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("God Rays (Light Shafts)");
-            ImGui.Spacing();
-
-            fog.GodRaysIntensity = ImGuiHelper.SliderFloat($"God Rays Intensity##{index}", fog.GodRaysIntensity, 0.0f, 5.0f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Intensity of light shafts\nObjects naturally block the light");
-            }
-
-            fog.GodRaysDensity = ImGuiHelper.SliderFloat($"God Rays Density##{index}", fog.GodRaysDensity, 0.3f, 2.0f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Radial blur spread\nHigher = longer rays");
-            }
-
-            fog.GodRaysDecay = ImGuiHelper.SliderFloat($"God Rays Decay##{index}", fog.GodRaysDecay, 0.9f, 0.995f);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Decay per sample\nHigher = rays extend further");
-            }
-
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Text("3D Noise");
-            ImGui.Spacing();
-
-            bool useNoise = fog.UseNoise;
-            if (ImGui.Checkbox($"Enable Noise##{index}", ref useNoise))
-                fog.UseNoise = useNoise;
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("Add animated 3D Simplex noise for realistic fog variation");
-            }
-
-            if (fog.UseNoise)
-            {
-                ImGui.Indent();
-                fog.NoiseScale = ImGuiHelper.SliderFloat($"Scale##{index}", fog.NoiseScale, 0.001f, 0.2f);
+                atmo.RayleighScaleHeight = ImGuiHelper.SliderFloat($"Rayleigh Scale Height##{index}", atmo.RayleighScaleHeight, 1.0f, 20.0f);
                 if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("Noise scale (smaller = larger clouds)");
-                }
-                fog.NoiseSpeed = ImGuiHelper.SliderFloat($"Speed##{index}", fog.NoiseSpeed, 0.0f, 1.0f);
-                fog.NoiseStrength = ImGuiHelper.SliderFloat($"Strength##{index}", fog.NoiseStrength, 0.0f, 1.0f);
+                    ImGui.SetTooltip("Density falloff height (×1000m)\n8 = 8km scale height");
 
-                int octaves = fog.NoiseOctaves;
-                if (ImGui.SliderInt($"Octaves##{index}", ref octaves, 1, 6))
-                    fog.NoiseOctaves = octaves;
+                atmo.MieScaleHeight = ImGuiHelper.SliderFloat($"Mie Scale Height##{index}", atmo.MieScaleHeight, 0.1f, 5.0f);
                 if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Haze density falloff (×1000m)\n1.2 = 1.2km scale height");
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // RAYLEIGH SCATTERING
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Rayleigh Scattering##{index}"))
+            {
+                ImGui.TextDisabled("Blue sky - wavelength-dependent scattering");
+                ImGui.Spacing();
+
+                // Rayleigh coefficients - convert to more intuitive scale
+                var rayCoeff = new Vector3(
+                    atmo.RayleighCoefficients.X * 1e6f,
+                    atmo.RayleighCoefficients.Y * 1e6f,
+                    atmo.RayleighCoefficients.Z * 1e6f);
+
+                bool rayChanged = false;
+                float rayR = rayCoeff.X;
+                if (ImGui.SliderFloat($"Red (×10⁻⁶)##{index}_rayR", ref rayR, 1.0f, 20.0f))
                 {
-                    ImGui.SetTooltip("FBM noise octaves\nHigher = more detail but slower");
+                    rayCoeff.X = rayR;
+                    rayChanged = true;
                 }
-                ImGui.Unindent();
+
+                float rayG = rayCoeff.Y;
+                if (ImGui.SliderFloat($"Green (×10⁻⁶)##{index}_rayG", ref rayG, 5.0f, 30.0f))
+                {
+                    rayCoeff.Y = rayG;
+                    rayChanged = true;
+                }
+
+                float rayB = rayCoeff.Z;
+                if (ImGui.SliderFloat($"Blue (×10⁻⁶)##{index}_rayB", ref rayB, 10.0f, 60.0f))
+                {
+                    rayCoeff.Z = rayB;
+                    rayChanged = true;
+                }
+
+                if (rayChanged)
+                {
+                    atmo.RayleighCoefficients = new OpenTK.Mathematics.Vector3(
+                        rayCoeff.X * 1e-6f,
+                        rayCoeff.Y * 1e-6f,
+                        rayCoeff.Z * 1e-6f);
+                    atmo.CurrentPreset = AtmosphericScatteringEffect.AtmospherePreset.Custom;
+                }
+
+                ImGui.TextDisabled("Earth: R=5.8, G=13.5, B=33.1");
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // MIE SCATTERING
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Mie Scattering##{index}"))
+            {
+                ImGui.TextDisabled("Sun glow & haze - particle scattering");
+                ImGui.Spacing();
+
+                float mieCoeffScaled = atmo.MieCoefficient * 1e6f;
+                if (ImGui.SliderFloat($"Coefficient (×10⁻⁶)##{index}_mieC", ref mieCoeffScaled, 1.0f, 100.0f))
+                {
+                    atmo.MieCoefficient = mieCoeffScaled * 1e-6f;
+                    atmo.CurrentPreset = AtmosphericScatteringEffect.AtmospherePreset.Custom;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Earth = 21. Higher = more haze/glow");
+
+                atmo.MieG = ImGuiHelper.SliderFloat($"Anisotropy (g)##{index}", atmo.MieG, 0.0f, 0.999f);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("0 = isotropic, 0.76 = sun halo, 0.9+ = strong glow");
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // QUALITY
+            // ═══════════════════════════════════════════════════════════════
+            if (ImGui.CollapsingHeader($"Quality##{index}"))
+            {
+                int numSamples = atmo.NumSamples;
+                if (ImGui.SliderInt($"View Samples##{index}", ref numSamples, 4, 64))
+                    atmo.NumSamples = numSamples;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("16 = fast, 32 = balanced, 64 = high quality");
+
+                int numLightSamples = atmo.NumLightSamples;
+                if (ImGui.SliderInt($"Light Samples##{index}", ref numLightSamples, 2, 16))
+                    atmo.NumLightSamples = numLightSamples;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("4-8 = good balance, 16 = high quality");
             }
         }
 
@@ -1310,23 +1414,67 @@ namespace Editor.Inspector
 
             ImGui.Spacing();
             ImGui.Separator();
-            ImGui.Text("Underwater Fog");
+            ImGui.Text("Volumetric Underwater Fog");
             ImGui.Spacing();
 
             var fogEnabled = uw.FogEnabled;
-            if (ImGui.Checkbox($"Enable Fog##{index}", ref fogEnabled))
+            if (ImGui.Checkbox($"Enable Volumetric Fog##{index}", ref fogEnabled))
                 uw.FogEnabled = fogEnabled;
 
             if (uw.FogEnabled)
             {
+                // === BASE SETTINGS ===
+                ImGui.TextDisabled("Appearance");
+
                 var fogColor = new Vector3(uw.FogColor.X, uw.FogColor.Y, uw.FogColor.Z);
                 if (ImGui.ColorEdit3($"Fog Color##{index}", ref fogColor))
                     uw.FogColor = new OpenTK.Mathematics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
+                ImGui.SetItemTooltip("Base color of the underwater fog (deep blue-green for realistic look)");
 
-                uw.FogDensity = ImGuiHelper.SliderFloat($"Fog Density##{index}", uw.FogDensity, 0.001f, 0.1f);
-                uw.Visibility = ImGuiHelper.SliderFloat($"Visibility##{index}", uw.Visibility, 5.0f, 200.0f);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Maximum visibility distance in meters");
+                uw.FogDensity = ImGuiHelper.SliderFloat($"Density##{index}", uw.FogDensity, 0.001f, 0.05f);
+                ImGui.SetItemTooltip("Base fog density - controls how quickly visibility decreases");
+
+                uw.Visibility = ImGuiHelper.SliderFloat($"Visibility (m)##{index}", uw.Visibility, 10.0f, 200.0f);
+                ImGui.SetItemTooltip("Maximum visibility distance in meters (clear tropical = 40-60m, murky = 5-15m)");
+
+                // === LIGHT SCATTERING ===
+                ImGui.Spacing();
+                ImGui.TextDisabled("Light Scattering");
+
+                uw.FogScattering = ImGuiHelper.SliderFloat($"Scattering (Mie g)##{index}", uw.FogScattering, 0.3f, 0.9f);
+                ImGui.SetItemTooltip("Forward scattering amount (0.6-0.8 realistic). Higher = stronger god rays in fog");
+
+                uw.FogAmbient = ImGuiHelper.SliderFloat($"Ambient Intensity##{index}", uw.FogAmbient, 0.05f, 0.5f);
+                ImGui.SetItemTooltip("Ambient light contribution - fills shadows, prevents pure black depths");
+
+                // === DEPTH EFFECTS ===
+                ImGui.Spacing();
+                ImGui.TextDisabled("Depth Effects");
+
+                uw.FogHeightFalloff = ImGuiHelper.SliderFloat($"Depth Density Falloff##{index}", uw.FogHeightFalloff, 0.0f, 0.05f);
+                ImGui.SetItemTooltip("How much denser fog gets with depth (0 = uniform, subtle values recommended)");
+
+                // === QUALITY ===
+                ImGui.Spacing();
+                ImGui.TextDisabled("Quality");
+
+                int fogSteps = uw.FogSteps;
+                if (ImGui.SliderInt($"Ray March Steps##{index}", ref fogSteps, 16, 64))
+                    uw.FogSteps = fogSteps;
+                ImGui.SetItemTooltip("Number of samples (32 = balanced, 48-64 = high quality)");
+
+                // === NOISE VARIATION ===
+                ImGui.Spacing();
+                ImGui.TextDisabled("Density Variation (Noise)");
+
+                uw.FogNoiseStrength = ImGuiHelper.SliderFloat($"Variation Strength##{index}", uw.FogNoiseStrength, 0.0f, 0.5f);
+                ImGui.SetItemTooltip("How much noise affects fog density (simulates currents, sediment clouds)");
+
+                if (uw.FogNoiseStrength > 0.01f)
+                {
+                    uw.FogNoiseScale = ImGuiHelper.SliderFloat($"Variation Scale##{index}", uw.FogNoiseScale, 0.01f, 0.1f);
+                    ImGui.SetItemTooltip("Scale of variation patterns (smaller = larger, softer patterns)");
+                }
             }
 
             ImGui.Spacing();

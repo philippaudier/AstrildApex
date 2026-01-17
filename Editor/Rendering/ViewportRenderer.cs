@@ -335,6 +335,7 @@ namespace Editor.Rendering
             public Vector3 FogColor; public float FogStart;
             public float FogEnd; public float FogNoiseSpeed; public float FogLayerHeight; public float FogThickness;
             public int FogFBMOctaves; public float FogFBMLacunarity; public float FogFBMGain; public float FogScattering;
+            public int FogColorMode; private float _fogpad1; private float _fogpad2; private float _fogpad3;
 
             // === CLIP PLANE ===
             public float ClipPlaneEnabled; private float _pad16; private float _pad17; private float _pad18;
@@ -4463,8 +4464,15 @@ void main(){
                     // Note: ReflectionViewProj is now obtained from ReflectionBuffer.ReflectionViewProj
                     // inside WaterPlaneRenderer, same as WaterForward does.
 
+                    // Get shadow parameters for specular occlusion on water
+                    var waterShadowSettings = Editor.State.EditorSettings.ShadowsSettings;
+                    var waterLighting = Engine.Scene.Lighting.Build(Scene);
+                    bool waterShadowsEnabled = waterShadowSettings.Enabled && waterLighting.HasDirectional && waterLighting.DirCastShadows && _shadowManager != null;
+                    int waterShadowTex = waterShadowsEnabled ? _shadowManager!.ShadowTexture : 0;
+                    OpenTK.Mathematics.Matrix4? waterShadowMatrix = waterShadowsEnabled ? _shadowManager!.LightSpaceMatrix : null;
+
                     _waterPlaneRenderer.Render(
-                        Scene,
+                        Scene!,
                         _viewGL,
                         _projGL,
                         waterCamPos,
@@ -4472,7 +4480,13 @@ void main(){
                         weatherComp,
                         _depthTex,
                         _sceneColorTex,
-                        _reflectionTex
+                        _reflectionTex,
+                        waterShadowsEnabled,
+                        waterShadowTex,
+                        waterShadowMatrix,
+                        waterShadowSettings.ShadowBias,
+                        _shadowManager?.ShadowMapSize ?? 2048f,
+                        waterShadowSettings.ShadowStrength
                     );
                 }
             }
@@ -7204,7 +7218,8 @@ void main(){
                                     new OpenTK.Mathematics.Vector3(viewPos.X, viewPos.Y, viewPos.Z),
                                     time,
                                     ambientColor,
-                                    1.0f, // Ambient intensity
+                                    _globalUniforms.AmbientIntensity,
+                                    _globalUniforms.DirLightIntensity, // Light intensity (time-based)
                                     shadowsEnabled,
                                     shadowTexture,
                                     shadowMatrix,
@@ -7323,10 +7338,10 @@ void main(){
                                     new OpenTK.Mathematics.Vector3(viewPos.X, viewPos.Y, viewPos.Z),
                                     rockTime,
                                     rockAmbientColor,
-                                    1.0f, // Ambient intensity
+                                    _globalUniforms.AmbientIntensity, // Time-based ambient intensity
                                     sunDir,
                                     sunColor,
-                                    _globalUniforms.DirLightIntensity,
+                                    _globalUniforms.DirLightIntensity, // Time-based light intensity
                                     shadowsEnabled,
                                     shadowTexture,
                                     shadowMatrix,
@@ -9667,9 +9682,19 @@ void main(){
                 SkyboxExposure = 1.0f,
                 FogEnabled = 0,
                 FogDensity = 0.0f,
+                FogOpacity = 1.0f,
+                FogNoiseScale = 0.1f,
                 FogColor = new Vector3(0.7f, 0.7f, 0.8f),
                 FogStart = 0.0f,
                 FogEnd = 300.0f,
+                FogNoiseSpeed = 0.5f,
+                FogLayerHeight = 0.0f,
+                FogThickness = 0.5f,
+                FogFBMOctaves = 4,
+                FogFBMLacunarity = 2.0f,
+                FogFBMGain = 0.5f,
+                FogScattering = 0.5f,
+                FogColorMode = 0,
                 ClipPlaneEnabled = 0,
 
                 // Time & Weather (defaults)
@@ -9734,6 +9759,8 @@ void main(){
                 {
                     globals.FogEnabled = 1;
                     globals.FogDensity = weatherComponent.FogDensity;
+                    globals.FogOpacity = weatherComponent.FogOpacity;
+                    globals.FogNoiseScale = weatherComponent.FogNoiseScale;
                     globals.FogColor = new Vector3(
                         weatherComponent.FogColor.X,
                         weatherComponent.FogColor.Y,
@@ -9741,6 +9768,14 @@ void main(){
                     );
                     globals.FogStart = weatherComponent.FogStart;
                     globals.FogEnd = weatherComponent.FogEnd;
+                    globals.FogNoiseSpeed = weatherComponent.FogNoiseSpeed;
+                    globals.FogLayerHeight = weatherComponent.FogLayerHeight;
+                    globals.FogThickness = weatherComponent.FogThickness;
+                    globals.FogFBMOctaves = weatherComponent.FogFBMOctaves;
+                    globals.FogFBMLacunarity = weatherComponent.FogFBMLacunarity;
+                    globals.FogFBMGain = weatherComponent.FogFBMGain;
+                    globals.FogScattering = weatherComponent.FogScattering;
+                    globals.FogColorMode = (int)weatherComponent.FogColorMode;
                 }
             }
 

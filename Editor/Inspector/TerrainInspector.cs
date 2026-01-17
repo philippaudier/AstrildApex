@@ -151,6 +151,44 @@ namespace Editor.Inspector
                     ImGui.TextDisabled($"Only render tiles within {cullingDistance:F0}m from camera");
                 }
 
+                ImGui.Spacing();
+
+                // === AUTO WATER SETTINGS ===
+                ImGui.Text("Auto Water");
+                ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(0.4f, 0.7f, 1.0f, 1.0f));
+                ImGui.TextWrapped("Automatically spawns a water plane at water level that follows the camera.");
+                ImGui.PopStyleColor();
+
+                bool enableAutoWater = terrain.EnableAutoWater;
+                if (ImGui.Checkbox("Enable Auto Water", ref enableAutoWater))
+                {
+                    terrain.EnableAutoWater = enableAutoWater;
+                }
+
+                if (terrain.EnableAutoWater)
+                {
+                    float waterLevel = terrain.WaterLevel;
+                    if (ImGui.DragFloat("Water Level (Y)", ref waterLevel, 0.5f, -1000f, 1000f))
+                    {
+                        terrain.WaterLevel = waterLevel;
+                    }
+                    ImGui.TextDisabled("World Y position of water surface");
+
+                    float waterMargin = terrain.AutoWaterMargin;
+                    if (ImGui.DragFloat("Water Margin (m)", ref waterMargin, 1f, 0f, 500f))
+                    {
+                        terrain.AutoWaterMargin = waterMargin;
+                    }
+                    ImGui.TextDisabled("Extra size beyond visible terrain");
+
+                    int waterRes = terrain.AutoWaterResolution;
+                    if (ImGui.DragInt("Water Resolution", ref waterRes, 1, 32, 256))
+                    {
+                        terrain.AutoWaterResolution = waterRes;
+                    }
+                    ImGui.TextDisabled("Mesh detail (higher = more wave fidelity)");
+                }
+
                 // TODO: Display streaming stats if available
                 // (Requires access to ViewportRenderer instance - could be added via inspector parameter)
 

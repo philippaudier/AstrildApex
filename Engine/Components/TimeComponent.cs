@@ -107,6 +107,33 @@ namespace Engine.Components
         [Serialization.SerializableAttribute("dawnDuskSunConvergence")]
         public float DawnDuskSunConvergence { get; set; } = 8.0f;
 
+        // === AMBIENT INTENSITY (time-driven) ===
+        // Controls ambient light intensity based on time of day
+
+        [Serialization.SerializableAttribute("dayAmbientIntensity")]
+        public float DayAmbientIntensity { get; set; } = 1.0f; // Full ambient during day (noon)
+
+        [Serialization.SerializableAttribute("nightAmbientIntensity")]
+        public float NightAmbientIntensity { get; set; } = 0.08f; // Very low ambient at night (stars/moon only)
+
+        [Serialization.SerializableAttribute("goldenHourAmbientIntensity")]
+        public float GoldenHourAmbientIntensity { get; set; } = 0.7f; // Reduced during golden hour (warm direct light)
+
+        // === DIRECT LIGHT INTENSITY (time-driven) ===
+
+        [Serialization.SerializableAttribute("dayLightIntensity")]
+        public float DayLightIntensity { get; set; } = 1.0f; // Full sun during day
+
+        [Serialization.SerializableAttribute("nightLightIntensity")]
+        public float NightLightIntensity { get; set; } = 0.03f; // Moonlight (very dim)
+
+        [Serialization.SerializableAttribute("goldenHourLightIntensity")]
+        public float GoldenHourLightIntensity { get; set; } = 0.8f; // Slightly reduced during golden hour
+
+        // Runtime: cached computed values (not serialized - recalculated each frame)
+        public float ComputedAmbientIntensity { get; private set; } = 1.0f;
+        public float ComputedLightIntensity { get; private set; } = 1.0f;
+
         /// <summary>
         /// Auto-detect and update linked entities. Call this from Inspector in Edit mode.
         /// In Play mode, Update() handles this automatically.
@@ -239,34 +266,37 @@ namespace Engine.Components
         /// </summary>
         public new void Update(float deltaTime)
         {
-            if (!AutoAdvance) return;
-
-            // Calculate hours per real second
-            float hoursPerRealSecond = 24.0f / (DayLengthMinutes * 60.0f);
-            float timeAdvance = deltaTime * hoursPerRealSecond * TimeScale;
-
-            // Advance time
-            TimeOfDay += timeAdvance;
-            _accumulatedTime += timeAdvance;
-
-            // Wrap time of day
-            if (TimeOfDay >= 24.0f)
+            // Advance time only if AutoAdvance is enabled
+            if (AutoAdvance)
             {
-                TimeOfDay -= 24.0f;
+                // Calculate hours per real second
+                float hoursPerRealSecond = 24.0f / (DayLengthMinutes * 60.0f);
+                float timeAdvance = deltaTime * hoursPerRealSecond * TimeScale;
 
-                // Advance day if enabled
-                if (AutoAdvanceDate)
+                // Advance time
+                TimeOfDay += timeAdvance;
+                _accumulatedTime += timeAdvance;
+
+                // Wrap time of day
+                if (TimeOfDay >= 24.0f)
                 {
-                    DayOfYear++;
-                    if (DayOfYear >= 365)
+                    TimeOfDay -= 24.0f;
+
+                    // Advance day if enabled
+                    if (AutoAdvanceDate)
                     {
-                        DayOfYear = 0;
-                        Year++;
+                        DayOfYear++;
+                        if (DayOfYear >= 365)
+                        {
+                            DayOfYear = 0;
+                            Year++;
+                        }
                     }
                 }
             }
 
-            // Update dependent systems
+            // ALWAYS update dependent systems based on current TimeOfDay
+            // This ensures sky/sun/environment are set correctly even if AutoAdvance is false
             UpdateEnvironmentSettings();
             UpdateWeatherComponent();
             UpdateGlobalEffects();
@@ -383,6 +413,43 @@ namespace Engine.Components
             return TimeOfDay >= 17.0f && TimeOfDay < 19.0f;
         }
 
+        /// <summary>
+        /// Get ambient intensity for current time of day.
+        /// Returns a value between NightAmbientIntensity (0.08) and DayAmbientIntensity (1.0)
+        /// with smooth transitions at dawn/dusk.
+        /// </summary>
+        public float GetAmbientIntensityForTime()
+        {
+            float dayNight = GetDayNightBlend();
+            float golden = GetGoldenHourBlend();
+
+            // Base: lerp between night and day
+            float baseIntensity = MathHelper.Lerp(NightAmbientIntensity, DayAmbientIntensity, dayNight);
+
+            // During golden hour, reduce ambient (more direct warm light, less fill)
+            float finalIntensity = MathHelper.Lerp(baseIntensity, GoldenHourAmbientIntensity, golden);
+
+            return Math.Clamp(finalIntensity, 0.0f, 2.0f);
+        }
+
+        /// <summary>
+        /// Get direct light intensity for current time of day.
+        /// Returns a value between NightLightIntensity (0.03) and DayLightIntensity (1.0)
+        /// </summary>
+        public float GetLightIntensityForTime()
+        {
+            float dayNight = GetDayNightBlend();
+            float golden = GetGoldenHourBlend();
+
+            // Base: lerp between night (moonlight) and day (sunlight)
+            float baseIntensity = MathHelper.Lerp(NightLightIntensity, DayLightIntensity, dayNight);
+
+            // During golden hour, slightly reduce intensity (sun lower on horizon)
+            float finalIntensity = MathHelper.Lerp(baseIntensity, GoldenHourLightIntensity, golden);
+
+            return Math.Clamp(finalIntensity, 0.0f, 2.0f);
+        }
+
         // === PRIVATE HELPERS ===
 
         private float SmoothStep(float edge0, float edge1, float x)
@@ -456,6 +523,32 @@ namespace Engine.Components
                 envSettings.DayOfYear = DayOfYear;
                 envSettings.Latitude = Latitude;
                 envSettings.UpdateCelestialBodies(TimeOfDay, DayOfYear, Latitude);
+
+                // === COMPUTE AND APPLY TIME-BASED INTENSITIES ===
+                ComputedAmbientIntensity = GetAmbientIntensityForTime();
+                ComputedLightIntensity = GetLightIntensityForTime();
+
+                // Apply ambient intensity to environment settings
+                envSettings.AmbientIntensity = ComputedAmbientIntensity;
+
+                // Also update directional light intensity if available
+                if (Entity?.Scene != null)
+                {
+                    try
+                    {
+                        foreach (var e in Entity.Scene.Entities)
+                        {
+                            var light = e.GetComponent<LightComponent>();
+                            if (light != null && light.Type == LightType.Directional)
+                            {
+                                light.Intensity = ComputedLightIntensity;
+                                break; // Only update the first directional light (main sun/moon)
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 // Runtime: apply smooth procedural overrides so skybox renderer can read them each frame
                 try
                 {

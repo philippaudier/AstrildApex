@@ -27,25 +27,85 @@ namespace Editor.Inspector
 
             ImGui.PushID("AudioSource");
 
-            // Section : Audio Clip
-            ImGui.SeparatorText("Audio Clip");
+            // Section : Audio Clips (Playlist)
+            ImGui.SeparatorText($"Audio Clips ({audioSource.ClipCount})");
 
-            string clipName = audioSource.Clip?.Name ?? "None (Audio Clip)";
+            // Show current playlist
+            int clipToRemove = -1;
+            int clipToMoveUp = -1;
+            int clipToMoveDown = -1;
 
-            // Create a button that looks like an assignment field
-            var buttonColor = audioSource.Clip != null
-                ? UI.Success  // Green for assigned clip
-                : UI.Background;  // Gray for none
+            for (int i = 0; i < audioSource.ClipCount; i++)
+            {
+                var clip = audioSource.Clips[i];
+                bool isCurrent = (i == audioSource.CurrentClipIndex && audioSource.IsPlaying);
 
-            ImGui.PushStyleColor(ImGuiCol.Button, buttonColor);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, UI.Brighten(buttonColor, 0.2f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, UI.Darken(buttonColor, 0.2f));
+                ImGui.PushID($"Clip_{i}");
 
-            bool clipClicked = ImGui.Button($"{clipName}##ClipField", new Vector2(-1, 24));
+                // Highlight current playing clip
+                if (isCurrent)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 1.0f, 0.4f, 1.0f));
+                    ImGui.Text($"▶ {i + 1}.");
+                    ImGui.PopStyleColor();
+                }
+                else
+                {
+                    ImGui.Text($"  {i + 1}.");
+                }
+                ImGui.SameLine();
 
-            ImGui.PopStyleColor(3);
+                // Clip name
+                string clipName = clip?.Name ?? "Unknown";
+                float clipLength = clip?.Length ?? 0f;
+                string lengthStr = $"{(int)(clipLength / 60):D2}:{(int)(clipLength % 60):D2}";
 
-            // Handle drag & drop from Assets panel
+                ImGui.Text($"{clipName}");
+                ImGui.SameLine();
+                ImGui.TextDisabled($"({lengthStr})");
+
+                // Move up/down buttons
+                ImGui.SameLine(ImGui.GetWindowWidth() - 90);
+                if (i > 0)
+                {
+                    if (ImGui.SmallButton("▲"))
+                        clipToMoveUp = i;
+                }
+                else
+                {
+                    ImGui.Dummy(new Vector2(20, 0));
+                }
+
+                ImGui.SameLine();
+                if (i < audioSource.ClipCount - 1)
+                {
+                    if (ImGui.SmallButton("▼"))
+                        clipToMoveDown = i;
+                }
+                else
+                {
+                    ImGui.Dummy(new Vector2(20, 0));
+                }
+
+                ImGui.SameLine();
+                if (ImGui.SmallButton("X"))
+                    clipToRemove = i;
+
+                ImGui.PopID();
+            }
+
+            // Handle reordering
+            if (clipToMoveUp >= 0)
+                audioSource.MoveClip(clipToMoveUp, clipToMoveUp - 1);
+            if (clipToMoveDown >= 0)
+                audioSource.MoveClip(clipToMoveDown, clipToMoveDown + 1);
+            if (clipToRemove >= 0)
+                audioSource.RemoveClipAt(clipToRemove);
+
+            // Handle drag & drop to add clips
+            ImGui.Spacing();
+            ImGui.Button("Drop audio files here to add...", new Vector2(-1, 24));
+
             if (ImGui.BeginDragDropTarget())
             {
                 var payload = ImGui.AcceptDragDropPayload("ASSET_MULTI");
@@ -55,22 +115,26 @@ namespace Editor.Inspector
                     {
                         try
                         {
-                            // Extract first GUID from payload
-                            var span = new ReadOnlySpan<byte>((void*)payload.Data, 16);
-                            var droppedGuid = new Guid(span);
-
-                            // Check if it's an audio file
-                            if (Engine.Assets.AssetDatabase.TryGet(droppedGuid, out var record))
+                            // Handle multiple GUIDs
+                            int numGuids = payload.DataSize / 16;
+                            for (int g = 0; g < numGuids; g++)
                             {
-                                string ext = System.IO.Path.GetExtension(record.Path).ToLowerInvariant();
-                                if (ext == ".mp3" || ext == ".ogg" || ext == ".wav")
+                                var span = new ReadOnlySpan<byte>((byte*)payload.Data + (g * 16), 16);
+                                var droppedGuid = new Guid(span);
+
+                                // Check if it's an audio file
+                                if (Engine.Assets.AssetDatabase.TryGet(droppedGuid, out var record))
                                 {
-                                    // Load the audio clip
-                                    var clip = AudioImporter.LoadClip(record.Path);
-                                    if (clip != null)
+                                    string ext = System.IO.Path.GetExtension(record.Path).ToLowerInvariant();
+                                    if (ext == ".mp3" || ext == ".ogg" || ext == ".wav")
                                     {
-                                        audioSource.Clip = clip;
-                                        Log.Information($"[AudioSourceInspector] Assigned audio clip: {record.Path}");
+                                        // Load and add the audio clip
+                                        var clip = AudioImporter.LoadClip(record.Path);
+                                        if (clip != null)
+                                        {
+                                            audioSource.AddClip(clip);
+                                            Log.Information($"[AudioSourceInspector] Added audio clip: {record.Path}");
+                                        }
                                     }
                                 }
                             }
@@ -84,19 +148,9 @@ namespace Editor.Inspector
                 ImGui.EndDragDropTarget();
             }
 
-            // Right-click context menu
-            if (ImGui.BeginPopupContextItem("ClipContextMenu"))
+            // Add clip button
+            if (ImGui.Button("Add Clip from File..."))
             {
-                if (ImGui.MenuItem("Clear Clip"))
-                {
-                    audioSource.Clip = null;
-                }
-                ImGui.EndPopup();
-            }
-
-            if (ImGui.Button("Load Clip from File..."))
-            {
-                // Open file dialog to select an audio clip
                 try
                 {
                     var result = NativeFileDialogSharp.Dialog.FileOpen("wav,mp3,ogg");
@@ -104,21 +158,12 @@ namespace Editor.Inspector
                     if (result.IsOk)
                     {
                         string filePath = result.Path;
-
-                        // Load the clip (AudioImporter handles streaming vs non-streaming automatically)
                         var clip = AudioImporter.LoadClip(filePath);
 
                         if (clip != null)
                         {
-                            audioSource.Clip = clip;
-                            if (clip.IsStreaming)
-                            {
-                                Log.Information($"[AudioSourceInspector] Loaded streaming audio clip: {filePath}");
-                            }
-                            else
-                            {
-                                Log.Information($"[AudioSourceInspector] Loaded audio clip: {filePath}");
-                            }
+                            audioSource.AddClip(clip);
+                            Log.Information($"[AudioSourceInspector] Added audio clip: {filePath}");
                         }
                         else
                         {
@@ -130,6 +175,22 @@ namespace Editor.Inspector
                 {
                     Log.Error(ex, "[AudioSourceInspector] Error loading audio clip");
                 }
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Clear All"))
+            {
+                audioSource.ClearClips();
+            }
+
+            // Right-click context menu
+            if (ImGui.BeginPopupContextItem("ClipsContextMenu"))
+            {
+                if (ImGui.MenuItem("Clear All Clips"))
+                {
+                    audioSource.ClearClips();
+                }
+                ImGui.EndPopup();
             }
 
             ImGui.Spacing();
@@ -192,7 +253,7 @@ namespace Editor.Inspector
             {
                 float time = audioSource.Time;
                 float length = audioSource.Clip.Length;
-                
+
                 // Format time as MM:SS
                 string FormatTime(float seconds)
                 {
@@ -200,8 +261,15 @@ namespace Editor.Inspector
                     int secs = (int)(seconds % 60);
                     return $"{minutes:D2}:{secs:D2}";
                 }
-                
+
                 ImGui.Text($"Time: {FormatTime(time)} / {FormatTime(length)}");
+
+                // Show playlist position if multiple clips
+                if (audioSource.ClipCount > 1)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled($"  Clip {audioSource.CurrentClipIndex + 1}/{audioSource.ClipCount}");
+                }
             }
 
             ImGui.Spacing();

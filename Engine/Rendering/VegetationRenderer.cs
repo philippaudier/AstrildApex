@@ -1347,9 +1347,8 @@ namespace Engine.Rendering
                         if (matPre != null)
                         {
                             Func<Guid, string?> resolver = g => AssetDatabase.TryGet(g, out var r) ? r.Path : null;
-                            try { var mrt = Engine.Rendering.MaterialRuntime.FromAsset(matPre, resolver); } catch { }
-                            // MaterialRuntime.FromAsset already updates the global cache, no need for explicit UpdateCacheEntry
-                            try { Engine.Rendering.TextureCache.FlushPendingUploads(64); } catch { }
+                            // Use synchronous texture loading for vegetation to avoid white placeholders
+                            try { var mrt = Engine.Rendering.MaterialRuntime.FromAsset(matPre, resolver, useSyncTextureLoading: true); } catch { }
                         }
                     }
                     catch (Exception ex)

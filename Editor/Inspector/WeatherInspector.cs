@@ -483,7 +483,7 @@ namespace Editor.Inspector
                     // Fog Density
                     float fogDensity = weather.FogDensity;
                     ImGui.SetNextItemWidth(-120);
-                    if (ImGui.SliderFloat("Density", ref fogDensity, 0.0f, 0.5f, "%.3f"))
+                    if (ImGui.SliderFloat("Density##Fog", ref fogDensity, 0.0f, 0.5f, "%.3f"))
                     {
                         weather.FogDensity = Math.Clamp(fogDensity, 0.0f, 0.5f);
                         UpdateWeatherManager(weather);
@@ -515,15 +515,35 @@ namespace Editor.Inspector
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Distance where fog reaches maximum (linear fog)");
 
-                    // Fog Color
-                    var fogColor = weather.FogColor;
-                    var color = new System.Numerics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
+                    // Fog Color Mode
+                    string[] colorModeNames = { "Custom", "Ambient", "Skybox", "IBL" };
+                    int currentColorMode = (int)weather.FogColorMode;
                     ImGui.SetNextItemWidth(-120);
-                    if (ImGui.ColorEdit3("Color", ref color, ImGuiColorEditFlags.NoAlpha))
+                    if (ImGui.Combo("Color Mode", ref currentColorMode, colorModeNames, colorModeNames.Length))
                     {
-                        weather.FogColor = new System.Numerics.Vector3(color.X, color.Y, color.Z);
+                        weather.FogColorMode = (Engine.Components.FogColorMode)currentColorMode;
                         UpdateWeatherManager(weather);
                         Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Custom: Use color picker below\nAmbient: Match ambient light (realistic night fog)\nSkybox: Match horizon color\nIBL: Match HDRI irradiance");
+
+                    // Fog Color (only show when Custom mode)
+                    if (weather.FogColorMode == Engine.Components.FogColorMode.Custom)
+                    {
+                        var fogColor = weather.FogColor;
+                        var color = new System.Numerics.Vector3(fogColor.X, fogColor.Y, fogColor.Z);
+                        ImGui.SetNextItemWidth(-120);
+                        if (ImGui.ColorEdit3("Color", ref color, ImGuiColorEditFlags.NoAlpha))
+                        {
+                            weather.FogColor = new System.Numerics.Vector3(color.X, color.Y, color.Z);
+                            UpdateWeatherManager(weather);
+                            Editor.SceneManagement.SceneManager.MarkSceneAsModified();
+                        }
+                    }
+                    else
+                    {
+                        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "  Color determined by environment");
                     }
 
                     // Advanced Fog Parameters
@@ -683,7 +703,7 @@ namespace Editor.Inspector
                     // Density slider
                     float density = weather.CloudDensity;
                     ImGui.SetNextItemWidth(-120);
-                    if (ImGui.SliderFloat("Density", ref density, 0.0f, 1.0f, "%.2f"))
+                    if (ImGui.SliderFloat("Density##Cloud", ref density, 0.0f, 1.0f, "%.2f"))
                     {
                         weather.CloudDensity = Math.Clamp(density, 0.0f, 1.0f);
                         UpdateWeatherManager(weather);

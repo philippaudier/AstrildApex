@@ -198,6 +198,27 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("tileCullingDistance")]
         public float TileCullingDistance { get; set; } = 1000f;  // Max distance to render tiles (meters, 0 = infinite)
 
+        // === AUTO WATER SETTINGS (Infinite Streaming mode) ===
+        // Automatically spawns a large water plane at WaterLevel for ocean/lake simulation
+
+        [Engine.Serialization.SerializableAttribute("waterLevel")]
+        public float WaterLevel { get; set; } = 0f;  // Y position of water surface (world units)
+
+        [Engine.Serialization.SerializableAttribute("enableAutoWater")]
+        public bool EnableAutoWater { get; set; } = false;  // Automatically spawn water plane in Infinite Streaming mode
+
+        [Engine.Serialization.SerializableAttribute("autoWaterMargin")]
+        public float AutoWaterMargin { get; set; } = 50f;  // Extra size beyond terrain bounds (meters)
+
+        [Engine.Serialization.SerializableAttribute("autoWaterResolution")]
+        public int AutoWaterResolution { get; set; } = 128;  // Water mesh resolution (higher = more wave detail)
+
+        /// <summary>
+        /// Runtime reference to the auto-spawned water entity (not serialized)
+        /// </summary>
+        [NonSerialized]
+        public Engine.Scene.Entity? AutoWaterEntity = null;
+
         // === RENDERING SETTINGS ===
         [Engine.Serialization.SerializableAttribute("renderMode")]
         public PolygonMode RenderMode { get; set; } = PolygonMode.Fill;  // Fill, Line (wireframe), or Point
@@ -417,7 +438,21 @@ namespace Engine.Components
                 }
                 else
                 {
-                    Console.WriteLine($"[Terrain] Start(): Vegetation already exists, skipping generation");
+                    Console.WriteLine($"[Terrain] Start(): Vegetation entities exist, but need to populate instance data");
+                    // Even if vegetation entities exist, we need to populate _vegetationInstances for GPU instancing
+                    // The instances might be cached, so this won't regenerate everything
+                    if (_vegetationInstances == null || _vegetationInstances.Count == 0)
+                    {
+                        try
+                        {
+                            Console.WriteLine($"[Terrain] Start(): Generating vegetation instances from cache");
+                            GenerateVegetation(Entity.Scene!);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Terrain] Failed to generate vegetation instances in Start(): {ex.Message}");
+                        }
+                    }
                 }
             }
         }
@@ -838,7 +873,7 @@ namespace Engine.Components
                 vertices[vIdx++] = u; vertices[vIdx++] = 0f;
             }
 
-            // Indices for front wall
+            // Indices for front wall (CCW winding viewed from -Z)
             for (int x = 0; x < res - 1; x++)
             {
                 uint topLeft = currentVertex + (uint)(x * 2);
@@ -846,8 +881,8 @@ namespace Engine.Components
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
             }
             currentVertex += (uint)(res * 2);
 
@@ -874,7 +909,7 @@ namespace Engine.Components
                 vertices[vIdx++] = u; vertices[vIdx++] = 0f;
             }
 
-            // Indices for back wall (same winding as front for consistency)
+            // Indices for back wall (CCW winding viewed from +Z)
             for (int x = 0; x < res - 1; x++)
             {
                 uint topLeft = currentVertex + (uint)(x * 2);
@@ -882,8 +917,8 @@ namespace Engine.Components
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
             }
             currentVertex += (uint)(res * 2);
 
@@ -909,7 +944,7 @@ namespace Engine.Components
                 vertices[vIdx++] = v; vertices[vIdx++] = 0f;
             }
 
-            // Indices for left wall (same winding as others for consistency)
+            // Indices for left wall (CCW winding viewed from -X)
             for (int z = 0; z < res - 1; z++)
             {
                 uint topLeft = currentVertex + (uint)(z * 2);
@@ -917,8 +952,8 @@ namespace Engine.Components
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
             }
             currentVertex += (uint)(res * 2);
 
@@ -945,7 +980,7 @@ namespace Engine.Components
                 vertices[vIdx++] = v; vertices[vIdx++] = 0f;
             }
 
-            // Indices for right wall
+            // Indices for right wall (CCW winding viewed from +X)
             for (int z = 0; z < res - 1; z++)
             {
                 uint topLeft = currentVertex + (uint)(z * 2);
@@ -953,8 +988,8 @@ namespace Engine.Components
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
             }
             currentVertex += (uint)(res * 2);
 
@@ -2137,13 +2172,23 @@ namespace Engine.Components
                 float localX = ((float)random.NextDouble() - 0.5f) * TerrainWidth;
                 float localZ = ((float)random.NextDouble() - 0.5f) * TerrainLength;
 
-                // Convert to UV coordinates for heightmap sampling
+                // Calculate world XZ position first (needed for GetHeightAtPosition in InfiniteStreaming mode)
+                var localPosXZ = new OpenTK.Mathematics.Vector3(localX, 0, localZ);
+                var worldPosXZ = terrainPos + OpenTK.Mathematics.Vector3.Transform(localPosXZ, terrainRot);
+
+                // Sample height using GetHeightAtPosition (works for both SingleTerrain and InfiniteStreaming modes)
+                float worldY = GetHeightAtPosition(worldPosXZ.X, worldPosXZ.Z);
+
+                // Convert to UV coordinates for normal sampling and height filter
                 float u = (localX + TerrainWidth * 0.5f) / TerrainWidth;
                 float v = (localZ + TerrainLength * 0.5f) / TerrainLength;
 
-                // Sample height and normal
-                float normalizedHeight = SampleHeightBilinear(u, v);
+                // Sample normal (still uses heightmap for slope calculation)
                 var normal = SampleNormalBilinear(u, v);
+
+                // For height filter, convert world height back to normalized [0,1] range
+                float normalizedHeight = (worldY - terrainPos.Y) / TerrainHeight;
+                normalizedHeight = Math.Clamp(normalizedHeight, 0f, 1f);
 
                 // Calculate slope angle (angle between normal and up vector)
                 float slopeAngle = (float)(Math.Acos(Math.Clamp(normal.Y, -1f, 1f)) * (180.0 / Math.PI));
@@ -2161,12 +2206,8 @@ namespace Engine.Components
                 // Random rotation
                 float rotationY = layer.RandomRotation ? (float)(random.NextDouble() * Math.PI * 2.0) : 0f;
 
-                // Calculate world position
-                float worldY = normalizedHeight * TerrainHeight;
-                var localPosition = new OpenTK.Mathematics.Vector3(localX, worldY, localZ);
-
-                // Transform to world space
-                var worldPosition = terrainPos + OpenTK.Mathematics.Vector3.Transform(localPosition, terrainRot);
+                // World position with correct height
+                var worldPosition = new OpenTK.Mathematics.Vector3(worldPosXZ.X, worldY, worldPosXZ.Z);
 
                 // Build transform matrix
                 var rotation = OpenTK.Mathematics.Quaternion.FromAxisAngle(OpenTK.Mathematics.Vector3.UnitY, rotationY);

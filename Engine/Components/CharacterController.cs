@@ -164,6 +164,93 @@ namespace Engine.Components
         [Engine.Serialization.SerializableAttribute("enableMovementFeel")]
         public bool EnableMovementFeel { get; set; } = true;
 
+        // ===== SWIMMING SETTINGS =====
+
+        /// <summary>Enable swimming behavior when in water</summary>
+        [Engine.Serialization.SerializableAttribute("enableSwimming")]
+        public bool EnableSwimming { get; set; } = true;
+
+        /// <summary>Water level Y position (auto-detected from WaterPlane if -1)</summary>
+        [Engine.Serialization.SerializableAttribute("waterLevel")]
+        public float WaterLevel { get; set; } = -1f;
+
+        /// <summary>How deep the character needs to be to start swimming (relative to capsule bottom)</summary>
+        [Engine.Serialization.SerializableAttribute("swimDepthThreshold")]
+        public float SwimDepthThreshold { get; set; } = 0.5f;
+
+        /// <summary>Swimming acceleration - how fast you reach max speed in water</summary>
+        [Engine.Serialization.SerializableAttribute("swimAcceleration")]
+        public float SwimAcceleration { get; set; } = 8f;
+
+        /// <summary>Swimming deceleration - how fast you slow down when no input</summary>
+        [Engine.Serialization.SerializableAttribute("swimDeceleration")]
+        public float SwimDeceleration { get; set; } = 6f;
+
+        /// <summary>Water drag coefficient - resistance when moving through water (0-1, lower = more drag)</summary>
+        [Engine.Serialization.SerializableAttribute("swimDrag")]
+        public float SwimDrag { get; set; } = 0.92f;
+
+        /// <summary>Buoyancy force - upward push when underwater (0 = sink, 1 = neutral, >1 = float up)</summary>
+        [Engine.Serialization.SerializableAttribute("buoyancy")]
+        public float Buoyancy { get; set; } = 0.8f;
+
+        /// <summary>Vertical swim speed multiplier for diving/surfacing</summary>
+        [Engine.Serialization.SerializableAttribute("verticalSwimSpeed")]
+        public float VerticalSwimSpeed { get; set; } = 1.0f;
+
+        /// <summary>Height offset above water surface when surface swimming</summary>
+        [Engine.Serialization.SerializableAttribute("surfaceSwimOffset")]
+        public float SurfaceSwimOffset { get; set; } = 0.3f;
+
+        /// <summary>Speed at which character rises to surface when not actively diving</summary>
+        [Engine.Serialization.SerializableAttribute("surfaceRiseSpeed")]
+        public float SurfaceRiseSpeed { get; set; } = 2.0f;
+
+        /// <summary>Gravity scale when underwater (usually lower for floaty feel)</summary>
+        [Engine.Serialization.SerializableAttribute("underwaterGravityScale")]
+        public float UnderwaterGravityScale { get; set; } = 0.1f;
+
+        // ===== WATER PLUNGE SETTINGS =====
+
+        /// <summary>Enable realistic water entry plunge (momentum carries you underwater)</summary>
+        [Engine.Serialization.SerializableAttribute("enableWaterPlunge")]
+        public bool EnableWaterPlunge { get; set; } = true;
+
+        /// <summary>Minimum fall speed to trigger a plunge (m/s). Below this, you just float.</summary>
+        [Engine.Serialization.SerializableAttribute("plungeMinVelocity")]
+        public float PlungeMinVelocity { get; set; } = 3.0f;
+
+        /// <summary>How much entry velocity is preserved (0-1). Higher = deeper plunge.</summary>
+        [Engine.Serialization.SerializableAttribute("plungeVelocityRetention")]
+        public float PlungeVelocityRetention { get; set; } = 0.7f;
+
+        /// <summary>Water drag during plunge phase. Higher = stops faster.</summary>
+        [Engine.Serialization.SerializableAttribute("plungeDrag")]
+        public float PlungeDrag { get; set; } = 2.5f;
+
+        /// <summary>Duration of plunge phase before normal swimming takes over (seconds)</summary>
+        [Engine.Serialization.SerializableAttribute("plungeDuration")]
+        public float PlungeDuration { get; set; } = 1.5f;
+
+        /// <summary>Buoyancy multiplier during plunge (lower = sink deeper before rising)</summary>
+        [Engine.Serialization.SerializableAttribute("plungeBuoyancyScale")]
+        public float PlungeBuoyancyScale { get; set; } = 0.2f;
+
+        // ===== PROGRESSIVE WATER DRAG =====
+
+        /// <summary>Enable progressive drag based on submersion depth (more drag when deeper)</summary>
+        [Engine.Serialization.SerializableAttribute("enableProgressiveWaterDrag")]
+        public bool EnableProgressiveWaterDrag { get; set; } = true;
+
+        /// <summary>Drag multiplier when fully submerged (1.0 = no extra drag, 2.0 = double drag at full submersion)</summary>
+        [Engine.Serialization.SerializableAttribute("fullSubmersionDragMultiplier")]
+        public float FullSubmersionDragMultiplier { get; set; } = 2.0f;
+
+        /// <summary>Speed multiplier when fully submerged (0.5 = half speed at full submersion)</summary>
+        [Engine.Serialization.SerializableAttribute("fullSubmersionSpeedMultiplier")]
+        public float FullSubmersionSpeedMultiplier { get; set; } = 0.6f;
+
+
         // ===== SLOPE SETTINGS =====
         // NO SLIDING - Slopes > SlopeLimit act like walls (can't climb)
 
@@ -193,6 +280,21 @@ namespace Engine.Components
         /// <summary>Distance to ceiling (float.MaxValue if no ceiling)</summary>
         public float CeilingDistance { get; private set; } = float.MaxValue;
 
+        /// <summary>Is the controller currently swimming (in water deep enough)</summary>
+        public bool IsSwimming { get; private set; } = false;
+
+        /// <summary>Is the controller completely underwater (head below surface)</summary>
+        public bool IsUnderwater { get; private set; } = false;
+
+        /// <summary>Current depth below water surface (0 if above water)</summary>
+        public float WaterDepth { get; private set; } = 0f;
+
+        /// <summary>Actual water level being used (auto-detected or manual)</summary>
+        public float CurrentWaterLevel { get; private set; } = 0f;
+
+        /// <summary>How much of the character is submerged (0 = feet in water, 1 = fully submerged)</summary>
+        public float SubmersionRatio { get; private set; } = 0f;
+
         // ===== INTERNAL CONSTANTS =====
 
         private const int MaxBounces = 4; // Max collision resolution iterations
@@ -213,6 +315,32 @@ namespace Engine.Components
         private Vector3 _desiredVelocity = Vector3.Zero; // Target velocity for smooth acceleration
         private bool _wasGroundedLastFrame = false; // Track grounding state changes
         private bool _wasSlidingLastFrame = false; // Track sliding state changes
+
+        // ===== SWIMMING STATE MACHINE =====
+
+        /// <summary>Swimming states - mutually exclusive</summary>
+        public enum SwimState
+        {
+            None,           // Not in water
+            Swimming,       // In water, free 3D movement (Minecraft-style)
+            Plunging        // Entering water with velocity, special physics
+        }
+
+        /// <summary>Current swimming state</summary>
+        public SwimState CurrentSwimState { get; private set; } = SwimState.None;
+
+        /// <summary>Is the controller currently in a water plunge</summary>
+        public bool IsPlunging => CurrentSwimState == SwimState.Plunging;
+
+        // ===== SWIMMING INTERNAL STATE =====
+        private WaterPlaneComponent? _cachedWaterPlane = null;
+        private int _waterPlaneCacheFrame = -1;
+        private float _desiredVerticalSwimVelocity = 0f; // For swimming up/down input
+        private float _debugSwimTimer = 0f; // For debug output throttling
+
+        // Plunge state
+        private float _plungeTimer = 0f;
+        private float _velocityBeforeWater = 0f; // Captured velocity before entering water
 
         // ===== INTERPOLATION =====
         // Transform.Position = Physics position (ground truth, never modified by interpolation)
@@ -310,41 +438,95 @@ namespace Engine.Components
             _wasGroundedLastFrame = IsGrounded;
             _wasSlidingLastFrame = IsSliding;
 
-            // Apply gravity with scale and terminal velocity
-            if (EnableGravity && !IsGrounded)
+            // === SWIMMING STATE MACHINE ===
+            // Capture velocity BEFORE entering water (for plunge detection)
+            if (CurrentSwimState == SwimState.None)
             {
-                Velocity += Gravity * GravityScale * deltaTime;
-
-                // Clamp to terminal velocity
-                if (Velocity.Y < -TerminalVelocity)
-                    Velocity = new Vector3(Velocity.X, -TerminalVelocity, Velocity.Z);
+                _velocityBeforeWater = Velocity.Y;
             }
 
-            // Zero out downward velocity when grounded to prevent sinking
-            if (IsGrounded && Velocity.Y < 0)
-            {
-                Velocity = new Vector3(Velocity.X, 0f, Velocity.Z);
-            }
+            // Update swimming state
+            UpdateSwimmingState(deltaTime);
 
-            // ADVANCED MOVEMENT FEEL: Apply acceleration/deceleration with inertia
-            if (EnableMovementFeel)
+            // Apply swimming physics if in water
+            if (CurrentSwimState != SwimState.None)
             {
-                ApplyMovementFeel(deltaTime);
+                ApplySwimmingPhysics(deltaTime);
+
+                // DEBUG: Log swimming state
+                if (_debugSwimTimer <= 0f)
+                {
+                    Console.WriteLine($"[CC] SWIM: State={CurrentSwimState}, Depth={WaterDepth:F2}, Vel.Y={Velocity.Y:F2}");
+                    _debugSwimTimer = 0.5f;
+                }
+                _debugSwimTimer -= deltaTime;
             }
+            // === NORMAL MODE (Ground/Air) ===
             else
             {
-                // LEGACY MODE: Direct velocity application (old behavior)
-                // Decay velocity when grounded (friction)
-                if (IsGrounded)
+                // Apply gravity with scale and terminal velocity
+                if (EnableGravity && !IsGrounded)
                 {
-                    Velocity = new Vector3(Velocity.X * 0.9f, 0f, Velocity.Z * 0.9f);
+                    Velocity += Gravity * GravityScale * deltaTime;
+
+                    // Clamp to terminal velocity
+                    if (Velocity.Y < -TerminalVelocity)
+                        Velocity = new Vector3(Velocity.X, -TerminalVelocity, Velocity.Z);
+                }
+
+                // Zero out downward velocity when grounded to prevent sinking
+                if (IsGrounded && Velocity.Y < 0)
+                {
+                    Velocity = new Vector3(Velocity.X, 0f, Velocity.Z);
+                }
+
+                // ADVANCED MOVEMENT FEEL: Apply acceleration/deceleration with inertia
+                if (EnableMovementFeel)
+                {
+                    ApplyMovementFeel(deltaTime);
+                }
+                else
+                {
+                    // LEGACY MODE: Direct velocity application (old behavior)
+                    // Decay velocity when grounded (friction)
+                    if (IsGrounded)
+                    {
+                        Velocity = new Vector3(Velocity.X * 0.9f, 0f, Velocity.Z * 0.9f);
+                    }
                 }
             }
 
-            // MOVEMENT: Use surface-following movement when grounded, standard Move() when in air
+            // MOVEMENT: Use appropriate movement method based on state
             if (Velocity.LengthSquared > MinMoveDistance * MinMoveDistance)
             {
-                if (IsGrounded && _isGroundedOnTerrain && FindTerrain() != null)
+                if (IsSwimming)
+                {
+                    // Swimming - use standard 3D movement
+                    Move(Velocity * deltaTime);
+
+                    // Safety check: Clamp to terrain floor to prevent clipping through
+                    var terrain = FindTerrain();
+                    if (terrain != null && Entity != null)
+                    {
+                        float terrainHeight = terrain.GetHeightAtPosition(Entity.Transform.Position.X, Entity.Transform.Position.Z);
+                        float minY = terrainHeight + Height * 0.5f; // Bottom of capsule should stay above terrain
+
+                        if (Entity.Transform.Position.Y < minY)
+                        {
+                            Entity.Transform.Position = new Vector3(
+                                Entity.Transform.Position.X,
+                                minY,
+                                Entity.Transform.Position.Z
+                            );
+                            // Stop downward velocity when hitting terrain
+                            if (Velocity.Y < 0)
+                            {
+                                Velocity = new Vector3(Velocity.X, 0, Velocity.Z);
+                            }
+                        }
+                    }
+                }
+                else if (IsGrounded && _isGroundedOnTerrain && FindTerrain() != null)
                 {
                     // On terrain - use terrain-specific movement for smooth slope following
                     MoveOnTerrain(Velocity * deltaTime);
@@ -362,7 +544,16 @@ namespace Engine.Components
             }
 
             // Check ground state AFTER applying movement (critical for accurate grounding)
-            CheckGround();
+            // Don't check ground while swimming (we're floating)
+            if (!IsSwimming)
+            {
+                CheckGround();
+            }
+            else
+            {
+                IsGrounded = false;
+                IsSliding = false;
+            }
 
             // Check ceiling state
             CheckCeiling();
@@ -655,6 +846,361 @@ namespace Engine.Components
             Velocity *= GroundFriction;
         }
 
+        // ===== SWIMMING METHODS =====
+
+        /// <summary>
+        /// Update swimming state machine (Minecraft-style).
+        /// Simple states:
+        /// - None: Not in water
+        /// - Swimming: In water, free 3D movement with buoyancy
+        /// - Plunging: Entering water with velocity, momentum carries down
+        /// </summary>
+        private void UpdateSwimmingState(float deltaTime)
+        {
+            if (!EnableSwimming || Entity == null)
+            {
+                ExitSwimming();
+                return;
+            }
+
+            // Get water info
+            CurrentWaterLevel = GetCurrentWaterLevel();
+            float bottomY = GetAbsoluteBottomPosition().Y;
+            float topY = GetAbsoluteTopPosition().Y;
+
+            // Calculate depth
+            float depthAtBottom = CurrentWaterLevel - bottomY;
+            WaterDepth = MathF.Max(0f, depthAtBottom);
+
+            // Calculate submersion ratio (0 = feet in water, 1 = fully submerged)
+            float characterHeight = topY - bottomY;
+            if (characterHeight > 0.01f && WaterDepth > 0f)
+            {
+                SubmersionRatio = MathHelper.Clamp(WaterDepth / characterHeight, 0f, 1f);
+            }
+            else
+            {
+                SubmersionRatio = 0f;
+            }
+
+            // Update derived states
+            IsUnderwater = topY < CurrentWaterLevel;
+            IsSwimming = CurrentSwimState != SwimState.None;
+
+            // Store previous state for logging
+            SwimState prevState = CurrentSwimState;
+
+            // === STATE TRANSITIONS ===
+            switch (CurrentSwimState)
+            {
+                case SwimState.None:
+                    // Check if entering water
+                    if (depthAtBottom >= SwimDepthThreshold)
+                    {
+                        // Entering water! Check for plunge
+                        float entrySpeed = -_velocityBeforeWater; // Positive when falling
+
+                        if (EnableWaterPlunge && entrySpeed > PlungeMinVelocity)
+                        {
+                            EnterPlungeState();
+                        }
+                        else
+                        {
+                            EnterSwimmingState();
+                        }
+                    }
+                    break;
+
+                case SwimState.Swimming:
+                    // Check exit: left water
+                    if (depthAtBottom < SwimDepthThreshold * 0.5f)
+                    {
+                        ExitSwimming();
+                    }
+                    break;
+
+                case SwimState.Plunging:
+                    // Update plunge timer
+                    _plungeTimer -= deltaTime;
+
+                    // Check exit conditions
+                    if (depthAtBottom < SwimDepthThreshold * 0.5f)
+                    {
+                        ExitSwimming();
+                    }
+                    else if (_plungeTimer <= 0f || Velocity.Y > 0.5f)
+                    {
+                        // Plunge ended - transition to normal swimming
+                        EnterSwimmingState();
+                    }
+                    break;
+            }
+
+            // Log state changes
+            if (CurrentSwimState != prevState)
+            {
+                Console.WriteLine($"[CC] Swim state: {prevState} → {CurrentSwimState}");
+            }
+        }
+
+        private void EnterSwimmingState()
+        {
+            CurrentSwimState = SwimState.Swimming;
+        }
+
+        private void EnterPlungeState()
+        {
+            CurrentSwimState = SwimState.Plunging;
+            _plungeTimer = PlungeDuration;
+
+            // Keep momentum but reduce horizontal
+            Velocity = new Vector3(
+                Velocity.X * 0.5f,
+                Velocity.Y * PlungeVelocityRetention,
+                Velocity.Z * 0.5f
+            );
+
+            Console.WriteLine($"[CC] PLUNGE! Entry speed={-_velocityBeforeWater:F1} m/s");
+        }
+
+        private void ExitSwimming()
+        {
+            CurrentSwimState = SwimState.None;
+            IsSwimming = false;
+            IsUnderwater = false;
+            WaterDepth = 0f;
+            SubmersionRatio = 0f;
+            _plungeTimer = 0f;
+        }
+
+        /// <summary>
+        /// Apply swimming physics (Minecraft-style).
+        /// Simple: horizontal movement, vertical input, and buoyancy.
+        /// </summary>
+        private void ApplySwimmingPhysics(float deltaTime)
+        {
+            // Extract velocity components
+            Vector3 horizontalVelocity = new Vector3(Velocity.X, 0, Velocity.Z);
+            float verticalVelocity = Velocity.Y;
+
+            // Get desired movement from input
+            Vector3 horizontalDesired = new Vector3(_desiredVelocity.X, 0, _desiredVelocity.Z);
+            float verticalDesired = _desiredVerticalSwimVelocity;
+
+            // === STATE-BASED PHYSICS ===
+            switch (CurrentSwimState)
+            {
+                case SwimState.Plunging:
+                    ApplyPlungePhysics(ref horizontalVelocity, ref verticalVelocity, horizontalDesired, verticalDesired, deltaTime);
+                    break;
+
+                case SwimState.Swimming:
+                    ApplyMinecraftSwimPhysics(ref horizontalVelocity, ref verticalVelocity, horizontalDesired, verticalDesired, deltaTime);
+                    break;
+
+                default:
+                    return;
+            }
+
+            // === UPDATE VELOCITY ===
+            Velocity = new Vector3(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z);
+        }
+
+        /// <summary>
+        /// Plunge physics: player just entered water with velocity.
+        /// Momentum carries you down, drag slows you, reduced buoyancy.
+        /// </summary>
+        private void ApplyPlungePhysics(ref Vector3 horizontalVelocity, ref float verticalVelocity,
+            Vector3 horizontalDesired, float verticalDesired, float deltaTime)
+        {
+            // Horizontal: Strong drag, minimal input influence
+            float plungeHorizontalDrag = 1.0f - (PlungeDrag * deltaTime);
+            horizontalVelocity *= MathF.Max(0.8f, plungeHorizontalDrag);
+
+            // Allow some horizontal input but reduced (30% effect)
+            if (horizontalDesired.LengthSquared > 0.01f)
+            {
+                float reducedAccel = SwimAcceleration * deltaTime * 0.3f;
+                horizontalVelocity = Vector3.Lerp(horizontalVelocity, horizontalDesired * 0.5f, reducedAccel);
+            }
+
+            // Vertical: Apply plunge drag to slow down
+            float plungeDragFactor = 1.0f - (PlungeDrag * deltaTime);
+            verticalVelocity *= MathF.Max(0.9f, plungeDragFactor);
+
+            // Apply reduced buoyancy during plunge
+            float reducedBuoyancy = Buoyancy * PlungeBuoyancyScale;
+            float buoyancyForce = (reducedBuoyancy - 1.0f) * -Gravity.Y * UnderwaterGravityScale;
+            verticalVelocity += buoyancyForce * deltaTime;
+
+            // Player can still swim up to cancel plunge (but with reduced effect)
+            if (verticalDesired > 0.5f)
+            {
+                float cancelAccel = SwimAcceleration * deltaTime * 0.5f;
+                verticalVelocity = MathHelper.Lerp(verticalVelocity, verticalDesired * 0.5f, cancelAccel);
+            }
+
+            // Higher max speed during plunge
+            float plungeMaxSpeed = TerminalVelocity * 0.8f;
+            verticalVelocity = MathHelper.Clamp(verticalVelocity, -plungeMaxSpeed, plungeMaxSpeed);
+        }
+
+        /// <summary>
+        /// Minecraft-style swimming physics:
+        /// - Full 3D movement with WASD + Space/Shift
+        /// - Buoyancy naturally pushes you up when not pressing anything
+        /// - At surface, buoyancy keeps you floating
+        /// - Progressive drag: more submersion = more resistance
+        /// </summary>
+        private void ApplyMinecraftSwimPhysics(ref Vector3 horizontalVelocity, ref float verticalVelocity,
+            Vector3 horizontalDesired, float verticalDesired, float deltaTime)
+        {
+            // === PROGRESSIVE WATER RESISTANCE ===
+            // Calculate effective drag and speed multipliers based on submersion
+            float effectiveDrag = SwimDrag;
+            float speedMultiplier = 1.0f;
+
+            if (EnableProgressiveWaterDrag && SubmersionRatio > 0f)
+            {
+                // Smooth curve for progressive resistance (ease-in)
+                float submersionFactor = SubmersionRatio * SubmersionRatio; // Quadratic for smooth ramp
+
+                // Drag increases with submersion: SwimDrag at surface -> SwimDrag * FullSubmersionDragMultiplier when fully submerged
+                float dragIncrease = (FullSubmersionDragMultiplier - 1.0f) * submersionFactor;
+                effectiveDrag = SwimDrag * (1.0f - dragIncrease * (1.0f - SwimDrag)); // Reduce drag coefficient
+
+                // Speed decreases with submersion: full speed at surface -> FullSubmersionSpeedMultiplier when fully submerged
+                speedMultiplier = MathHelper.Lerp(1.0f, FullSubmersionSpeedMultiplier, submersionFactor);
+            }
+
+            // === HORIZONTAL MOVEMENT ===
+            // Scale desired velocity by submersion speed multiplier
+            Vector3 scaledHorizontalDesired = horizontalDesired * speedMultiplier;
+
+            if (horizontalDesired.LengthSquared > 0.01f)
+            {
+                float acceleration = SwimAcceleration * deltaTime;
+                horizontalVelocity = Vector3.Lerp(horizontalVelocity, scaledHorizontalDesired, acceleration);
+            }
+            else
+            {
+                float deceleration = SwimDeceleration * deltaTime;
+                horizontalVelocity = Vector3.Lerp(horizontalVelocity, Vector3.Zero, deceleration);
+                if (horizontalVelocity.LengthSquared < 0.01f)
+                    horizontalVelocity = Vector3.Zero;
+            }
+            horizontalVelocity *= effectiveDrag;
+
+            // === VERTICAL MOVEMENT ===
+            float scaledVerticalDesired = verticalDesired * speedMultiplier;
+
+            if (MathF.Abs(verticalDesired) > 0.01f)
+            {
+                // Player is actively swimming up or down
+                float verticalAccel = SwimAcceleration * VerticalSwimSpeed * deltaTime * 2.0f;
+                verticalVelocity = MathHelper.Lerp(verticalVelocity, scaledVerticalDesired, MathF.Min(verticalAccel, 0.5f));
+            }
+            else
+            {
+                // No input: apply buoyancy (pushes towards surface)
+                float buoyancyForce = (Buoyancy - 1.0f) * -Gravity.Y * UnderwaterGravityScale;
+                verticalVelocity += buoyancyForce * deltaTime;
+
+                // Apply reduced gravity underwater
+                verticalVelocity += Gravity.Y * UnderwaterGravityScale * deltaTime;
+            }
+
+            // Apply water drag to vertical movement
+            verticalVelocity *= effectiveDrag;
+
+            // Clamp vertical velocity
+            float maxVerticalSpeed = TerminalVelocity * 0.5f * speedMultiplier;
+            verticalVelocity = MathHelper.Clamp(verticalVelocity, -maxVerticalSpeed, maxVerticalSpeed);
+
+            // === SURFACE CLAMPING ===
+            // Prevent going above water surface (like Minecraft)
+            if (Entity != null)
+            {
+                float currentY = Entity.Transform.Position.Y;
+                float headY = currentY + Height * 0.5f;
+
+                // If head is at or above surface and trying to go up, stop
+                if (headY >= CurrentWaterLevel && verticalVelocity > 0)
+                {
+                    verticalVelocity = 0f;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Get the current water level (auto-detect from WaterPlane or use manual setting).
+        /// </summary>
+        private float GetCurrentWaterLevel()
+        {
+            // If manual water level is set (not -1), use it
+            if (WaterLevel >= 0f)
+                return WaterLevel;
+
+            // Try to auto-detect from WaterPlane
+            var waterPlane = FindWaterPlane();
+            if (waterPlane != null)
+            {
+                return waterPlane.Entity?.Transform.Position.Y ?? 0f;
+            }
+
+            // Default to 0 if no water found
+            return 0f;
+        }
+
+        /// <summary>
+        /// Find the WaterPlane in the scene (cached per frame for performance).
+        /// </summary>
+        private WaterPlaneComponent? FindWaterPlane()
+        {
+            if (Entity?.Scene == null)
+                return null;
+
+            // Use frame-based caching to avoid repeated scene searches
+            int currentFrame = Engine.Core.Time.FrameCount;
+            if (_waterPlaneCacheFrame == currentFrame && _cachedWaterPlane != null)
+                return _cachedWaterPlane;
+
+            // Search for WaterPlane in the scene
+            foreach (var entity in Entity.Scene.Entities)
+            {
+                var waterPlane = entity.GetComponent<WaterPlaneComponent>();
+                if (waterPlane != null)
+                {
+                    _cachedWaterPlane = waterPlane;
+                    _waterPlaneCacheFrame = currentFrame;
+                    return waterPlane;
+                }
+            }
+
+            _waterPlaneCacheFrame = currentFrame;
+            return null;
+        }
+
+        /// <summary>
+        /// Set the desired vertical swim velocity (for diving/surfacing input).
+        /// Positive = swim up, Negative = dive down.
+        /// Call this every frame along with SetDesiredVelocity for horizontal movement.
+        /// </summary>
+        public void SetDesiredSwimVelocity(float verticalVelocity)
+        {
+            _desiredVerticalSwimVelocity = verticalVelocity;
+        }
+
+        /// <summary>
+        /// Set both horizontal and vertical desired velocity for swimming.
+        /// Convenience method that combines SetDesiredVelocity and SetDesiredSwimVelocity.
+        /// </summary>
+        public void SetDesiredSwimVelocity(Vector3 desiredVelocity)
+        {
+            _desiredVelocity = new Vector3(desiredVelocity.X, 0, desiredVelocity.Z);
+            _desiredVerticalSwimVelocity = desiredVelocity.Y;
+        }
+
         /// <summary>
         /// Calculate the direction of steepest descent on a slope.
         /// </summary>
@@ -889,16 +1435,60 @@ namespace Engine.Components
                 }
             }
 
-            // Check terrain collision ONLY at bottom (ground level)
+            // Check terrain collision with sphere-like sampling (accounts for capsule radius)
             var terrain = FindTerrain();
             if (terrain != null)
             {
+                // Traditional raycast check
                 if (terrain.RaycastTerrain(bottom, direction, distance, out Engine.Physics.RaycastHit terrainHit))
                 {
                     if (terrainHit.Distance < closestDistance)
                     {
                         closestDistance = terrainHit.Distance;
                         closestHit = terrainHit;
+                    }
+                }
+
+                // Additional: Sphere-like terrain check for downward movement (prevents clipping through terrain)
+                // This is critical for swimming/diving where the raycast might miss
+                if (direction.Y < -0.1f) // Moving downward
+                {
+                    Vector3 targetBottom = bottom + direction * distance;
+
+                    // Sample terrain height at multiple points around the capsule's footprint
+                    float[] offsets = { 0f, sweepRadius * 0.7f, -sweepRadius * 0.7f };
+                    foreach (float offsetX in offsets)
+                    {
+                        foreach (float offsetZ in offsets)
+                        {
+                            float sampleX = targetBottom.X + offsetX;
+                            float sampleZ = targetBottom.Z + offsetZ;
+                            float terrainHeight = terrain.GetHeightAtPosition(sampleX, sampleZ);
+
+                            // If target position would be below terrain, calculate collision
+                            float penetration = terrainHeight - targetBottom.Y + sweepRadius * 0.5f; // Add margin for capsule bottom
+                            if (penetration > 0)
+                            {
+                                // Calculate the distance along direction where we'd hit the terrain
+                                float heightDiff = terrainHeight - bottom.Y + sweepRadius * 0.5f;
+                                float hitDistance = MathF.Abs(heightDiff / direction.Y);
+
+                                if (hitDistance < closestDistance && hitDistance > 0)
+                                {
+                                    closestDistance = hitDistance;
+                                    // Create a terrain hit with upward normal
+                                    Vector3 hitPoint = bottom + direction * hitDistance;
+                                    Vector3 normal = terrain.GetNormalAtPosition(hitPoint.X, hitPoint.Z);
+                                    closestHit = new RaycastHit
+                                    {
+                                        Point = hitPoint,
+                                        Normal = normal,
+                                        Distance = hitDistance,
+                                        Collider = null // Terrain doesn't have a collider component
+                                    };
+                                }
+                            }
+                        }
                     }
                 }
             }

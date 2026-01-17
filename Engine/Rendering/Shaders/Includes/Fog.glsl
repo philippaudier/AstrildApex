@@ -67,74 +67,124 @@ vec3 applyFog(vec3 color, vec3 fogColor, float fogFactor) {
     return mix(fogColor, color, fogFactor);
 }
 
-// Main fog processing function with height-based enhancement
-// Uses world position height and distance to simulate fog accumulation in valleys
-// Main fog processing function with advanced FBM, layers, and scattering
+// Main fog processing function - simplified and predictable
+// FogStart/FogEnd control the distance range, FogDensity controls intensity
 vec3 processFog(vec3 color, vec3 worldPos) {
     if (uFogEnabled == 0) return color;
 
-    // === DISTANCE-BASED FOG ===
+    // === DISTANCE-BASED FOG (PRIMARY) ===
     vec3 viewDir = normalize(worldPos - uCameraPos);
     float distance = length(worldPos - uCameraPos);
+
+    // Linear fog based on distance: 1 = clear (before FogStart), 0 = full fog (after FogEnd)
     float distanceFogFactor = calculateLinearFogFactor(worldPos, uCameraPos, uFogStart, uFogEnd);
-    
-    // === HEIGHT-BASED FOG DENSITY ===
-    // Calculate height above fog layer base
-    float heightAboveFogLayer = worldPos.y - uFogLayerHeight;
-    
-    // Exponential fog falloff with height - more fog near fog layer height
-    float heightFalloffRate = 0.05 + uFogDensity * 0.5;
-    float heightDensity = exp(-max(0.0, heightAboveFogLayer) * heightFalloffRate);
-    
-    // Extra density below fog layer (valleys, depressions)
-    if (heightAboveFogLayer < 0.0) {
-        float depthBelowLayer = abs(heightAboveFogLayer);
-        heightDensity *= 1.0 + depthBelowLayer * 0.2;
-        heightDensity = clamp(heightDensity, 0.0, 2.0);
+
+    // === OPTIONAL EXPONENTIAL FOG ===
+    // When FogDensity > 0, blend in exponential fog for more realistic falloff
+    if (uFogDensity > 0.001) {
+        float expFog = exp(-distance * uFogDensity * 0.01); // 0.01 scale for reasonable values
+        // Blend: higher density = more exponential character
+        float blendFactor = saturate(uFogDensity * 2.0);
+        distanceFogFactor = mix(distanceFogFactor, expFog, blendFactor * 0.5);
     }
-    
-    // === VOLUMETRIC NOISE (FBM) ===
-    // Animate fog position with time
-    vec3 fogSamplePos = worldPos * uFogNoiseScale + vec3(uTime * uFogNoiseSpeed * 0.1, 0.0, uTime * uFogNoiseSpeed * 0.15);
-    
-    // Calculate FBM noise for volumetric fog variation
-    float fogNoise = fbmNoise3D(fogSamplePos, uFogFBMOctaves, uFogFBMLacunarity, uFogFBMGain);
-    
-    // Apply noise to density (creates wispy, evolving fog)
-    float noiseDensityModulation = mix(0.7, 1.3, fogNoise);
-    heightDensity *= noiseDensityModulation;
-    
-    // === COMBINE DISTANCE AND HEIGHT ===
-    float combinedFogFactor = distanceFogFactor * (1.0 - heightDensity * 0.7);
+
+    // === HEIGHT-BASED FOG (SUBTLE) ===
+    // Only apply height fog if FogLayerHeight > 0 and FogThickness > 0
+    float heightInfluence = 0.0;
+    if (uFogThickness > 0.01 && uFogLayerHeight > -1000.0) {
+        float heightAboveFogLayer = worldPos.y - uFogLayerHeight;
+
+        // Smooth height falloff - fog is denser at/below fog layer height
+        // Use a gentler curve that doesn't dominate the distance fog
+        if (heightAboveFogLayer < uFogThickness) {
+            float normalizedHeight = saturate((uFogThickness - heightAboveFogLayer) / max(1.0, uFogThickness));
+            heightInfluence = normalizedHeight * 0.3; // Max 30% extra fog from height
+        }
+    }
+
+    // === COMBINE FOG FACTORS ===
+    // Start with distance fog, then subtract height influence
+    float combinedFogFactor = distanceFogFactor - heightInfluence;
     combinedFogFactor = saturate(combinedFogFactor);
-    
-    // === EXPONENTIAL FOG OPTION ===
-    if (uFogDensity > 0.01) {
-        float expFog = 1.0 - exp(-distance * uFogDensity * heightDensity);
-        combinedFogFactor = mix(combinedFogFactor, 1.0 - expFog, 0.3);
+
+    // === OPTIONAL VOLUMETRIC NOISE ===
+    // Only apply noise where fog is actually visible (fogAmount > 0)
+    // This prevents noise from appearing in clear areas (before FogStart)
+    float baseFogAmount = 1.0 - combinedFogFactor;
+    if (uFogNoiseScale > 0.0001 && baseFogAmount > 0.01) {
+        vec3 fogSamplePos = worldPos * uFogNoiseScale + vec3(uTime * uFogNoiseSpeed * 0.1, 0.0, uTime * uFogNoiseSpeed * 0.15);
+        float fogNoise = fbmNoise3D(fogSamplePos, uFogFBMOctaves, uFogFBMLacunarity, uFogFBMGain);
+        // Scale noise by fog amount - more fog = more noise visible
+        float noiseInfluence = (fogNoise - 0.5) * 0.3 * baseFogAmount;
+        combinedFogFactor = saturate(combinedFogFactor + noiseInfluence);
     }
-    
-    // === APPLY THICKNESS (OPACITY) ===
-    // More fog = more opaque, controlled by thickness parameter
-    float fogOpacity = (1.0 - combinedFogFactor) * uFogThickness * uFogOpacity;
-    fogOpacity = saturate(fogOpacity);
-    combinedFogFactor = 1.0 - fogOpacity;
-    
+
+    // === APPLY OPACITY ===
+    // FogOpacity controls overall fog strength (0 = no fog, 1 = full fog)
+    float fogAmount = (1.0 - combinedFogFactor) * uFogOpacity;
+    fogAmount = saturate(fogAmount);
+
     // === SUN SCATTERING IN FOG ===
-    // Calculate forward scattering (sun glow through fog)
     float sunDot = dot(viewDir, -uDirLightDirection);
-    float scattering = pow(saturate(sunDot), 8.0) * uFogScattering;
-    
-    // === ENVIRONMENT BRIGHTNESS ===
-    // Modulate fog color by light intensity for physically correct day/night cycle
-    float environmentBrightness = saturate(uDirLightIntensity + 0.01);
-    vec3 modulatedFogColor = uFogColor * environmentBrightness;
-    
-    // Add sun scattering glow to fog color
+    float scattering = pow(saturate(sunDot), 8.0) * uFogScattering * fogAmount;
+
+    // === FOG COLOR - PHYSICALLY BASED ===
+    // Real fog behavior:
+    // - Fog scatters light (Mie scattering) - appears the color of the light source
+    // - At night with no light: fog is nearly invisible (very dark)
+    // - At day: fog is bright white/gray from sunlight scattering
+    // - At golden hour: fog takes warm orange/pink tints
+    // - Moonlit nights: subtle blue-gray tint
+
+    // Base fog color from light sources
+    // Fog reflects/scatters the available light in the scene
+    vec3 sunContribution = uDirLightColor * uDirLightIntensity;
+    vec3 ambientContribution = uAmbientColor * uAmbientIntensity * 0.5;
+
+    // Night fog base (very dark, slight blue from moonlight/starlight)
+    vec3 nightBaseFog = vec3(0.015, 0.02, 0.035);
+
+    // Day fog base (neutral gray-white from scattered sunlight)
+    vec3 dayBaseFog = vec3(0.7, 0.72, 0.75);
+
+    // Golden hour warm tint
+    vec3 goldenFog = vec3(1.0, 0.85, 0.6);
+
+    vec3 modulatedFogColor;
+    if (uFogColorMode == 1) {
+        // Ambient mode: physically-based fog coloring
+        // Fog color = scattered light from sun + ambient
+        vec3 scatteredLight = sunContribution * 0.8 + ambientContribution;
+        // Blend between dark night fog and light-colored day fog
+        modulatedFogColor = mix(nightBaseFog, scatteredLight, uDayNightBlend);
+        // Add golden hour influence
+        modulatedFogColor = mix(modulatedFogColor, goldenFog * uDirLightIntensity, uGoldenHourBlend * 0.4);
+    } else if (uFogColorMode == 2) {
+        // Skybox mode: match horizon/sky colors
+        vec3 skyInfluence = mix(nightBaseFog, dayBaseFog, uDayNightBlend);
+        // Tint by sun color during day
+        skyInfluence = mix(skyInfluence, uDirLightColor * 0.6, uDayNightBlend * 0.3);
+        // Strong golden hour effect
+        modulatedFogColor = mix(skyInfluence, goldenFog * 0.8, uGoldenHourBlend * 0.5);
+    } else if (uFogColorMode == 3) {
+        // IBL mode: use environment lighting more directly
+        vec3 envLight = sunContribution + ambientContribution * 2.0;
+        modulatedFogColor = mix(nightBaseFog * 1.5, envLight * 0.7, uDayNightBlend);
+    } else {
+        // Custom mode (0): use user-defined FogColor
+        // Still modulate by available light for realism
+        float lightLevel = max(uDirLightIntensity, uAmbientIntensity * 0.3);
+        lightLevel = mix(0.08, 1.0, lightLevel); // Minimum visibility at night
+        modulatedFogColor = uFogColor * lightLevel;
+    }
+
+    // Sun scattering glow (forward scattering when looking towards sun)
+    // Only visible when sun is up and fog is present
     vec3 sunScatterColor = uDirLightColor * scattering * uDirLightIntensity;
-    modulatedFogColor += sunScatterColor * 0.5;
-    
-    return applyFog(color, modulatedFogColor, combinedFogFactor);
+    modulatedFogColor += sunScatterColor * 0.35;
+
+    // Final blend: fogAmount controls how much fog color replaces scene color
+    return mix(color, modulatedFogColor, fogAmount);
 }
 
 // Enhanced fog processing with multiple fog types (for future use)

@@ -315,7 +315,7 @@ namespace Editor.Inspector
                 }
 
                 // === SLOPE BEHAVIOR (SIMPLE) ===
-                if (InspectorWidgets.Section("Slope Behavior", defaultOpen: true))
+                if (InspectorWidgets.Section("Slope Behavior", defaultOpen: false))
                 {
                     ImGui.TextColored(UI.Info, "Simple slope handling:");
                     ImGui.BulletText("Slope > SlopeLimit: Slides down automatically");
@@ -328,6 +328,315 @@ namespace Editor.Inspector
                     ImGui.BulletText("SlopeLimit (above)");
                     ImGui.BulletText("Gravity Scale (Movement Feel)");
                     ImGui.BulletText("Ground Friction (Movement Feel)");
+
+                    InspectorWidgets.EndSection();
+                }
+
+                // === SWIMMING SECTION ===
+                if (InspectorWidgets.Section("Swimming", defaultOpen: true))
+                {
+                    bool enableSwimming = controller.EnableSwimming;
+                    if (ImGui.Checkbox("Enable Swimming", ref enableSwimming))
+                    {
+                        controller.EnableSwimming = enableSwimming;
+                    }
+
+                    if (controller.EnableSwimming)
+                    {
+                        ImGui.Separator();
+                        ImGui.TextColored(UI.Info, "Water Detection");
+
+                        ImGui.Text("Water Level (Y)");
+                        float waterLevel = controller.WaterLevel;
+                        if (ImGui.DragFloat("##WaterLevel", ref waterLevel, 0.1f, -1f, 1000f))
+                        {
+                            controller.WaterLevel = waterLevel;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("-1 = Auto-detect from WaterPlane component");
+                        }
+
+                        ImGui.Text("Swim Depth Threshold");
+                        float swimDepth = controller.SwimDepthThreshold;
+                        if (ImGui.DragFloat("##SwimDepth", ref swimDepth, 0.05f, 0.1f, 2.0f))
+                        {
+                            controller.SwimDepthThreshold = swimDepth;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("How deep to be before swimming starts");
+                        }
+
+                        ImGui.Separator();
+                        ImGui.TextColored(UI.Info, "Swimming Movement");
+
+                        ImGui.Text("Swim Acceleration");
+                        float swimAccel = controller.SwimAcceleration;
+                        if (ImGui.DragFloat("##SwimAccel", ref swimAccel, 0.5f, 1f, 30f))
+                        {
+                            controller.SwimAcceleration = swimAccel;
+                        }
+
+                        ImGui.Text("Swim Deceleration");
+                        float swimDecel = controller.SwimDeceleration;
+                        if (ImGui.DragFloat("##SwimDecel", ref swimDecel, 0.5f, 1f, 30f))
+                        {
+                            controller.SwimDeceleration = swimDecel;
+                        }
+
+                        ImGui.Text("Swim Drag");
+                        float swimDrag = controller.SwimDrag;
+                        if (ImGui.SliderFloat("##SwimDrag", ref swimDrag, 0.8f, 1.0f))
+                        {
+                            controller.SwimDrag = swimDrag;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("Water resistance (lower = more drag)");
+                        }
+
+                        ImGui.Text("Vertical Swim Speed");
+                        float vertSwimSpeed = controller.VerticalSwimSpeed;
+                        if (ImGui.DragFloat("##VertSwimSpeed", ref vertSwimSpeed, 0.1f, 0.1f, 3.0f))
+                        {
+                            controller.VerticalSwimSpeed = vertSwimSpeed;
+                        }
+
+                        ImGui.Separator();
+                        ImGui.TextColored(UI.Info, "Buoyancy & Surface");
+
+                        ImGui.Text("Buoyancy");
+                        float buoyancy = controller.Buoyancy;
+                        if (ImGui.DragFloat("##Buoyancy", ref buoyancy, 0.05f, 0f, 2.0f))
+                        {
+                            controller.Buoyancy = buoyancy;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("0 = sink, 1 = neutral, >1 = float up");
+                        }
+
+                        ImGui.Text("Surface Swim Offset");
+                        float surfaceOffset = controller.SurfaceSwimOffset;
+                        if (ImGui.DragFloat("##SurfaceOffset", ref surfaceOffset, 0.05f, -1f, 1f))
+                        {
+                            controller.SurfaceSwimOffset = surfaceOffset;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("Height above water surface when surface swimming");
+                        }
+
+                        ImGui.Text("Surface Rise Speed");
+                        float surfaceRise = controller.SurfaceRiseSpeed;
+                        if (ImGui.DragFloat("##SurfaceRise", ref surfaceRise, 0.1f, 0.5f, 10f))
+                        {
+                            controller.SurfaceRiseSpeed = surfaceRise;
+                        }
+
+                        ImGui.Text("Underwater Gravity Scale");
+                        float underwaterGrav = controller.UnderwaterGravityScale;
+                        if (ImGui.DragFloat("##UnderwaterGrav", ref underwaterGrav, 0.01f, 0f, 1f))
+                        {
+                            controller.UnderwaterGravityScale = underwaterGrav;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("Gravity strength when underwater (lower = more floaty)");
+                        }
+
+                        ImGui.Separator();
+                        ImGui.TextColored(UI.Info, "Water Plunge (Entry)");
+                        ImGui.Spacing();
+
+                        bool enablePlunge = controller.EnableWaterPlunge;
+                        if (ImGui.Checkbox("Enable Water Plunge", ref enablePlunge))
+                        {
+                            controller.EnableWaterPlunge = enablePlunge;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("When enabled, jumping into water from height causes realistic plunge");
+                        }
+
+                        if (controller.EnableWaterPlunge)
+                        {
+                            ImGui.Text("Min Entry Velocity");
+                            float plungeMinVel = controller.PlungeMinVelocity;
+                            if (ImGui.DragFloat("##PlungeMinVel", ref plungeMinVel, 0.1f, 1f, 20f))
+                            {
+                                controller.PlungeMinVelocity = plungeMinVel;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Minimum fall speed (m/s) to trigger plunge. Below this, just float.");
+                            }
+
+                            ImGui.Text("Velocity Retention");
+                            float plungeRetention = controller.PlungeVelocityRetention;
+                            if (ImGui.DragFloat("##PlungeRetention", ref plungeRetention, 0.01f, 0.1f, 1f))
+                            {
+                                controller.PlungeVelocityRetention = plungeRetention;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("How much entry velocity is kept (0.7 = 70%). Higher = deeper plunge.");
+                            }
+
+                            ImGui.Text("Plunge Drag");
+                            float plungeDrag = controller.PlungeDrag;
+                            if (ImGui.DragFloat("##PlungeDrag", ref plungeDrag, 0.1f, 0.5f, 10f))
+                            {
+                                controller.PlungeDrag = plungeDrag;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Water resistance during plunge. Higher = stops faster.");
+                            }
+
+                            ImGui.Text("Plunge Duration");
+                            float plungeDuration = controller.PlungeDuration;
+                            if (ImGui.DragFloat("##PlungeDuration", ref plungeDuration, 0.1f, 0.5f, 5f))
+                            {
+                                controller.PlungeDuration = plungeDuration;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Max duration of plunge before normal swimming takes over.");
+                            }
+
+                            ImGui.Text("Plunge Buoyancy Scale");
+                            float plungeBuoyancy = controller.PlungeBuoyancyScale;
+                            if (ImGui.DragFloat("##PlungeBuoyancy", ref plungeBuoyancy, 0.01f, 0f, 1f))
+                            {
+                                controller.PlungeBuoyancyScale = plungeBuoyancy;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Buoyancy multiplier during plunge. Lower = sink deeper before rising.");
+                            }
+
+                            // Show plunge status
+                            if (controller.IsPlunging)
+                            {
+                                ImGui.TextColored(new System.Numerics.Vector4(1.0f, 0.5f, 0.2f, 1.0f), "PLUNGING!");
+                            }
+                        }
+
+                        ImGui.Separator();
+
+                        // Progressive Water Drag
+                        ImGui.TextColored(UI.Info, "Progressive Water Drag");
+                        ImGui.Spacing();
+
+                        bool enableProgressiveDrag = controller.EnableProgressiveWaterDrag;
+                        if (ImGui.Checkbox("Enable Progressive Drag", ref enableProgressiveDrag))
+                        {
+                            controller.EnableProgressiveWaterDrag = enableProgressiveDrag;
+                        }
+                        if (ImGui.IsItemHovered())
+                        {
+                            ImGui.SetTooltip("When enabled, water resistance increases progressively based on how deep you are submerged.");
+                        }
+
+                        if (controller.EnableProgressiveWaterDrag)
+                        {
+                            ImGui.Text("Full Submersion Drag");
+                            float fullDrag = controller.FullSubmersionDragMultiplier;
+                            if (ImGui.DragFloat("##FullDrag", ref fullDrag, 0.1f, 1f, 5f))
+                            {
+                                controller.FullSubmersionDragMultiplier = fullDrag;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Drag multiplier when fully submerged. 1.0 = no extra drag, 2.0 = double drag.");
+                            }
+
+                            ImGui.Text("Full Submersion Speed");
+                            float fullSpeed = controller.FullSubmersionSpeedMultiplier;
+                            if (ImGui.DragFloat("##FullSpeed", ref fullSpeed, 0.05f, 0.1f, 1f))
+                            {
+                                controller.FullSubmersionSpeedMultiplier = fullSpeed;
+                            }
+                            if (ImGui.IsItemHovered())
+                            {
+                                ImGui.SetTooltip("Speed multiplier when fully submerged. 0.5 = half speed underwater.");
+                            }
+
+                            // Show current submersion ratio when swimming
+                            if (controller.IsSwimming)
+                            {
+                                ImGui.TextColored(UI.Info, $"Submersion: {controller.SubmersionRatio * 100f:F0}%%");
+                            }
+                        }
+
+                        ImGui.Separator();
+
+                        // Presets (Minecraft-style swimming)
+                        if (ImGui.Button("Preset: Realistic"))
+                        {
+                            controller.SwimAcceleration = 6f;
+                            controller.SwimDeceleration = 4f;
+                            controller.SwimDrag = 0.90f;
+                            controller.Buoyancy = 1.05f; // Slightly buoyant
+                            controller.VerticalSwimSpeed = 0.8f;
+                            controller.UnderwaterGravityScale = 0.15f;
+                            // Plunge settings
+                            controller.EnableWaterPlunge = true;
+                            controller.PlungeMinVelocity = 3.0f;
+                            controller.PlungeVelocityRetention = 0.7f;
+                            controller.PlungeDrag = 2.5f;
+                            controller.PlungeDuration = 1.5f;
+                            controller.PlungeBuoyancyScale = 0.2f;
+                            // Progressive drag: strong resistance when deep
+                            controller.EnableProgressiveWaterDrag = true;
+                            controller.FullSubmersionDragMultiplier = 2.5f;
+                            controller.FullSubmersionSpeedMultiplier = 0.5f;
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Preset: Arcade"))
+                        {
+                            controller.SwimAcceleration = 12f;
+                            controller.SwimDeceleration = 8f;
+                            controller.SwimDrag = 0.95f;
+                            controller.Buoyancy = 1.1f; // More buoyant
+                            controller.VerticalSwimSpeed = 1.2f;
+                            controller.UnderwaterGravityScale = 0.05f;
+                            // Plunge: quick recovery
+                            controller.EnableWaterPlunge = true;
+                            controller.PlungeMinVelocity = 5.0f;
+                            controller.PlungeVelocityRetention = 0.5f;
+                            controller.PlungeDrag = 4.0f;
+                            controller.PlungeDuration = 0.8f;
+                            controller.PlungeBuoyancyScale = 0.4f;
+                            // Progressive drag: minimal for arcade feel
+                            controller.EnableProgressiveWaterDrag = true;
+                            controller.FullSubmersionDragMultiplier = 1.3f;
+                            controller.FullSubmersionSpeedMultiplier = 0.8f;
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Preset: Neutral"))
+                        {
+                            controller.SwimAcceleration = 8f;
+                            controller.SwimDeceleration = 5f;
+                            controller.SwimDrag = 0.92f;
+                            controller.Buoyancy = 1.0f; // Neutral buoyancy
+                            controller.VerticalSwimSpeed = 1.0f;
+                            controller.UnderwaterGravityScale = 0.0f;
+                            // Plunge: controlled descent
+                            controller.EnableWaterPlunge = true;
+                            controller.PlungeMinVelocity = 2.0f;
+                            controller.PlungeVelocityRetention = 0.6f;
+                            controller.PlungeDrag = 3.0f;
+                            controller.PlungeDuration = 2.0f;
+                            controller.PlungeBuoyancyScale = 0.1f;
+                            // Progressive drag: balanced
+                            controller.EnableProgressiveWaterDrag = true;
+                            controller.FullSubmersionDragMultiplier = 2.0f;
+                            controller.FullSubmersionSpeedMultiplier = 0.6f;
+                        }
+                    }
 
                     InspectorWidgets.EndSection();
                 }
@@ -393,6 +702,30 @@ namespace Editor.Inspector
 
                     ImGui.Separator();
 
+                    // Swimming status
+                    if (controller.IsSwimming)
+                    {
+                        ImGui.TextColored(new System.Numerics.Vector4(0.2f, 0.6f, 1.0f, 1.0f), "Is Swimming: YES");
+
+                        if (controller.IsUnderwater)
+                        {
+                            ImGui.TextColored(new System.Numerics.Vector4(0.1f, 0.4f, 0.8f, 1.0f), "  Underwater: YES");
+                        }
+                        else
+                        {
+                            ImGui.TextColored(new System.Numerics.Vector4(0.3f, 0.7f, 1.0f, 1.0f), "  At Surface: YES");
+                        }
+
+                        ImGui.Text($"Water Depth: {controller.WaterDepth:F2}m");
+                        ImGui.Text($"Water Level: {controller.CurrentWaterLevel:F2}");
+                    }
+                    else
+                    {
+                        ImGui.TextDisabled("Is Swimming: NO");
+                    }
+
+                    ImGui.Separator();
+
                     var velocity = controller.Velocity;
                     ImGui.Text($"Velocity: ({velocity.X:F2}, {velocity.Y:F2}, {velocity.Z:F2})");
                     ImGui.Text($"Speed: {velocity.Length:F2} m/s");
@@ -402,6 +735,13 @@ namespace Editor.Inspector
                     {
                         float horizontalSpeed = new System.Numerics.Vector2(velocity.X, velocity.Z).Length();
                         ImGui.TextColored(UI.Warning, $"Slide Speed: {horizontalSpeed:F2} m/s");
+                    }
+
+                    // Show swim speed when swimming
+                    if (controller.IsSwimming)
+                    {
+                        float horizontalSpeed = new System.Numerics.Vector2(velocity.X, velocity.Z).Length();
+                        ImGui.TextColored(new System.Numerics.Vector4(0.2f, 0.6f, 1.0f, 1.0f), $"Swim Speed: {horizontalSpeed:F2} m/s (H) | {velocity.Y:F2} m/s (V)");
                     }
 
                     InspectorWidgets.EndSection();

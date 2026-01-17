@@ -33,10 +33,10 @@ namespace Engine.Rendering.PostProcess
         private int _uDensity = -1;
         private int _uDepthStart = -1;
         private int _uDepthEnd = -1;
+        private int _uIntensity = -1;
 
         // Ray marching
         private int _uRayMarchSteps = -1;
-        private int _uMaxRayDistance = -1;
 
         // Height-based fog
         private int _uUseHeightFog = -1;
@@ -51,7 +51,14 @@ namespace Engine.Rendering.PostProcess
         private int _uScatteringIntensity = -1;
         private int _uMieG = -1;
         private int _uExtinctionFactor = -1;
+
+        // Scatter color options
+        private int _uScatterColorSource = -1;
+        private int _uInScatterColor = -1;
+        private int _uAmbientColor = -1;
         private int _uAmbientIntensity = -1;
+        private int _uUseAmbientFromSky = -1;
+        private int _uSkyColor = -1;
 
         // God rays (radial blur)
         private int _uSunScreenPos = -1;
@@ -65,6 +72,10 @@ namespace Engine.Rendering.PostProcess
         private int _uNoiseSpeed = -1;
         private int _uNoiseStrength = -1;
         private int _uNoiseOctaves = -1;
+
+        // Underwater detection
+        private int _uIsUnderwater = -1;
+        private int _uWaterLevel = -1;
 
         public void Initialize()
         {
@@ -117,10 +128,10 @@ namespace Engine.Rendering.PostProcess
             _uDensity = GL.GetUniformLocation(_shader.Handle, "u_Density");
             _uDepthStart = GL.GetUniformLocation(_shader.Handle, "u_DepthStart");
             _uDepthEnd = GL.GetUniformLocation(_shader.Handle, "u_DepthEnd");
+            _uIntensity = GL.GetUniformLocation(_shader.Handle, "u_Intensity");
 
             // Ray marching
             _uRayMarchSteps = GL.GetUniformLocation(_shader.Handle, "u_RayMarchSteps");
-            _uMaxRayDistance = GL.GetUniformLocation(_shader.Handle, "u_MaxRayDistance");
 
             // Height fog
             _uUseHeightFog = GL.GetUniformLocation(_shader.Handle, "u_UseHeightFog");
@@ -135,7 +146,14 @@ namespace Engine.Rendering.PostProcess
             _uScatteringIntensity = GL.GetUniformLocation(_shader.Handle, "u_ScatteringIntensity");
             _uMieG = GL.GetUniformLocation(_shader.Handle, "u_MieG");
             _uExtinctionFactor = GL.GetUniformLocation(_shader.Handle, "u_ExtinctionFactor");
+
+            // Scatter color options
+            _uScatterColorSource = GL.GetUniformLocation(_shader.Handle, "u_ScatterColorSource");
+            _uInScatterColor = GL.GetUniformLocation(_shader.Handle, "u_InScatterColor");
+            _uAmbientColor = GL.GetUniformLocation(_shader.Handle, "u_AmbientColor");
             _uAmbientIntensity = GL.GetUniformLocation(_shader.Handle, "u_AmbientIntensity");
+            _uUseAmbientFromSky = GL.GetUniformLocation(_shader.Handle, "u_UseAmbientFromSky");
+            _uSkyColor = GL.GetUniformLocation(_shader.Handle, "u_SkyColor");
 
             // God rays (radial blur)
             _uSunScreenPos = GL.GetUniformLocation(_shader.Handle, "u_SunScreenPos");
@@ -149,6 +167,10 @@ namespace Engine.Rendering.PostProcess
             _uNoiseSpeed = GL.GetUniformLocation(_shader.Handle, "u_NoiseSpeed");
             _uNoiseStrength = GL.GetUniformLocation(_shader.Handle, "u_NoiseStrength");
             _uNoiseOctaves = GL.GetUniformLocation(_shader.Handle, "u_NoiseOctaves");
+
+            // Underwater detection
+            _uIsUnderwater = GL.GetUniformLocation(_shader.Handle, "u_IsUnderwater");
+            _uWaterLevel = GL.GetUniformLocation(_shader.Handle, "u_WaterLevel");
         }
 
         public void Render(Engine.Components.PostProcessEffect effect, Engine.Components.PostProcessContext context)
@@ -217,10 +239,10 @@ namespace Engine.Rendering.PostProcess
             if (_uDensity >= 0) GL.Uniform1(_uDensity, density);
             if (_uDepthStart >= 0) GL.Uniform1(_uDepthStart, depthStart);
             if (_uDepthEnd >= 0) GL.Uniform1(_uDepthEnd, depthEnd);
+            if (_uIntensity >= 0) GL.Uniform1(_uIntensity, fog.Intensity);
 
             // Ray marching parameters
             if (_uRayMarchSteps >= 0) GL.Uniform1(_uRayMarchSteps, fog.RayMarchSteps);
-            if (_uMaxRayDistance >= 0) GL.Uniform1(_uMaxRayDistance, fog.MaxRayDistance);
 
             // Height-based fog
             if (_uUseHeightFog >= 0) GL.Uniform1(_uUseHeightFog, fog.UseHeightFog ? 1 : 0);
@@ -235,8 +257,9 @@ namespace Engine.Rendering.PostProcess
             if (_uMieG >= 0) GL.Uniform1(_uMieG, fog.MieG);
             if (_uExtinctionFactor >= 0) GL.Uniform1(_uExtinctionFactor, fog.ExtinctionFactor);
 
-            // Sun direction - get from directional light in scene
+            // Sun direction and color - get from directional light in scene
             Vector3 sunDirection = new Vector3(0.3f, 0.8f, 0.3f); // Default (pointing TO sun)
+            Vector3 sunColor = new Vector3(1.0f, 0.95f, 0.9f); // Default sun color
             if (context.Scene != null)
             {
                 foreach (var entity in context.Scene.Entities)
@@ -246,14 +269,41 @@ namespace Engine.Rendering.PostProcess
                     {
                         // Light direction points FROM sun, we need direction TO sun
                         sunDirection = -Vector3.Normalize(light.Direction);
+                        sunColor = new Vector3(light.Color.X, light.Color.Y, light.Color.Z);
                         break;
                     }
                 }
             }
             if (_uSunDirection >= 0) GL.Uniform3(_uSunDirection, sunDirection);
 
-            // Ambient intensity
+            // Scatter color options
+            if (_uScatterColorSource >= 0) GL.Uniform1(_uScatterColorSource, (int)fog.ScatterSource);
+            if (_uInScatterColor >= 0) GL.Uniform3(_uInScatterColor, fog.InScatterColor);
+            if (_uAmbientColor >= 0) GL.Uniform3(_uAmbientColor, fog.AmbientColor);
             if (_uAmbientIntensity >= 0) GL.Uniform1(_uAmbientIntensity, fog.AmbientIntensity);
+            if (_uUseAmbientFromSky >= 0) GL.Uniform1(_uUseAmbientFromSky, fog.UseAmbientFromSky ? 1 : 0);
+
+            // Sky color - compute based on sun direction (simple atmospheric approximation)
+            // Higher sun = bluer sky, lower sun = more orange/red
+            float sunHeight = Math.Max(0.0f, sunDirection.Y);
+            Vector3 skyColor;
+            if (sunHeight > 0.3f)
+            {
+                // Daytime - blue sky
+                skyColor = new Vector3(0.4f, 0.6f, 0.9f);
+            }
+            else if (sunHeight > 0.0f)
+            {
+                // Sunrise/sunset - blend from blue to orange
+                float t = sunHeight / 0.3f;
+                skyColor = Vector3.Lerp(new Vector3(0.9f, 0.5f, 0.3f), new Vector3(0.4f, 0.6f, 0.9f), t);
+            }
+            else
+            {
+                // Night - dark blue
+                skyColor = new Vector3(0.05f, 0.08f, 0.15f);
+            }
+            if (_uSkyColor >= 0) GL.Uniform3(_uSkyColor, skyColor);
 
             // God rays - calculate sun screen position
             Vector2 sunScreenPos = new Vector2(0.5f, 0.5f);
@@ -279,6 +329,26 @@ namespace Engine.Rendering.PostProcess
             if (_uNoiseSpeed >= 0) GL.Uniform1(_uNoiseSpeed, fog.NoiseSpeed);
             if (_uNoiseStrength >= 0) GL.Uniform1(_uNoiseStrength, fog.NoiseStrength);
             if (_uNoiseOctaves >= 0) GL.Uniform1(_uNoiseOctaves, fog.NoiseOctaves);
+
+            // Underwater detection - skip volumetric fog when camera is below water
+            float waterLevel = 0.0f;
+            bool isUnderwater = false;
+            if (context.Scene != null)
+            {
+                // Try to find WaterPlaneComponent to get water level
+                foreach (var entity in context.Scene.Entities)
+                {
+                    var water = entity.GetComponent<Engine.Components.WaterPlaneComponent>();
+                    if (water != null)
+                    {
+                        waterLevel = water.GetWaterLevel();
+                        break;
+                    }
+                }
+                isUnderwater = cameraPos.Y < waterLevel;
+            }
+            if (_uIsUnderwater >= 0) GL.Uniform1(_uIsUnderwater, isUnderwater ? 1 : 0);
+            if (_uWaterLevel >= 0) GL.Uniform1(_uWaterLevel, waterLevel);
 
             // Draw fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);

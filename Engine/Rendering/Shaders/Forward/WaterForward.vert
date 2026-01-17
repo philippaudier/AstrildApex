@@ -210,8 +210,9 @@ void main()
 
         // Use wave derivatives for accurate normal calculation
         // Gerstner waves provide dx and dz derivatives directly
-        vec3 tangentX = normalize(vec3(1.0, waveData.y, 0.0));
-        vec3 tangentZ = normalize(vec3(0.0, waveData.z, 1.0));
+        // cross(tangentZ, tangentX) gives up-pointing normal in right-handed coordinate system
+        vec3 tangentX = vec3(1.0, waveData.y, 0.0);
+        vec3 tangentZ = vec3(0.0, waveData.z, 1.0);
         worldNormal = normalize(cross(tangentZ, tangentX));
     }
 

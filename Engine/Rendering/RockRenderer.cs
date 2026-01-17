@@ -33,6 +33,7 @@ namespace Engine.Rendering
             public Vector3 TileCenterPosition = Vector3.Zero; // Tile center for distance culling (separate from ModelMatrix)
         }
 
+
         private readonly Dictionary<string, RockLayer> _rockLayers = new();
 
         public RockRenderer()
@@ -237,7 +238,10 @@ namespace Engine.Rendering
                 _rockShader.SetFloat("u_AmbientIntensity", ambientIntensity);
                 _rockShader.SetVec3("u_SunDirection", sunDirection);
                 _rockShader.SetVec3("u_SunColor", sunColor);
-                _rockShader.SetFloat("u_SunIntensity", sunIntensity);
+
+                // Directional light intensity (time-based: bright during day, dim at night)
+                // Note: Rock shader uses uDirLightIntensity from Common.glsl, not u_SunIntensity
+                _rockShader.SetFloat("uDirLightIntensity", sunIntensity);
 
                 // Render each rock layer
                 int layersRendered = 0;
@@ -313,6 +317,28 @@ namespace Engine.Rendering
                     _rockShader.SetFloat("u_MossAmount", props.MossAmount);
                     _rockShader.SetVec4("u_MossColor", new Vector4(props.MossColor[0], props.MossColor[1], props.MossColor[2], 1.0f));
                     _rockShader.SetFloat("u_MossTopBias", props.MossTopBias);
+
+                    // Texture scale
+                    _rockShader.SetFloat("u_TextureScale", props.TextureScale);
+
+                    // Albedo texture (optional, uses triplanar mapping)
+                    bool hasAlbedo = false;
+                    if (props.AlbedoTexture.HasValue)
+                    {
+                        int texHandle = TextureCache.GetOrLoad(props.AlbedoTexture.Value,
+                            guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+
+                        if (texHandle != 0 && texHandle != TextureCache.White1x1)
+                        {
+                            GL.ActiveTexture(TextureUnit.Texture0);
+                            GL.BindTexture(TextureTarget.Texture2D, texHandle);
+                            _rockShader.SetInt("u_AlbedoTex", 0);
+                            hasAlbedo = true;
+                        }
+                    }
+                    _rockShader.SetInt("u_HasAlbedoTex", hasAlbedo ? 1 : 0);
+                    _rockShader.SetInt("u_HasNormalTex", 0);
+                    _rockShader.SetInt("u_HasRoughnessTex", 0);
 
                     // Embedding & orientation
                     _rockShader.SetFloat("u_EmbedDepth", props.EmbedDepth);

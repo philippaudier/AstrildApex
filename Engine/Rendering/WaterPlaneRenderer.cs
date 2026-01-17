@@ -170,7 +170,13 @@ namespace Engine.Rendering
             WeatherComponent? weather,
             int depthTexture,
             int sceneColorTexture,
-            int reflectionTexture)
+            int reflectionTexture,
+            bool shadowsEnabled = false,
+            int shadowTexture = 0,
+            Matrix4? shadowMatrix = null,
+            float shadowBias = 0.005f,
+            float shadowMapSize = 2048f,
+            float shadowStrength = 0.8f)
         {
             // Auto-initialize if needed
             if (!_initialized)
@@ -239,7 +245,8 @@ namespace Engine.Rendering
 
                 // Set uniforms
                 SetUniforms(shader, water, model, view, projection, cameraPos, time, weather,
-                           depthTexture, sceneColorTexture, reflectionTexture, entity.Id);
+                           depthTexture, sceneColorTexture, reflectionTexture, entity.Id,
+                           shadowsEnabled, shadowTexture, shadowMatrix, shadowBias, shadowMapSize, shadowStrength);
 
                 // Set up GL state for water rendering
                 GL.Enable(EnableCap.Blend);
@@ -284,7 +291,13 @@ namespace Engine.Rendering
             int depthTexture,
             int sceneColorTexture,
             int reflectionTexture,
-            uint objectId)
+            uint objectId,
+            bool shadowsEnabled,
+            int shadowTexture,
+            Matrix4? shadowMatrix,
+            float shadowBias,
+            float shadowMapSize,
+            float shadowStrength)
         {
             // Transform matrices
             shader.SetMat4("u_Model", model);
@@ -363,6 +376,16 @@ namespace Engine.Rendering
             shader.SetFloat("u_FresnelBias", water.FresnelBias);
             shader.SetFloat("u_FresnelScale", water.FresnelScale);
 
+            // Debug modes: 0=off, 1=fresnel, 2=dot(N,V), 3=normal RGB, 4=tess normal, 5=fresnel power=2
+            shader.SetInt("u_DebugFresnel", 0);
+
+            // DEBUG: Log fresnel values and check uniform location
+            if (!_loggedOnce)
+            {
+                int fresnelPowerLoc = OpenTK.Graphics.OpenGL4.GL.GetUniformLocation(shader.Handle, "u_FresnelPower");
+                Utils.DebugLogger.Log($"[WaterOcean] FresnelPower={water.FresnelPower} (uniform loc={fresnelPowerLoc}), FresnelBias={water.FresnelBias}, FresnelScale={water.FresnelScale}");
+            }
+
             // === SSS ===
             shader.SetInt("u_SSSEnabled", water.SSSEnabled ? 1 : 0);
             shader.SetVec3("u_SSSColor", new Vector3(water.SSSColor.X, water.SSSColor.Y, water.SSSColor.Z));
@@ -403,6 +426,13 @@ namespace Engine.Rendering
             shader.SetFloat("u_SpecularIntensity", water.SpecularIntensity);
             shader.SetFloat("u_SpecularPower", water.SpecularPower);
             shader.SetFloat("u_Roughness", water.Roughness);
+
+            // DEBUG: Log specular/roughness values
+            if (!_loggedOnce)
+            {
+                Utils.DebugLogger.Log($"[WaterOcean] SpecularIntensity={water.SpecularIntensity}, SpecularPower={water.SpecularPower}, Roughness={water.Roughness}");
+                _loggedOnce = true;
+            }
 
             // === REFLECTIONS ===
             shader.SetInt("u_ReflectionEnabled", water.ReflectionEnabled ? 1 : 0);
@@ -462,6 +492,25 @@ namespace Engine.Rendering
             GL.ActiveTexture(TextureUnit.Texture13);
             GL.BindTexture(TextureTarget.Texture2D, foamTexture);
             shader.SetInt("u_FoamTex", 13);
+
+            // === SHADOWS (for specular occlusion) ===
+            if (shadowsEnabled && shadowTexture > 0 && shadowMatrix.HasValue)
+            {
+                shader.SetInt("u_UseShadows", 1);
+                shader.SetFloat("u_ShadowBias", shadowBias);
+                shader.SetFloat("u_ShadowMapSize", shadowMapSize);
+                shader.SetFloat("u_ShadowStrength", shadowStrength);
+                shader.SetMat4("u_ShadowMatrix", shadowMatrix.Value);
+
+                // Shadow map (unit 17 - same as other renderers)
+                GL.ActiveTexture(TextureUnit.Texture17);
+                GL.BindTexture(TextureTarget.Texture2D, shadowTexture);
+                shader.SetInt("u_ShadowMap", 17);
+            }
+            else
+            {
+                shader.SetInt("u_UseShadows", 0);
+            }
 
             GL.ActiveTexture(TextureUnit.Texture0);
         }

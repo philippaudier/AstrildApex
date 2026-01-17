@@ -480,7 +480,7 @@ namespace Engine.Components
                 MathHelper.DegreesToRadians(MinPitch),
                 MathHelper.DegreesToRadians(MaxPitch));
 
-            // Calculate rotation
+            // Calculate base rotation from mouse look
             var rotation = Quaternion.FromAxisAngle(Vector3.UnitY, _yaw) *
                           Quaternion.FromAxisAngle(Vector3.UnitX, _pitch);
 

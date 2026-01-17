@@ -1,0 +1,24 @@
+{
+  "BuildWindows": true,
+  "BuildLinux": true,
+  "BuildMacOS": false,
+  "DevelopmentBuild": false,
+  "CleanBuild": true,
+  "CopyAssets": true,
+  "GenerateManifest": true,
+  "CompressOutput": false,
+  "OutputDirectory": "build",
+  "AssetsDirectory": "Editor/Assets",
+  "SelfContained": false,
+  "SingleFile": false,
+  "TrimUnusedCode": false,
+  "ReadyToRun": false,
+  "ProductName": "UntilTherIsNothing",
+  "ProductVersion": "1.0.0",
+  "CompanyName": "Astrild",
+  "IconPath": "C:\\Users\\Philippe\\Documents\\Programming\\AstrildApex\\Editor\\Assets\\Icons\\Logos\\editor_logo.ico",
+  "ScenesToInclude": [
+    "Scenes\\CC TESTS.scene"
+  ],
+  "StartupSceneIndex": 0
+}

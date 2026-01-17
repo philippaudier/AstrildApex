@@ -19,10 +19,17 @@ namespace Engine.Components
 
         public override void OnAttached()
         {
-            // Enregistrer ce GlobalEffects comme actif dans le système de rendu
+            // Note: We don't register here because effects aren't deserialized yet.
+            // Registration happens in Start() after deserialization is complete.
             Console.WriteLine($"[GlobalEffects] OnAttached() called! Entity={Entity?.Name}, EffectsCount={_effects.Count}");
+        }
+
+        public override void Start()
+        {
+            // Register AFTER deserialization is complete (effects are now loaded)
+            Console.WriteLine($"[GlobalEffects] Start() called! Entity={Entity?.Name}, EffectsCount={_effects.Count}");
             Engine.Rendering.PostProcessManager.RegisterGlobalEffects(this);
-            
+
             // Log each effect
             for (int i = 0; i < _effects.Count; i++)
             {
@@ -130,15 +137,24 @@ namespace Engine.Components
         // to the same scene. This prevents effects from one scene (editor/game)
         // being applied to another.
         public Engine.Scene.Scene? Scene { get; set; }
-        
+
         // Depth texture for effects like SSAO
         public uint DepthTexture { get; set; }
-        
+
         // Projection matrix for screen-space effects
         public OpenTK.Mathematics.Matrix4? ProjectionMatrix { get; set; }
-        
+
         // View matrix for temporal reprojection
         public OpenTK.Mathematics.Matrix4? ViewMatrix { get; set; }
+
+        // === PING-PONG SUPPORT ===
+        // Second framebuffer/texture pair for ping-pong rendering.
+        // This prevents reading and writing to the same texture simultaneously.
+        public uint SourceTexture2 { get; set; }
+        public uint TargetFramebuffer2 { get; set; }
+
+        // Track which buffer has the current result (true = primary, false = secondary)
+        public bool ResultInPrimary { get; set; } = true;
 
         public PostProcessContext(uint sourceTexture, uint targetFramebuffer, int width, int height, float deltaTime = 0f, Engine.Scene.Scene? scene = null)
         {
@@ -151,6 +167,42 @@ namespace Engine.Components
             DepthTexture = 0;
             ProjectionMatrix = null;
             ViewMatrix = null;
+            SourceTexture2 = 0;
+            TargetFramebuffer2 = 0;
+            ResultInPrimary = true;
+        }
+
+        /// <summary>
+        /// Swaps source and target for ping-pong rendering.
+        /// After rendering an effect, call this to prepare for the next effect.
+        /// </summary>
+        public void SwapBuffers()
+        {
+            ResultInPrimary = !ResultInPrimary;
+        }
+
+        /// <summary>
+        /// Gets the current source texture (for reading).
+        /// </summary>
+        public uint GetCurrentSourceTexture()
+        {
+            return ResultInPrimary ? SourceTexture : SourceTexture2;
+        }
+
+        /// <summary>
+        /// Gets the current target framebuffer (for writing).
+        /// </summary>
+        public uint GetCurrentTargetFramebuffer()
+        {
+            return ResultInPrimary ? TargetFramebuffer2 : TargetFramebuffer;
+        }
+
+        /// <summary>
+        /// Gets the texture containing the final result after all effects.
+        /// </summary>
+        public uint GetFinalResultTexture()
+        {
+            return ResultInPrimary ? SourceTexture : SourceTexture2;
         }
     }
 

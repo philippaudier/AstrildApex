@@ -299,6 +299,26 @@ namespace Engine.Assets
         [Engine.Serialization.SerializableAttribute("albedoTexture")]
         public Guid? AlbedoTexture { get; set; } = null; // Optional grass blade texture
 
+        // === PBR PROPERTIES ===
+        [Engine.Serialization.SerializableAttribute("roughness")]
+        public float Roughness { get; set; } = 0.75f; // PBR roughness (0.5-1.0, grass is quite rough)
+
+        [Engine.Serialization.SerializableAttribute("subsurfaceStrength")]
+        public float SubsurfaceStrength { get; set; } = 0.4f; // Translucency/subsurface scattering (0-1)
+
+        [Engine.Serialization.SerializableAttribute("ambientOcclusionBase")]
+        public float AmbientOcclusionBase { get; set; } = 0.3f; // AO at grass base (darker at bottom, 0-1)
+
+        // === TERRAIN COLOR MATCHING ===
+        [Engine.Serialization.SerializableAttribute("terrainColorTexture")]
+        public Guid? TerrainColorTexture { get; set; } = null; // Optional terrain color texture to blend with grass
+
+        [Engine.Serialization.SerializableAttribute("terrainColorScale")]
+        public float TerrainColorScale { get; set; } = 0.01f; // UV scale for terrain color sampling
+
+        [Engine.Serialization.SerializableAttribute("terrainColorInfluence")]
+        public float TerrainColorInfluence { get; set; } = 0.3f; // How much terrain color affects grass (0-1)
+
         // === DENSITY MAP (for painted grass coverage) ===
         [Engine.Serialization.SerializableAttribute("densityMap")]
         public Guid? DensityMap { get; set; } = null; // Optional R8 texture for painting grass coverage
@@ -444,6 +464,13 @@ namespace Engine.Assets
 
         [Engine.Serialization.SerializableAttribute("metallic")]
         public float Metallic { get; set; } = 0.0f; // PBR metallic (usually 0 for rocks)
+
+        // === TEXTURE (optional - uses triplanar mapping) ===
+        [Engine.Serialization.SerializableAttribute("albedoTexture")]
+        public Guid? AlbedoTexture { get; set; } = null; // Optional rock albedo texture (triplanar mapped)
+
+        [Engine.Serialization.SerializableAttribute("textureScale")]
+        public float TextureScale { get; set; } = 0.5f; // World-space UV scale for triplanar texturing
 
         // === MOSS/LICHEN (optional) ===
         [Engine.Serialization.SerializableAttribute("mossAmount")]

@@ -897,6 +897,12 @@ namespace Editor.Inspector
             try
             {
                 if (mat == null) return;
+
+                // CRITICAL: Update MaterialRuntime global cache immediately
+                // This ensures RockRenderer, GrassRenderer, and other renderers see updated values
+                // before the material is saved to disk (during the 300ms auto-save delay)
+                Engine.Rendering.MaterialRuntime.UpdateCacheEntry(guid, mat);
+
                 Editor.Panels.EditorUI.MainViewport.Renderer?.ApplyLiveMaterialUpdate(guid, mat);
             }
             catch { }

@@ -346,15 +346,19 @@ public class ViewportPanelModern
         if (Renderer != null)
         {
             // Display rendered texture (centered if resolution is smaller than panel)
+            // Like Unity: image is always centered in the available space
             Vector2 imageSize = new Vector2(w, h);
 
-            // Center the image if it's smaller than the available region
-            if (imageSize.X < avail.X || imageSize.Y < avail.Y)
-            {
-                float offsetX = Math.Max(0, (avail.X - imageSize.X) * 0.5f);
-                float offsetY = Math.Max(0, (avail.Y - imageSize.Y) * 0.5f);
-                ImGui.SetCursorPos(new Vector2(offsetX, offsetY));
-            }
+            // Get fresh content region info right before drawing
+            Vector2 contentRegionAvail = ImGui.GetContentRegionAvail();
+            Vector2 contentRegionMin = ImGui.GetCursorPos();
+
+            // Calculate centering offsets (always center, even if image fills space)
+            float offsetX = Math.Max(0, (contentRegionAvail.X - imageSize.X) * 0.5f);
+            float offsetY = Math.Max(0, (contentRegionAvail.Y - imageSize.Y) * 0.5f);
+
+            // Set cursor to centered position (relative to content region start)
+            ImGui.SetCursorPos(new Vector2(contentRegionMin.X + offsetX, contentRegionMin.Y + offsetY));
 
             ImGui.Image((IntPtr)Renderer.ColorTexture, imageSize, new Vector2(0, 1), new Vector2(1, 0));
 

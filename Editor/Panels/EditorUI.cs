@@ -13,6 +13,7 @@ using Editor.Logging;
 using Editor.UIManager.Profiling;
 using Editor.Themes;
 using Editor.Utils;
+using Editor.Build;
 
 namespace Editor.Panels;
 
@@ -321,19 +322,73 @@ public static class EditorUI
             // ===== BUILD MENU =====
             if (ImGui.BeginMenu("Build"))
             {
-                if (ImGui.MenuItem("Build Settings..."))
+                if (ImGui.MenuItem("Build Settings...", "Ctrl+Shift+B"))
                 {
-                    LogManager.LogInfo("🔨 Build Settings: Feature coming soon!", "EditorUI");
-                }
-                if (ImGui.MenuItem("Build and Run", "Ctrl+B"))
-                {
-                    LogManager.LogInfo("🔨 Build and Run: Feature coming soon!", "EditorUI");
+                    BuildSettingsPanel.Open();
                 }
                 ImGui.Separator();
-                if (ImGui.MenuItem("Player Settings..."))
+
+                // Quick build options
+                var config = BuildConfiguration.Instance;
+                var platformCount = config.GetSelectedPlatformCount();
+                var canBuild = platformCount > 0 && !BuildSystem.Instance.IsBuilding;
+
+                if (!canBuild)
+                    ImGui.BeginDisabled();
+
+                if (ImGui.MenuItem("Build", "Ctrl+B"))
                 {
-                    LogManager.LogInfo("🔨 Player Settings: Feature coming soon!", "EditorUI");
+                    BuildSettingsPanel.QuickBuild();
                 }
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled) && platformCount == 0)
+                {
+                    ImGui.SetTooltip("Configure platforms in Build Settings first");
+                }
+
+                if (!canBuild)
+                    ImGui.EndDisabled();
+
+                ImGui.Separator();
+
+                // Platform toggles (quick access)
+                ImGui.TextDisabled("Quick Platform Toggle:");
+
+                bool buildWin = config.BuildWindows;
+                if (ImGui.MenuItem("Windows (x64)", null, buildWin))
+                {
+                    config.BuildWindows = !config.BuildWindows;
+                    config.Save();
+                }
+
+                bool buildLinux = config.BuildLinux;
+                if (ImGui.MenuItem("Linux (x64)", null, buildLinux))
+                {
+                    config.BuildLinux = !config.BuildLinux;
+                    config.Save();
+                }
+
+                bool buildMac = config.BuildMacOS;
+                if (ImGui.MenuItem("macOS (x64)", null, buildMac))
+                {
+                    config.BuildMacOS = !config.BuildMacOS;
+                    config.Save();
+                }
+
+                ImGui.Separator();
+
+                // Open build folder
+                if (ImGui.MenuItem("Open Build Folder"))
+                {
+                    var path = System.IO.Path.Combine(ProjectPaths.ProjectRoot, config.OutputDirectory);
+                    if (!System.IO.Directory.Exists(path))
+                        System.IO.Directory.CreateDirectory(path);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = path,
+                        UseShellExecute = true
+                    });
+                }
+
                 ImGui.EndMenu();
             }
 
@@ -540,6 +595,17 @@ public static class EditorUI
                 else if (PlayMode.State == PlayMode.PlayState.Playing)
                     PlayMode.Stop();
             }
+
+            // Build shortcuts
+            if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutBuildSettings))
+            {
+                BuildSettingsPanel.Open();
+            }
+            else if (ShortcutHelper.IsShortcutPressed(EditorSettings.ShortcutBuild))
+            {
+                if (!BuildSystem.Instance.IsBuilding)
+                    BuildSettingsPanel.QuickBuild();
+            }
         }
     }
 
@@ -585,6 +651,11 @@ public static class EditorUI
         PanelProfiler.BeginPanel("Preferences");
         Preferences.Draw();
         PanelProfiler.EndPanel("Preferences");
+
+        // Build Settings panel
+        PanelProfiler.BeginPanel("BuildSettings");
+        BuildSettingsPanel.Draw();
+        PanelProfiler.EndPanel("BuildSettings");
 
         // Render scene management dialogs
         SceneManager.RenderDialogs();

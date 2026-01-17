@@ -1,0 +1,21 @@
+#version 330 core
+
+// Fullscreen triangle vertex shader for Atmospheric Scattering post-process.
+// Uses gl_VertexID to generate a fullscreen triangle with 3 vertices.
+
+out vec2 vTexCoord;
+
+void main()
+{
+    // Generate fullscreen triangle using vertex ID
+    // v0 = (-1, -1), v1 = (3, -1), v2 = (-1, 3)
+    float x = float((gl_VertexID & 1) << 2) - 1.0;
+    float y = float((gl_VertexID & 2) << 1) - 1.0;
+
+    vec2 pos = vec2(x, y);
+
+    // Calculate texture coordinates
+    vTexCoord = pos * 0.5 + 0.5;
+
+    gl_Position = vec4(pos, 0.0, 1.0);
+}

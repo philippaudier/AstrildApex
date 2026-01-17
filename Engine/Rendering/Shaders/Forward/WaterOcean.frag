@@ -39,6 +39,8 @@ uniform float u_ColorDepthFade = 10.0;
 uniform float u_FresnelPower = 5.0;
 uniform float u_FresnelBias = 0.04;
 uniform float u_FresnelScale = 0.96;
+// Debug: when enabled, output fresnel as grayscale to help tuning
+uniform int u_DebugFresnel = 0;
 
 // === SUBSURFACE SCATTERING ===
 uniform int u_SSSEnabled = 1;
@@ -449,6 +451,10 @@ void main()
     vec3 V = normalize(uCameraPos - vWorldPos);
     vec3 L = normalize(-uDirLightDirection);
 
+    // Detect if camera is below the water surface (underwater)
+    // Use the water plane Y position from the vertex world position as reference
+    bool cameraUnderwater = uCameraPos.y < vWorldPos.y;
+
     // High-quality normal with detail
     if (u_NormalIterations > 0) {
         vec3 detailedN = calculateDetailedNormal(vWorldPos.xz, u_NormalEpsilon, u_NormalIterations);
@@ -458,11 +464,14 @@ void main()
     // Gentle normal smoothing with distance (reduced from 0.8 to 0.2 to avoid artifacts)
     float distToCamera = length(uCameraPos - vWorldPos);
     float smoothFactor = 0.2 * saturate(distToCamera / 200.0); // Gradually smooth only at far distances
-    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), smoothFactor));
 
-    // Flip normal for back faces (when viewing from below water)
-    // gl_FrontFacing is true for front faces, false for back faces
-    if (!gl_FrontFacing) {
+    // When underwater, smooth towards down normal instead of up
+    vec3 smoothTarget = cameraUnderwater ? vec3(0.0, -1.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    N = normalize(mix(N, smoothTarget, smoothFactor));
+
+    // Flip normal when viewing from underwater
+    // This makes waves visible from below without using gl_FrontFacing (which caused ZFlip artifacts)
+    if (cameraUnderwater) {
         N = -N;
     }
     
@@ -621,12 +630,11 @@ void main()
     // === SHORE FOAM ===
     vec3 shoreFoam = calculateShoreFoam(depthDiff, vWorldPos.xz, vUV);
     
-    // === SHADOWS ===
+    // === SHADOWS (for specular occlusion when sun is behind geometry) ===
     float shadow = 1.0;
-    // Disable shadows for now to avoid potential issues
-    // if (u_UseShadows > 0) {
-    //     shadow = calculateShadow(vWorldPos, N);
-    // }
+    if (u_UseShadows > 0) {
+        shadow = CalculateShadow(vWorldPos, N, L);
+    }
     
     // === COMBINE ===
     // Base: mix refraction and water color
@@ -635,8 +643,8 @@ void main()
     // Add subsurface scattering
     finalColor += sss * shadow * uDirLightIntensity;
 
-    // Add caustics
-    finalColor += caustics * shadow;
+    // Add caustics (modulated by environment brightness - no caustics at night)
+    finalColor += caustics * shadow * environmentBrightness;
 
     // Mix with reflection based on Fresnel (modulated like WaterForward for realism)
     // At grazing angles (high fresnel), more reflection visible
@@ -647,14 +655,18 @@ void main()
     // Add sun specular
     finalColor += sunColor * shadow;
     
-    // Add crest foam on top
-    float foamMask = length(crestFoam);
-    finalColor = mix(finalColor, finalColor + crestFoam, saturate(foamMask));
-    
+    // Add crest foam on top (modulated by environment brightness - foam is less visible at night)
+    // Physically: foam reflects ambient light, so it's dim at night
+    vec3 modulatedCrestFoam = crestFoam * environmentBrightness;
+    float foamMask = length(modulatedCrestFoam);
+    finalColor = mix(finalColor, finalColor + modulatedCrestFoam, saturate(foamMask));
+
     // Add shore foam on top (blends with crest foam additively)
-    float shoreFoamMask = length(shoreFoam);
-    finalColor = mix(finalColor, finalColor + shoreFoam, saturate(shoreFoamMask));
-    
+    // Shore foam is also modulated by environment brightness
+    vec3 modulatedShoreFoam = shoreFoam * environmentBrightness;
+    float shoreFoamMask = length(modulatedShoreFoam);
+    finalColor = mix(finalColor, finalColor + modulatedShoreFoam, saturate(shoreFoamMask));
+
     // === FOG ===
     finalColor = processFog(finalColor, vWorldPos);
 
@@ -668,12 +680,49 @@ void main()
     // When depthDiff > 0 (terrain below), interpolate from shallow to deep
     float baseAlpha = mix(u_DeepColor.a, u_ShallowColor.a, 1.0 - depthFade);
     float alpha = saturate(baseAlpha + fresnel * 0.2); // Fresnel adds slight edge opacity
-    
-    // DEBUG: Uncomment to test basic rendering
-    // outColor = vec4(0.2, 0.5, 0.8, 1.0); // Solid blue
-    // outId = u_ObjectId;
-    // return;
-    
+
+    // DEBUG: Uncomment ONE line to test
+    // outColor = vec4(0.2, 0.5, 0.8, 1.0); outId = u_ObjectId; return; // Solid blue
+    // outColor = vec4(fresnel, fresnel, fresnel, 1.0); outId = u_ObjectId; return; // Visualize fresnel
+    // outColor = vec4(reflectionMix, reflectionMix, reflectionMix, 1.0); outId = u_ObjectId; return; // Visualize reflectionMix
+
+    // If debug Fresnel is enabled, output it directly (grayscale)
+    if (u_DebugFresnel == 1) {
+        // Mode 1: Show fresnel value
+        outColor = vec4(vec3(fresnel), 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+    if (u_DebugFresnel == 2) {
+        // Mode 2: Show dot(N, V) - should be 1 (white) looking down, 0 (black) at grazing angle
+        float NdotV = max(0.0, dot(N, V));
+        outColor = vec4(vec3(NdotV), 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+    if (u_DebugFresnel == 3) {
+        // Mode 3: Show normal direction (RGB = XYZ)
+        outColor = vec4(N * 0.5 + 0.5, 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+    if (u_DebugFresnel == 4) {
+        // Mode 4: Show tessellation normal only (bypass detailed normal calculation)
+        vec3 tessN = normalize(vNormal);
+        float NdotV_tess = max(0.0, dot(tessN, V));
+        outColor = vec4(vec3(NdotV_tess), 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+    if (u_DebugFresnel == 5) {
+        // Mode 5: Show fresnel with lower power (FresnelPower = 2) for comparison
+        float NdotV = max(0.0, dot(N, V));
+        float testFresnel = u_FresnelBias + u_FresnelScale * pow(1.0 - NdotV, 2.0);
+        outColor = vec4(vec3(clamp(testFresnel, 0.0, 1.0)), 1.0);
+        outId = u_ObjectId;
+        return;
+    }
+
     outColor = vec4(finalColor, alpha);
     outId = u_ObjectId;
 }

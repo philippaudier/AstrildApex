@@ -108,3 +108,5 @@ Editor/Assets/Materials/
 Editor/Assets/Scenes/
 Editor/Assets/Scripts/
 Editor/Assets/Models/
+# Claude Code temp files
+tmpclaude-*-cwd

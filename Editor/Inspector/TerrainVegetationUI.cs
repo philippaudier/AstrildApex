@@ -439,6 +439,14 @@ namespace Editor.Inspector
                 // Colors & Texture
                 if (ImGui.TreeNode("Colors"))
                 {
+                    var newTex = EditorWidgets.AssetField("Albedo Texture", grass.AlbedoTexture, "Texture", "Optional grass blade texture", showPreview: true);
+                    if (newTex != grass.AlbedoTexture)
+                    {
+                        grass.AlbedoTexture = newTex;
+                        grassChanged = true;
+                    }
+
+                    ImGui.Spacing();
                     var colorTop = new System.Numerics.Vector4(
                         grass.ColorTop[0], grass.ColorTop[1], grass.ColorTop[2], grass.ColorTop[3]);
                     if (ImGui.ColorEdit4("Top Color", ref colorTop))
@@ -459,13 +467,6 @@ namespace Editor.Inspector
                     if (ImGui.SliderFloat("Color Variation", ref colorVar, 0.0f, 0.5f))
                     {
                         grass.ColorVariation = colorVar;
-                        grassChanged = true;
-                    }
-
-                    var newTex = EditorWidgets.AssetField("Albedo Texture", grass.AlbedoTexture, "Texture", "Optional blade texture", showPreview: true);
-                    if (newTex != grass.AlbedoTexture)
-                    {
-                        grass.AlbedoTexture = newTex;
                         grassChanged = true;
                     }
 
@@ -878,9 +879,42 @@ namespace Editor.Inspector
                     ImGui.TreePop();
                 }
 
-                // Colors
+                // Texture
+                if (ImGui.TreeNode("Texture##rock"))
+                {
+                    ImGui.TextDisabled("Triplanar mapped texture (no UVs needed)");
+                    ImGui.Spacing();
+
+                    var newTexGuid = EditorWidgets.AssetField(
+                        "Albedo Texture",
+                        rock.AlbedoTexture,
+                        "Texture",
+                        "Drag & drop a texture",
+                        showPreview: true);
+
+                    if (newTexGuid != rock.AlbedoTexture)
+                    {
+                        rock.AlbedoTexture = newTexGuid;
+                        rockChanged = true;
+                    }
+
+                    float texScale = rock.TextureScale;
+                    if (ImGui.SliderFloat("Texture Scale", ref texScale, 0.1f, 2.0f))
+                    {
+                        rock.TextureScale = texScale;
+                        rockChanged = true;
+                    }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("World-space UV scale for triplanar texturing\nSmaller = larger textures on rocks");
+
+                    ImGui.TreePop();
+                }
+
+                // Colors (procedural fallback when no texture)
                 if (ImGui.TreeNode("Colors##rock"))
                 {
+                    ImGui.TextDisabled("Used when no texture is assigned");
+                    ImGui.Spacing();
+
                     var baseCol = new System.Numerics.Vector3(rock.BaseColor[0], rock.BaseColor[1], rock.BaseColor[2]);
                     if (ImGui.ColorEdit3("Base Color##rock", ref baseCol))
                     {

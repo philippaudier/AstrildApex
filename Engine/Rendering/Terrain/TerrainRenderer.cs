@@ -847,6 +847,17 @@ namespace Engine.Rendering.Terrain
                 // Tiles are generated in world space already (see TileCpuGenerator)
                 _tileManager.RequestTilesAround(terrain, viewPos.X, viewPos.Z, terrain.StreamingRadius);
 
+                // Update auto water plane (creates/repositions water at WaterLevel)
+                if (terrain.EnableAutoWater)
+                {
+                    UpdateAutoWaterPlane(terrain, viewPos);
+                }
+                else if (terrain.AutoWaterEntity != null)
+                {
+                    // Remove water plane if auto water was disabled
+                    RemoveAutoWaterPlane(terrain);
+                }
+
                 // Process GPU resource deletions from evicted tiles (thread-safe)
                 _tileManager.ProcessGpuDeletions();
 
@@ -1439,6 +1450,15 @@ namespace Engine.Rendering.Terrain
         }
 
         /// <summary>
+        /// Check if there are any loaded streaming tiles.
+        /// Returns false if not in streaming mode or no tiles loaded yet.
+        /// </summary>
+        public bool HasLoadedTiles()
+        {
+            return _tileManager != null && _tileManager.LoadedTiles > 0;
+        }
+
+        /// <summary>
         /// Iterate over all renderable tiles (for grass rendering, etc.)
         /// Each tile provides its VAO, IndexCount, and world position (X, Y are tile coordinates).
         /// </summary>
@@ -1459,5 +1479,102 @@ namespace Engine.Rendering.Terrain
         /// Check if the terrain is in streaming mode and has active tiles.
         /// </summary>
         public bool HasActiveTiles => _tileManager != null && _tileManager.RenderableTiles > 0;
+
+        // === AUTO WATER PLANE MANAGEMENT ===
+
+        /// <summary>
+        /// Update or create the auto water plane for infinite streaming mode.
+        /// Creates a large water plane centered on the camera that covers all visible terrain.
+        /// </summary>
+        public void UpdateAutoWaterPlane(Engine.Components.Terrain terrain, Vector3 cameraPos)
+        {
+            if (terrain == null) return;
+            if (terrain.Mode != TerrainMode.InfiniteStreaming) return;
+            if (!terrain.EnableAutoWater) return;
+
+            var scene = terrain.Entity?.Scene;
+            if (scene == null) return;
+
+            // Calculate water plane size based on streaming radius and tile size
+            float tileSize = terrain.StreamingTileSize;
+            int radius = terrain.StreamingRadius;
+            float waterSize = (radius * 2 + 1) * tileSize * 2f + terrain.AutoWaterMargin * 2f;
+
+            // Check if we need to create the water entity
+            if (terrain.AutoWaterEntity == null || !scene.Entities.Contains(terrain.AutoWaterEntity))
+            {
+                // Create new water entity
+                var waterEntity = scene.CreateEntity("Auto Water Plane");
+
+                // Add transform
+                var transform = new Engine.Components.TransformComponent();
+                transform.Position = new OpenTK.Mathematics.Vector3(cameraPos.X, terrain.WaterLevel, cameraPos.Z);
+                transform.Scale = OpenTK.Mathematics.Vector3.One;
+                waterEntity.AddComponent(transform);
+
+                // Add water plane component
+                var waterPlane = new Engine.Components.WaterPlaneComponent();
+                waterPlane.Size = waterSize;
+                waterPlane.Resolution = terrain.AutoWaterResolution;
+                waterPlane.TessellationEnabled = true;
+                waterPlane.TessellationFactor = 16f;
+                waterPlane.WaveMode = 0; // Global (follow weather)
+                waterEntity.AddComponent(waterPlane);
+
+                terrain.AutoWaterEntity = waterEntity;
+                Console.WriteLine($"[TerrainRenderer] Created auto water plane: size={waterSize:F0}, level={terrain.WaterLevel:F1}");
+            }
+            else
+            {
+                // Update existing water entity position and size
+                var waterEntity = terrain.AutoWaterEntity;
+                var transform = waterEntity.GetComponent<Engine.Components.TransformComponent>();
+                var waterPlane = waterEntity.GetComponent<Engine.Components.WaterPlaneComponent>();
+
+                if (transform != null)
+                {
+                    // Keep water centered on camera (snap to grid to reduce jitter)
+                    float snapSize = tileSize * 0.5f;
+                    float snappedX = (float)Math.Floor(cameraPos.X / snapSize) * snapSize;
+                    float snappedZ = (float)Math.Floor(cameraPos.Z / snapSize) * snapSize;
+
+                    transform.Position = new OpenTK.Mathematics.Vector3(snappedX, terrain.WaterLevel, snappedZ);
+                }
+
+                if (waterPlane != null)
+                {
+                    // Update size if streaming radius changed
+                    if (Math.Abs(waterPlane.Size - waterSize) > 10f)
+                    {
+                        waterPlane.Size = waterSize;
+                        waterPlane.Resolution = terrain.AutoWaterResolution;
+                        waterPlane.NeedsRegeneration = true;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Remove the auto water plane if it exists.
+        /// Called when DisableAutoWater is set or when terrain is disposed.
+        /// </summary>
+        public void RemoveAutoWaterPlane(Engine.Components.Terrain terrain)
+        {
+            if (terrain?.AutoWaterEntity == null) return;
+
+            var scene = terrain.Entity?.Scene;
+            if (scene != null && scene.Entities.Contains(terrain.AutoWaterEntity))
+            {
+                // Call cleanup on components before removal
+                foreach (var comp in terrain.AutoWaterEntity.GetAllComponents())
+                {
+                    try { comp.OnDetached(); } catch { }
+                }
+                scene.Entities.Remove(terrain.AutoWaterEntity);
+                scene.Cache?.Invalidate();
+                Console.WriteLine("[TerrainRenderer] Removed auto water plane");
+            }
+            terrain.AutoWaterEntity = null;
+        }
     }
 }

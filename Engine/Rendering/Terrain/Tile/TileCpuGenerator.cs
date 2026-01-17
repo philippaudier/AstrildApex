@@ -496,7 +496,7 @@ namespace Engine.Rendering.Terrain.Tile
                 vertices[vIdx++] = u; vertices[vIdx++] = 0f;
             }
 
-            // Indices for front wall
+            // Indices for front wall (CCW winding viewed from -Z)
             for (int x = 0; x < res - 1; x++)
             {
                 uint topLeft = currentVertex + (uint)(x * 2);
@@ -504,8 +504,8 @@ namespace Engine.Rendering.Terrain.Tile
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
             }
             currentVertex += (uint)(res * 2);
 
@@ -532,7 +532,7 @@ namespace Engine.Rendering.Terrain.Tile
                 vertices[vIdx++] = u; vertices[vIdx++] = 0f;
             }
 
-            // Indices for back wall
+            // Indices for back wall (CCW winding viewed from +Z)
             for (int x = 0; x < res - 1; x++)
             {
                 uint topLeft = currentVertex + (uint)(x * 2);
@@ -540,8 +540,8 @@ namespace Engine.Rendering.Terrain.Tile
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
             }
             currentVertex += (uint)(res * 2);
 
@@ -568,7 +568,7 @@ namespace Engine.Rendering.Terrain.Tile
                 vertices[vIdx++] = v; vertices[vIdx++] = 0f;
             }
 
-            // Indices for left wall
+            // Indices for left wall (CCW winding viewed from -X)
             for (int z = 0; z < res - 1; z++)
             {
                 uint topLeft = currentVertex + (uint)(z * 2);
@@ -576,8 +576,8 @@ namespace Engine.Rendering.Terrain.Tile
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
+                indices[iIdx++] = topRight; indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
             }
             currentVertex += (uint)(res * 2);
 
@@ -604,7 +604,7 @@ namespace Engine.Rendering.Terrain.Tile
                 vertices[vIdx++] = v; vertices[vIdx++] = 0f;
             }
 
-            // Indices for right wall
+            // Indices for right wall (CCW winding viewed from +X)
             for (int z = 0; z < res - 1; z++)
             {
                 uint topLeft = currentVertex + (uint)(z * 2);
@@ -612,8 +612,8 @@ namespace Engine.Rendering.Terrain.Tile
                 uint topRight = topLeft + 2;
                 uint bottomRight = topRight + 1;
 
-                indices[iIdx++] = topLeft; indices[iIdx++] = bottomLeft; indices[iIdx++] = topRight;
-                indices[iIdx++] = topRight; indices[iIdx++] = bottomLeft; indices[iIdx++] = bottomRight;
+                indices[iIdx++] = topRight; indices[iIdx++] = bottomRight; indices[iIdx++] = topLeft;
+                indices[iIdx++] = topLeft; indices[iIdx++] = bottomRight; indices[iIdx++] = bottomLeft;
             }
             currentVertex += (uint)(res * 2);
 

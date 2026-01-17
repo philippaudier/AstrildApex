@@ -41,6 +41,8 @@ namespace Editor.Inspector
             DrawSkyOverridesSection(entity, time);
             ImGui.Spacing();
             DrawSunMoonSection(entity, time);
+            ImGui.Spacing();
+            DrawLightingIntensitySection(entity, time);
         }
 
         private static void DrawSkyOverridesSection(Engine.Scene.Entity entity, TimeComponent time)
@@ -138,6 +140,59 @@ namespace Editor.Inspector
             float dawnConv = time.DawnDuskSunConvergence;
             InspectorWidgets.FloatField("Dawn/Dusk Convergence", ref dawnConv, entityId, "DawnDuskSunConvergence", speed: 0.1f, min: 0.1f, max: 100f, tooltip: "Convergence during golden hour");
             time.DawnDuskSunConvergence = dawnConv;
+
+            InspectorWidgets.EndSection();
+        }
+
+        // Ambient and Direct Light Intensity based on time of day
+        private static void DrawLightingIntensitySection(Engine.Scene.Entity entity, TimeComponent time)
+        {
+            if (!InspectorWidgets.Section("💡 Lighting Intensity (Time)", defaultOpen: false)) return;
+            uint entityId = time.Entity?.Id ?? 0;
+
+            ImGui.TextDisabled("Ambient Light Intensity");
+            ImGui.SetItemTooltip("Controls how bright ambient light is at different times of day");
+
+            float dayAmbient = time.DayAmbientIntensity;
+            InspectorWidgets.FloatField("Day Ambient", ref dayAmbient, entityId, "DayAmbientIntensity",
+                speed: 0.01f, min: 0.0f, max: 2.0f, tooltip: "Ambient light intensity during day (noon)");
+            time.DayAmbientIntensity = dayAmbient;
+
+            float nightAmbient = time.NightAmbientIntensity;
+            InspectorWidgets.FloatField("Night Ambient", ref nightAmbient, entityId, "NightAmbientIntensity",
+                speed: 0.01f, min: 0.0f, max: 0.5f, tooltip: "Ambient light intensity at night (stars/moon only)");
+            time.NightAmbientIntensity = nightAmbient;
+
+            float goldenAmbient = time.GoldenHourAmbientIntensity;
+            InspectorWidgets.FloatField("Golden Hour Ambient", ref goldenAmbient, entityId, "GoldenHourAmbientIntensity",
+                speed: 0.01f, min: 0.0f, max: 2.0f, tooltip: "Ambient during sunrise/sunset (warm direct light fills)");
+            time.GoldenHourAmbientIntensity = goldenAmbient;
+
+            ImGui.Spacing();
+            ImGui.TextDisabled("Direct Light Intensity (Sun/Moon)");
+            ImGui.SetItemTooltip("Controls directional light intensity at different times");
+
+            float dayLight = time.DayLightIntensity;
+            InspectorWidgets.FloatField("Day Light", ref dayLight, entityId, "DayLightIntensity",
+                speed: 0.01f, min: 0.0f, max: 2.0f, tooltip: "Sunlight intensity during day");
+            time.DayLightIntensity = dayLight;
+
+            float nightLight = time.NightLightIntensity;
+            InspectorWidgets.FloatField("Night Light (Moon)", ref nightLight, entityId, "NightLightIntensity",
+                speed: 0.01f, min: 0.0f, max: 0.2f, tooltip: "Moonlight intensity at night");
+            time.NightLightIntensity = nightLight;
+
+            float goldenLight = time.GoldenHourLightIntensity;
+            InspectorWidgets.FloatField("Golden Hour Light", ref goldenLight, entityId, "GoldenHourLightIntensity",
+                speed: 0.01f, min: 0.0f, max: 2.0f, tooltip: "Light intensity during sunrise/sunset");
+            time.GoldenHourLightIntensity = goldenLight;
+
+            ImGui.Spacing();
+
+            // Show computed values (read-only)
+            ImGui.TextDisabled("Current Computed Values:");
+            ImGui.Text($"Ambient Intensity: {time.ComputedAmbientIntensity:F3}");
+            ImGui.Text($"Light Intensity: {time.ComputedLightIntensity:F3}");
 
             InspectorWidgets.EndSection();
         }

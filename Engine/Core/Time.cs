@@ -130,9 +130,9 @@ namespace Engine.Core
 
         /// <summary>
         /// Update time values. Called once per frame by the engine.
-        /// Do NOT call this manually!
+        /// Game builds should also call this in their main loop.
         /// </summary>
-        internal static void Update(float realDeltaTime)
+        public static void Update(float realDeltaTime)
         {
             // Clamp to prevent huge jumps (pause, breakpoint, etc.)
             realDeltaTime = MathF.Min(realDeltaTime, 0.1f); // Max 100ms (10 FPS minimum)

@@ -35,6 +35,10 @@ namespace Engine.Audio.Components
         private bool _deferredPlayOnAwake = false; // Flag to defer PlayOnAwake to Update()
         private readonly List<int> _effectSlots = new(); // OpenAL effect slots
 
+        // Multi-clip support
+        private readonly List<IAudioClip> _clips = new();
+        private int _currentClipIndex = 0;
+
         /// <summary>
         /// Per-source filters (Unity-like AudioLowPassFilter/AudioHighPassFilter)
         /// Stored in `Filters` (serializable below).
@@ -43,8 +47,20 @@ namespace Engine.Audio.Components
         // --- Propriétés sérialisables ---
 
         [Engine.Serialization.Serializable("clip")]
-        public Guid? ClipGuid { get; set; }
-        
+        public Guid? ClipGuid
+        {
+            get => ClipGuids.Count > 0 ? ClipGuids[0] : null;
+            set
+            {
+                ClipGuids.Clear();
+                if (value.HasValue && value.Value != Guid.Empty)
+                    ClipGuids.Add(value.Value);
+            }
+        }
+
+        [Engine.Serialization.Serializable("clips")]
+        public List<Guid> ClipGuids { get; set; } = new();
+
         [Engine.Serialization.Serializable("filters")]
         public List<AudioSourceFilter>? Filters { get; set; } = new();
 
@@ -207,14 +223,30 @@ namespace Engine.Audio.Components
 
         // --- Propriétés runtime ---
 
+        /// <summary>
+        /// The currently active audio clip (first clip if multiple are assigned)
+        /// Setting this property replaces all clips with a single clip
+        /// </summary>
         public IAudioClip? Clip
         {
             get => _clip;
             set
             {
+                // Clear existing clips and set single clip
+                _clips.Clear();
+                ClipGuids.Clear();
+                _currentClipIndex = 0;
+
                 _clip = value;
                 _streamingClip = value as StreamingAudioClip;
-                ClipGuid = value?.Guid;
+
+                if (value != null)
+                {
+                    _clips.Add(value);
+                    if (value.Guid != Guid.Empty)
+                        ClipGuids.Add(value.Guid);
+                }
+
                 if (_sourceId != -1 && value != null && value.IsLoaded && !value.IsStreaming)
                 {
                     // For non-streaming clips, assign the buffer directly
@@ -222,6 +254,114 @@ namespace Engine.Audio.Components
                 }
                 // Streaming clips are handled in Play() method
             }
+        }
+
+        /// <summary>
+        /// Gets the list of all assigned audio clips
+        /// </summary>
+        public IReadOnlyList<IAudioClip> Clips => _clips;
+
+        /// <summary>
+        /// Gets or sets the current clip index for multi-clip playback
+        /// </summary>
+        public int CurrentClipIndex
+        {
+            get => _currentClipIndex;
+            set => _currentClipIndex = Math.Clamp(value, 0, Math.Max(0, _clips.Count - 1));
+        }
+
+        /// <summary>
+        /// Gets the number of clips assigned to this audio source
+        /// </summary>
+        public int ClipCount => _clips.Count;
+
+        /// <summary>
+        /// Adds a clip to the playlist
+        /// </summary>
+        public void AddClip(IAudioClip clip)
+        {
+            if (clip == null) return;
+
+            _clips.Add(clip);
+            if (clip.Guid != Guid.Empty)
+                ClipGuids.Add(clip.Guid);
+
+            // If this is the first clip, set it as current
+            if (_clips.Count == 1)
+            {
+                _clip = clip;
+                _streamingClip = clip as StreamingAudioClip;
+            }
+        }
+
+        /// <summary>
+        /// Removes a clip from the playlist at the specified index
+        /// </summary>
+        public void RemoveClipAt(int index)
+        {
+            if (index < 0 || index >= _clips.Count) return;
+
+            _clips.RemoveAt(index);
+            if (index < ClipGuids.Count)
+                ClipGuids.RemoveAt(index);
+
+            // Adjust current index if needed
+            if (_currentClipIndex >= _clips.Count)
+                _currentClipIndex = Math.Max(0, _clips.Count - 1);
+
+            // Update current clip reference
+            if (_clips.Count > 0 && _currentClipIndex < _clips.Count)
+            {
+                _clip = _clips[_currentClipIndex];
+                _streamingClip = _clip as StreamingAudioClip;
+            }
+            else
+            {
+                _clip = null;
+                _streamingClip = null;
+            }
+        }
+
+        /// <summary>
+        /// Clears all clips from the playlist
+        /// </summary>
+        public void ClearClips()
+        {
+            Stop();
+            _clips.Clear();
+            ClipGuids.Clear();
+            _clip = null;
+            _streamingClip = null;
+            _currentClipIndex = 0;
+        }
+
+        /// <summary>
+        /// Moves a clip from one index to another in the playlist
+        /// </summary>
+        public void MoveClip(int fromIndex, int toIndex)
+        {
+            if (fromIndex < 0 || fromIndex >= _clips.Count) return;
+            if (toIndex < 0 || toIndex >= _clips.Count) return;
+            if (fromIndex == toIndex) return;
+
+            var clip = _clips[fromIndex];
+            _clips.RemoveAt(fromIndex);
+            _clips.Insert(toIndex, clip);
+
+            if (fromIndex < ClipGuids.Count && toIndex <= ClipGuids.Count)
+            {
+                var guid = ClipGuids[fromIndex];
+                ClipGuids.RemoveAt(fromIndex);
+                ClipGuids.Insert(Math.Min(toIndex, ClipGuids.Count), guid);
+            }
+
+            // Adjust current index to follow the moved clip if it was playing
+            if (_currentClipIndex == fromIndex)
+                _currentClipIndex = toIndex;
+            else if (fromIndex < _currentClipIndex && toIndex >= _currentClipIndex)
+                _currentClipIndex--;
+            else if (fromIndex > _currentClipIndex && toIndex <= _currentClipIndex)
+                _currentClipIndex++;
         }
 
         public bool IsPlaying
@@ -450,6 +590,26 @@ namespace Engine.Audio.Components
             // Vérifier si le son s'est arrêté
             if (_isPlaying && !IsPlaying && !_isPaused)
             {
+                // Check if there are more clips to play in the playlist
+                if (_clips.Count > 1 && _currentClipIndex < _clips.Count - 1)
+                {
+                    // Advance to next clip
+                    _currentClipIndex++;
+                    _clip = _clips[_currentClipIndex];
+                    _streamingClip = _clip as StreamingAudioClip;
+                    Play(resetPosition: true);
+                    return;
+                }
+                else if (_clips.Count > 1 && Loop)
+                {
+                    // Loop back to first clip if looping is enabled
+                    _currentClipIndex = 0;
+                    _clip = _clips[0];
+                    _streamingClip = _clip as StreamingAudioClip;
+                    Play(resetPosition: true);
+                    return;
+                }
+
                 _isPlaying = false;
                 AudioEngine.Instance.UnregisterActiveSource(this);
             }
@@ -867,20 +1027,29 @@ namespace Engine.Audio.Components
                 }
 
                 // For streaming clips, set loop on decoder; for non-streaming clips, set on OpenAL source
+                // IMPORTANT: When there are multiple clips, do NOT pass Loop=true to OpenAL
+                // because OpenAL will loop the same clip forever, preventing playlist iteration.
+                // The playlist/loop logic in Update() handles cycling through clips.
+                bool hasMultipleClips = _clips.Count > 1;
+
                 if (_streamingClip != null)
                 {
-                    if (_streamingClip.Loop != Loop)
+                    // For streaming clips with playlist, don't loop individual clips
+                    bool streamingLoop = hasMultipleClips ? false : Loop;
+                    if (_streamingClip.Loop != streamingLoop)
                     {
-                        _streamingClip.Loop = Loop;
-                        _lastLoop = Loop;
+                        _streamingClip.Loop = streamingLoop;
+                        _lastLoop = streamingLoop;
                     }
                 }
                 else
                 {
-                    if (_lastLoop != Loop)
+                    // For non-streaming clips with playlist, don't loop individual clips
+                    bool openALLoop = hasMultipleClips ? false : Loop;
+                    if (_lastLoop != openALLoop)
                     {
-                        AL.Source(_sourceId, ALSourceb.Looping, Loop);
-                        _lastLoop = Loop;
+                        AL.Source(_sourceId, ALSourceb.Looping, openALLoop);
+                        _lastLoop = openALLoop;
                     }
                 }
 
@@ -1047,48 +1216,62 @@ namespace Engine.Audio.Components
         }
 
         /// <summary>
-        /// Loads the audio clip from ClipGuid if it's set
-        /// This is called after deserialization to restore the clip reference
+        /// Loads all audio clips from ClipGuids
+        /// This is called after deserialization to restore the clip references
         /// </summary>
         private void LoadClipFromGuid()
         {
-            if (!ClipGuid.HasValue || ClipGuid.Value == Guid.Empty)
+            if (ClipGuids.Count == 0)
                 return;
 
-            try
+            _clips.Clear();
+
+            foreach (var guid in ClipGuids)
             {
-                // Try to get the clip from AudioImporter cache
-                var clip = Engine.Audio.Assets.AudioImporter.GetClipByGuid(ClipGuid.Value);
-                if (clip != null)
+                if (guid == Guid.Empty)
+                    continue;
+
+                try
                 {
-                    _clip = clip;
-                    _streamingClip = clip as StreamingAudioClip;
-                }
-                else
-                {
-                    // Try to load from AssetDatabase if it's registered
-                    if (Engine.Assets.AssetDatabase.TryGet(ClipGuid.Value, out var record))
+                    // Try to get the clip from AudioImporter cache
+                    var clip = Engine.Audio.Assets.AudioImporter.GetClipByGuid(guid);
+                    if (clip != null)
                     {
-                        clip = Engine.Audio.Assets.AudioImporter.LoadClip(record.Path);
-                        if (clip != null)
-                        {
-                            _clip = clip;
-                            _streamingClip = clip as StreamingAudioClip;
-                        }
-                        else
-                        {
-                            Log.Warning($"[AudioSource] Failed to load clip from path: {record.Path}");
-                        }
+                        _clips.Add(clip);
                     }
                     else
                     {
-                        Log.Warning($"[AudioSource] Clip GUID not found in AudioImporter or AssetDatabase: {ClipGuid.Value}");
+                        // Try to load from AssetDatabase if it's registered
+                        if (Engine.Assets.AssetDatabase.TryGet(guid, out var record))
+                        {
+                            clip = Engine.Audio.Assets.AudioImporter.LoadClip(record.Path);
+                            if (clip != null)
+                            {
+                                _clips.Add(clip);
+                            }
+                            else
+                            {
+                                Log.Warning($"[AudioSource] Failed to load clip from path: {record.Path}");
+                            }
+                        }
+                        else
+                        {
+                            Log.Warning($"[AudioSource] Clip GUID not found in AudioImporter or AssetDatabase: {guid}");
+                        }
                     }
                 }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, $"[AudioSource] Failed to load clip from GUID: {guid}");
+                }
             }
-            catch (Exception ex)
+
+            // Set the first clip as active
+            if (_clips.Count > 0)
             {
-                Log.Warning(ex, $"[AudioSource] Failed to load clip from GUID: {ClipGuid?.ToString() ?? "null"}");
+                _currentClipIndex = 0;
+                _clip = _clips[0];
+                _streamingClip = _clip as StreamingAudioClip;
             }
         }
 

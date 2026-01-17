@@ -477,5 +477,126 @@ namespace Engine.Components
             if (len < 0.001f) return new Vector2(1.0f, 0.0f);
             return dir / len;
         }
+
+        // ============================================================
+        // WAVE SAMPLING (CPU-side Gerstner waves for physics/gameplay)
+        // ============================================================
+
+        /// <summary>
+        /// Get the wave height at a world XZ position.
+        /// Returns the Y offset from base water level due to waves.
+        /// </summary>
+        public float GetWaveHeightAt(float worldX, float worldZ, float time)
+        {
+            float baseLevel = GetWaterLevel();
+            var result = CalculateGerstnerWave(worldX, worldZ, time);
+            return baseLevel + result.Y;
+        }
+
+        /// <summary>
+        /// Get the wave normal at a world XZ position.
+        /// Returns a normalized vector pointing "up" from the wave surface.
+        /// </summary>
+        public Vector3 GetWaveNormalAt(float worldX, float worldZ, float time)
+        {
+            // Sample neighboring points to calculate normal via finite differences
+            const float epsilon = 0.1f;
+
+            float hCenter = GetWaveHeightAt(worldX, worldZ, time);
+            float hLeft = GetWaveHeightAt(worldX - epsilon, worldZ, time);
+            float hRight = GetWaveHeightAt(worldX + epsilon, worldZ, time);
+            float hBack = GetWaveHeightAt(worldX, worldZ - epsilon, time);
+            float hForward = GetWaveHeightAt(worldX, worldZ + epsilon, time);
+
+            // Calculate tangent vectors
+            Vector3 tangentX = new Vector3(2.0f * epsilon, hRight - hLeft, 0);
+            Vector3 tangentZ = new Vector3(0, hForward - hBack, 2.0f * epsilon);
+
+            // Normal is cross product of tangents
+            Vector3 normal = Vector3.Cross(tangentZ, tangentX);
+            return Vector3.Normalize(normal);
+        }
+
+        /// <summary>
+        /// Get both wave height and normal at a world position (more efficient than calling both separately).
+        /// </summary>
+        public (float height, Vector3 normal) GetWaveDataAt(float worldX, float worldZ, float time)
+        {
+            float baseLevel = GetWaterLevel();
+            const float epsilon = 0.1f;
+
+            // Sample 5 points for height and normal calculation
+            float hCenter = CalculateGerstnerWave(worldX, worldZ, time).Y;
+            float hLeft = CalculateGerstnerWave(worldX - epsilon, worldZ, time).Y;
+            float hRight = CalculateGerstnerWave(worldX + epsilon, worldZ, time).Y;
+            float hBack = CalculateGerstnerWave(worldX, worldZ - epsilon, time).Y;
+            float hForward = CalculateGerstnerWave(worldX, worldZ + epsilon, time).Y;
+
+            // Calculate normal
+            Vector3 tangentX = new Vector3(2.0f * epsilon, hRight - hLeft, 0);
+            Vector3 tangentZ = new Vector3(0, hForward - hBack, 2.0f * epsilon);
+            Vector3 normal = Vector3.Normalize(Vector3.Cross(tangentZ, tangentX));
+
+            return (baseLevel + hCenter, normal);
+        }
+
+        /// <summary>
+        /// Calculate Gerstner wave displacement at a position.
+        /// Returns the 3D displacement vector (X, Y, Z offsets).
+        /// This mirrors the shader implementation for consistency.
+        /// </summary>
+        private Vector3 CalculateGerstnerWave(float worldX, float worldZ, float time)
+        {
+            Vector3 displacement = Vector3.Zero;
+
+            // Base wave direction
+            Vector2 baseDir = GetWaveDirection();
+
+            // Gerstner wave parameters
+            float amplitude = WaveAmplitude;
+            float frequency = WaveFrequency;
+            float steepness = MathHelper.Clamp(WaveSteepness, 0f, 1f);
+            float speed = WaveSpeed;
+
+            // Use fewer iterations on CPU for performance (4 instead of 8)
+            int iterations = Math.Min(WaveIterations, 4);
+
+            for (int i = 0; i < iterations; i++)
+            {
+                // Rotate direction for each octave (golden angle variation)
+                float angle = i * 0.5f; // Approximate rotation
+                float cosA = MathF.Cos(angle);
+                float sinA = MathF.Sin(angle);
+                Vector2 dir = new Vector2(
+                    baseDir.X * cosA - baseDir.Y * sinA,
+                    baseDir.X * sinA + baseDir.Y * cosA
+                );
+                dir = Vector2.Normalize(dir);
+
+                // Wave parameters for this octave
+                float w = 2.0f * MathF.PI * frequency; // Angular frequency
+                float phi = speed * w; // Phase speed
+                float q = steepness / (w * amplitude * iterations); // Steepness factor
+
+                // Dot product with position
+                float dot = dir.X * worldX + dir.Y * worldZ;
+
+                // Wave phase
+                float phase = w * dot + phi * time;
+                float sinPhase = MathF.Sin(phase);
+                float cosPhase = MathF.Cos(phase);
+
+                // Gerstner displacement
+                displacement.X += q * amplitude * dir.X * cosPhase;
+                displacement.Z += q * amplitude * dir.Y * cosPhase;
+                displacement.Y += amplitude * sinPhase;
+
+                // Decay for next octave
+                amplitude *= 0.5f;
+                frequency *= 1.8f;
+            }
+
+            return displacement;
+        }
     }
 }

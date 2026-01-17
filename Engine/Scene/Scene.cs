@@ -461,9 +461,22 @@ namespace Engine.Scene
         {
             entity.Scene = this;
             Entities.Add(entity);
-            
+
             // Invalidate cache when entities are added
             Cache?.Invalidate();
+        }
+
+        /// <summary>
+        /// Create an empty entity with the given name.
+        /// Add components using entity.AddComponent<T>().
+        /// </summary>
+        public Entity CreateEntity(string name)
+        {
+            var e = new Entity { Id = _nextId++, Name = name };
+            e.Scene = this;
+            Entities.Add(e);
+            Cache?.Invalidate();
+            return e;
         }
 
         public Entity CreateCube(string name, Vector3 pos, Vector3 scale, Vector4 color)

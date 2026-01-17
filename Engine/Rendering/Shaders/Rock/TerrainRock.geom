@@ -12,12 +12,14 @@ in VS_OUT {
     vec2 uv;
 } gs_in[];
 
-// Output to fragment shader - simplified to reduce per-vertex data
+// Output to fragment shader
 out GS_OUT {
     vec3 worldPos;
     vec3 normal;
     float aoFactor;     // AO + height packed
     vec3 rockColor;     // Per-rock color variation includes moss
+    vec2 triplanarUV;   // Triplanar UV for texture sampling (not used, calculated in frag)
+    vec3 blendWeights;  // Triplanar blend weights (not used, calculated in frag)
 } gs_out;
 
 // === UNIFORMS ===
@@ -372,28 +374,34 @@ void GenerateRock(vec3 basePos, vec3 terrainNormal, vec3 rockSeed, float rockSiz
         float ao1 = 0.5 + 0.5 * clamp(dot(n1, normalize(v1)), 0.0, 1.0);
         float ao2 = 0.5 + 0.5 * clamp(dot(n2, normalize(v2)), 0.0, 1.0);
         
-        // Emit triangle - simplified output
+        // Emit triangle
         gs_out.worldPos = w0;
         gs_out.normal = wn0;
         gs_out.aoFactor = ao0;
         gs_out.rockColor = color0;
+        gs_out.triplanarUV = vec2(0.0); // Calculated in fragment shader
+        gs_out.blendWeights = vec3(0.0); // Calculated in fragment shader
         gl_Position = uViewProj * vec4(w0, 1.0);
         EmitVertex();
-        
+
         gs_out.worldPos = w1;
         gs_out.normal = wn1;
         gs_out.aoFactor = ao1;
         gs_out.rockColor = color1;
+        gs_out.triplanarUV = vec2(0.0);
+        gs_out.blendWeights = vec3(0.0);
         gl_Position = uViewProj * vec4(w1, 1.0);
         EmitVertex();
-        
+
         gs_out.worldPos = w2;
         gs_out.normal = wn2;
         gs_out.aoFactor = ao2;
         gs_out.rockColor = color2;
+        gs_out.triplanarUV = vec2(0.0);
+        gs_out.blendWeights = vec3(0.0);
         gl_Position = uViewProj * vec4(w2, 1.0);
         EmitVertex();
-        
+
         EndPrimitive();
     }
 }

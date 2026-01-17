@@ -120,7 +120,10 @@ namespace Engine.Components
 
         [Serialization.SerializableAttribute("fogColor")]
         public Vector3 FogColor { get; set; } = new Vector3(0.7f, 0.7f, 0.8f); // Fog color
-        
+
+        [Serialization.SerializableAttribute("fogColorMode")]
+        public FogColorMode FogColorMode { get; set; } = FogColorMode.Custom; // How fog color is determined
+
         [Serialization.SerializableAttribute("fogStart")]
         public float FogStart { get; set; } = 10.0f; // Linear fog start distance
         
@@ -628,5 +631,16 @@ namespace Engine.Components
         Cumulus = 1,     // Fluffy, puffy, cotton-like clouds
         Stratus = 2,     // Layered, uniform, low-altitude clouds
         Storm = 3        // Dense, dark, turbulent storm clouds
+    }
+
+    /// <summary>
+    /// Fog color mode enumeration - determines how fog color is calculated
+    /// </summary>
+    public enum FogColorMode
+    {
+        Custom = 0,      // Use FogColor property directly
+        Ambient = 1,     // Use ambient light color (realistic night fog)
+        Skybox = 2,      // Sample from skybox/horizon color
+        IBL = 3          // Use IBL irradiance (HDRI skybox)
     }
 }

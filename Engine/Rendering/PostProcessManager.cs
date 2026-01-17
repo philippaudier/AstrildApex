@@ -15,6 +15,8 @@ namespace Engine.Rendering
         private static readonly List<GlobalEffects> _globalEffects = new();
         private static readonly Dictionary<Type, IPostProcessRenderer> _renderers = new();
         private static bool _initialized = false;
+        private static bool _debugLogOnce = true;
+        private static int _fullscreenVAO = 0;
 
         /// <summary>
         /// Initialise le système de post-processing
@@ -36,7 +38,10 @@ namespace Engine.Rendering
             RegisterRenderer<MotionBlurEffect>(new MotionBlurRenderer());
             RegisterRenderer<ImageSharpeningEffect>(new ImageSharpeningRenderer());
             RegisterRenderer<VolumetricFogEffect>(new VolumetricFogRenderer());
+            RegisterRenderer<AtmosphericScatteringEffect>(new AtmosphericScatteringRenderer());
             RegisterRenderer<ColorGradingEffect>(new ColorGradingRenderer());
+            // Underwater volume effect (Subnautica-style)
+            RegisterRenderer<UnderwaterEffect>(new UnderwaterRenderer());
 
 
             // Initialiser tous les renderers
@@ -44,6 +49,11 @@ namespace Engine.Rendering
             {
                 kvp.Value.Initialize();
             }
+
+            // Use PostProcessHelper's properly configured fullscreen VAO
+            // This VAO has actual vertex data which is more compatible across drivers
+            _fullscreenVAO = PostProcessHelper.GetFullscreenVAO();
+            Console.WriteLine($"[PostProcessManager] Using fullscreen VAO: {_fullscreenVAO}");
 
             _initialized = true;
         }
@@ -104,13 +114,24 @@ namespace Engine.Rendering
         /// <summary>
         /// Applique tous les effets de post-processing actifs
         /// </summary>
+        private static int _frameCount = 0;
+
         public static void ApplyEffects(PostProcessContext context)
         {
+            _frameCount++;
+
             // Auto-initialisation si pas encore fait OU si les renderers sont vides
             if (!_initialized || _renderers.Count == 0)
             {
+                Console.WriteLine($"[PostProcessManager] Frame {_frameCount}: Re-initializing (initialized={_initialized}, renderers={_renderers.Count})");
                 _initialized = false;
                 Initialize();
+            }
+
+            // Log first 5 frames
+            if (_frameCount <= 5)
+            {
+                Console.WriteLine($"[PostProcessManager] Frame {_frameCount}: GlobalEffects={_globalEffects.Count}, Renderers={_renderers.Count}");
             }
             
 
@@ -120,21 +141,30 @@ namespace Engine.Rendering
             var applicable = _globalEffects.AsEnumerable();
             if (context.Scene != null)
             {
-                // Log which global effects are in the list and whether they belong to the context scene
-                foreach (var ge in _globalEffects)
+                // Debug: log once per session
+                if (_debugLogOnce)
                 {
-                    try
+                    _debugLogOnce = false;
+                    Console.WriteLine($"[PostProcessManager] ApplyEffects: GlobalEffectsCount={_globalEffects.Count}, SceneEntities={context.Scene.Entities.Count}");
+                    foreach (var ge in _globalEffects)
                     {
-                        var id = ge?.Entity != null ? ge.Entity.Id.ToString() : "<no-entity>";
+                        var entityName = ge?.Entity?.Name ?? "<no-entity>";
+                        var hasEntityScene = ge?.Entity?.Scene != null;
                         var inScene = ge?.Entity != null && context.Scene.Entities.Contains(ge.Entity);
+                        Console.WriteLine($"[PostProcessManager]   GlobalEffect: Entity={entityName}, HasEntityScene={hasEntityScene}, InContextScene={inScene}, Effects={ge?.Effects.Count}");
                     }
-                    catch { }
                 }
 
                 applicable = applicable.Where(ge => ge?.Entity != null && context.Scene.Entities.Contains(ge.Entity));
             }
 
-            foreach (var globalEffect in applicable)
+            var applicableList = applicable.ToList();
+            if (_frameCount <= 5)
+            {
+                Console.WriteLine($"[PostProcessManager] Frame {_frameCount}: ApplicableEffects={applicableList.Count}");
+            }
+
+            foreach (var globalEffect in applicableList)
             {
                 if (globalEffect == null) continue;
                 if (globalEffect.Entity != null && globalEffect.Entity.Active == false) continue;
@@ -151,40 +181,102 @@ namespace Engine.Rendering
                 }
                 activeEffects.Sort((a, b) => (a?.Priority ?? 0).CompareTo(b?.Priority ?? 0));
 
+                // DEBUG: Log effect count once
+                if (_frameCount <= 3)
+                {
+                    Console.WriteLine($"[PostProcessManager] Frame {_frameCount}: Applying {activeEffects.Count} effects, PingPong={(context.SourceTexture2 != 0)}");
+                }
+
                 foreach (var effect in activeEffects)
                 {
                     if (effect == null) continue;
 
-                    // PERFORMANCE: Debug logs removed (called every frame)
-                    // Engine.Utils.DebugLogger.Log($"[PostProcessManager] Applying effect: {effect.GetType().Name}");
+                    // PING-PONG: Get the current source texture and target framebuffer
+                    // If ping-pong is set up (SourceTexture2 != 0), use the alternating buffers
+                    // Otherwise fall back to the original single-buffer behavior
+                    uint sourceTexture;
+                    uint targetFramebuffer;
+
+                    if (context.SourceTexture2 != 0 && context.TargetFramebuffer2 != 0)
+                    {
+                        // Ping-pong mode: read from current source, write to alternate target
+                        sourceTexture = context.GetCurrentSourceTexture();
+                        targetFramebuffer = context.GetCurrentTargetFramebuffer();
+                    }
+                    else
+                    {
+                        // Legacy mode: single buffer (undefined behavior, but backwards compatible)
+                        sourceTexture = context.SourceTexture;
+                        targetFramebuffer = context.TargetFramebuffer;
+                    }
+
+                    // DEBUG: Log first 3 frames
+                    if (_frameCount <= 3)
+                    {
+                        Console.WriteLine($"[PostProcessManager]   Effect {effect.GetType().Name}: src={sourceTexture}, dst={targetFramebuffer}, ResultInPrimary={context.ResultInPrimary}");
+                    }
 
                     try
                     {
-                        GL.BindFramebuffer(OpenTK.Graphics.OpenGL4.FramebufferTarget.Framebuffer, (int)context.TargetFramebuffer);
+                        GL.BindFramebuffer(OpenTK.Graphics.OpenGL4.FramebufferTarget.Framebuffer, (int)targetFramebuffer);
                         GL.Viewport(0, 0, Math.Max(1, context.Width), Math.Max(1, context.Height));
+
+                        // Set up clean state for post-processing (like the Editor does)
+                        GL.Disable(EnableCap.DepthTest);
+                        GL.Disable(EnableCap.Blend);
+                        GL.Disable(EnableCap.CullFace);
+
+                        // Bind VAO - required by some OpenGL drivers for rendering
+                        if (_fullscreenVAO != 0)
+                        {
+                            GL.BindVertexArray(_fullscreenVAO);
+                        }
                     }
                     catch (Exception) { }
 
                     if (_renderers.TryGetValue(effect.GetType(), out var renderer))
                     {
-                        // PERFORMANCE: Debug log removed (called every frame)
-                        // Engine.Utils.DebugLogger.Log($"[PostProcessManager] Found renderer for {effect.GetType().Name}");
+                        // Create a temporary context with the correct source/target for this effect
+                        // Renderers read from SourceTexture and write to TargetFramebuffer
+                        var originalSource = context.SourceTexture;
+                        var originalTarget = context.TargetFramebuffer;
+                        context.SourceTexture = sourceTexture;
+                        context.TargetFramebuffer = targetFramebuffer;
+
+                        // Render the actual post-process effect
                         renderer.Render(effect, context);
-                        
-                        // IMPORTANT: After rendering an effect, the result is now in the target framebuffer.
-                        // For subsequent effects to read the result of this effect (instead of the original
-                        // source), we need to update the context to read from the framebuffer's texture.
-                        // This creates a chain where each effect reads the result of the previous one.
-                        // NOTE: This assumes the target framebuffer has a texture attachment that we can read from.
-                        // For ViewportRenderer, this is _postTex attached to _postFbo.
+
+                        // Restore original values (for GetFinalResultTexture to work)
+                        context.SourceTexture = originalSource;
+                        context.TargetFramebuffer = originalTarget;
+
+                        // PING-PONG: Swap buffers so next effect reads from what we just wrote
+                        if (context.SourceTexture2 != 0 && context.TargetFramebuffer2 != 0)
+                        {
+                            context.SwapBuffers();
+                        }
                     }
                     else
                     {
                     }
 
-                    try { GL.BindFramebuffer(OpenTK.Graphics.OpenGL4.FramebufferTarget.Framebuffer, 0); } catch { }
+                    try
+                    {
+                        GL.BindFramebuffer(OpenTK.Graphics.OpenGL4.FramebufferTarget.Framebuffer, 0);
+                        GL.BindVertexArray(0);
+                    }
+                    catch { }
                 }
             }
+
+            // Restore OpenGL state after all effects
+            try
+            {
+                GL.Enable(EnableCap.DepthTest);
+                GL.Enable(EnableCap.CullFace);
+                GL.BindVertexArray(0);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -197,6 +289,10 @@ namespace Engine.Rendering
                 renderer.Dispose();
             }
             _renderers.Clear();
+
+            // Don't delete the VAO - it's owned by PostProcessHelper
+            _fullscreenVAO = 0;
+
             _initialized = false;
         }
     }

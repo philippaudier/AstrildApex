@@ -194,8 +194,9 @@ void main()
     worldPos.y += waveHeight;
     
     // Calculate normal from wave derivatives
-    vec3 tangentX = normalize(vec3(1.0, waveDx, 0.0));
-    vec3 tangentZ = normalize(vec3(0.0, waveDz, 1.0));
+    // cross(tangentZ, tangentX) gives up-pointing normal in right-handed coordinate system
+    vec3 tangentX = vec3(1.0, waveDx, 0.0);
+    vec3 tangentZ = vec3(0.0, waveDz, 1.0);
     vec3 normal = normalize(cross(tangentZ, tangentX));
     
     // Output

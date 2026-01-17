@@ -174,8 +174,11 @@ namespace Engine.Serialization
                     ["componentType"] = comp.GetType().FullName ?? comp.GetType().Name
                 },
                 Vector3 v3 => new[] { v3.X, v3.Y, v3.Z },
+                System.Numerics.Vector3 snv3 => new[] { snv3.X, snv3.Y, snv3.Z },
                 Vector2 v2 => new[] { v2.X, v2.Y },
+                System.Numerics.Vector2 snv2 => new[] { snv2.X, snv2.Y },
                 Vector4 v4 => new[] { v4.X, v4.Y, v4.Z, v4.W },
+                System.Numerics.Vector4 snv4 => new[] { snv4.X, snv4.Y, snv4.Z, snv4.W },
                 Quaternion q => new[] { q.X, q.Y, q.Z, q.W },
                 Color4 c => new[] { c.R, c.G, c.B, c.A },
                 Engine.Components.MinMaxCurve curve => new Dictionary<string, object>
@@ -244,16 +247,34 @@ namespace Engine.Serialization
                 return array?.Length >= 3 ? new Vector3(array[0], array[1], array[2]) : Vector3.Zero;
             }
 
+            if (targetType == typeof(System.Numerics.Vector3))
+            {
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
+                return array?.Length >= 3 ? new System.Numerics.Vector3(array[0], array[1], array[2]) : System.Numerics.Vector3.Zero;
+            }
+
             if (targetType == typeof(Vector2))
             {
                 var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 2 ? new Vector2(array[0], array[1]) : Vector2.Zero;
             }
 
+            if (targetType == typeof(System.Numerics.Vector2))
+            {
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
+                return array?.Length >= 2 ? new System.Numerics.Vector2(array[0], array[1]) : System.Numerics.Vector2.Zero;
+            }
+
             if (targetType == typeof(Vector4))
             {
                 var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
                 return array?.Length >= 4 ? new Vector4(array[0], array[1], array[2], array[3]) : Vector4.Zero;
+            }
+
+            if (targetType == typeof(System.Numerics.Vector4))
+            {
+                var array = JsonSerializer.Deserialize<float[]>(element, _jsonOptions);
+                return array?.Length >= 4 ? new System.Numerics.Vector4(array[0], array[1], array[2], array[3]) : System.Numerics.Vector4.Zero;
             }
 
             if (targetType == typeof(Quaternion))

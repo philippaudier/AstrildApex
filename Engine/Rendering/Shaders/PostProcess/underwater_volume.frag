@@ -22,11 +22,17 @@ uniform vec2 u_ScreenSize;
 // Master
 uniform float u_WaterLevel = 0.0;
 
-// Fog
+// Volumetric Fog (ray-marched)
 uniform int u_FogEnabled = 1;
 uniform vec3 u_FogColor = vec3(0.01, 0.05, 0.12);
 uniform float u_FogDensity = 0.02;
 uniform float u_Visibility = 50.0;
+uniform int u_FogSteps = 32;                   // Ray march steps
+uniform float u_FogScattering = 0.8;           // Forward scattering (Mie g parameter)
+uniform float u_FogAmbient = 0.15;             // Ambient light in fog
+uniform float u_FogHeightFalloff = 0.02;       // Density increase with depth
+uniform float u_FogNoiseScale = 0.05;          // 3D noise scale for density variation
+uniform float u_FogNoiseStrength = 0.3;        // How much noise affects density
 
 // Absorption
 uniform int u_AbsorptionEnabled = 1;
@@ -153,6 +159,13 @@ float noise3D(vec3 p) {
     float xy1 = mix(mix(h1.x, h1.y, f.x), mix(h1.z, h1.w, f.x), f.y);
     float xy2 = mix(mix(h2.x, h2.y, f.x), mix(h2.z, h2.w, f.x), f.y);
     return mix(xy1, xy2, f.z);
+}
+
+// Interleaved Gradient Noise - high quality dithering pattern
+// Source: http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
+float interleavedGradientNoise(vec2 screenPos) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(screenPos, magic.xy)));
 }
 
 // Reconstruct world position from depth
@@ -368,19 +381,234 @@ vec3 applyAbsorption(vec3 color, float depth) {
     return color * transmittance;
 }
 
-// Underwater fog
-vec3 applyUnderwaterFog(vec3 color, float dist, float depth) {
-    if (u_FogEnabled == 0) return color;
+// ============================================================================
+// VOLUMETRIC UNDERWATER FOG - AAA Quality
+// ============================================================================
+// Based on the atmospheric volumetric fog implementation:
+// - Beer-Lambert law for light extinction (absorption)
+// - Henyey-Greenstein phase function for anisotropic scattering
+// - Physically correct light transport
+// - Smooth depth-based density gradient
+// - IGN dithering for banding-free results
+//
+// Key difference from atmospheric fog: water absorbs light differently per
+// wavelength (red absorbed first, blue travels furthest), creating the
+// characteristic blue-green underwater look.
+// ============================================================================
 
-    float depthFactor = 1.0 + depth * 0.02;
-    float fogFactor = 1.0 - exp(-u_FogDensity * dist * depthFactor);
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
+const float PI = 3.14159265359;
 
-    float visibilityFade = smoothstep(u_Visibility * 0.7, u_Visibility, dist);
-    fogFactor = max(fogFactor, visibilityFade);
+// ============================================================================
+// PHASE FUNCTIONS
+// ============================================================================
 
-    vec3 fogColor = mix(u_FogColor, u_FogColor * vec3(0.5, 0.7, 1.0), clamp(depth / 50.0, 0.0, 1.0));
-    return mix(color, fogColor, fogFactor);
+// Henyey-Greenstein phase function
+// g: anisotropy (-1 = backscatter, 0 = isotropic, 1 = forward scatter)
+float phaseHG(float cosTheta, float g) {
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * PI * pow(max(denom, 0.0001), 1.5));
+}
+
+// Dual-lobe phase function (combines forward and back scatter)
+// More realistic for underwater light scattering
+float phaseDualLobe(float cosTheta, float g) {
+    // Water: 85% forward scatter, 15% back scatter (particles, plankton)
+    float forward = phaseHG(cosTheta, g);
+    float back = phaseHG(cosTheta, -g * 0.4);
+    return mix(back, forward, 0.85);
+}
+
+// ============================================================================
+// DENSITY SAMPLING
+// ============================================================================
+
+// Sample fog density at a world position underwater
+float sampleUnderwaterDensity(vec3 worldPos) {
+    // Base density
+    float density = u_FogDensity;
+
+    // Depth below water surface
+    float depthBelowSurface = max(0.0, u_WaterLevel - worldPos.y);
+
+    // Depth-based density increase (water gets murkier with depth)
+    // Using exponential for smooth falloff
+    if (u_FogHeightFalloff > 0.0) {
+        float depthFactor = 1.0 + depthBelowSurface * u_FogHeightFalloff;
+        density *= depthFactor;
+    }
+
+    // 3D noise for organic variation (currents, sediment, thermal layers)
+    if (u_FogNoiseStrength > 0.001) {
+        vec3 noisePos = worldPos * u_FogNoiseScale;
+        // Animate slowly - underwater currents
+        noisePos += vec3(u_Time * 0.015, u_Time * 0.008, u_Time * 0.012);
+
+        // Multi-octave noise
+        float noise = 0.0;
+        float amp = 0.5;
+        float freq = 1.0;
+        for (int i = 0; i < 3; i++) {
+            noise += amp * noise3D(noisePos * freq);
+            amp *= 0.5;
+            freq *= 2.0;
+        }
+        noise = noise * 0.5 + 0.5; // Remap to [0, 1]
+
+        // Apply noise - subtle variation to avoid uniform look
+        density *= mix(1.0 - u_FogNoiseStrength * 0.5, 1.0 + u_FogNoiseStrength * 0.3, noise);
+    }
+
+    return max(density, 0.0);
+}
+
+// ============================================================================
+// VOLUMETRIC FOG RESULT
+// ============================================================================
+
+struct UnderwaterFogResult {
+    vec3 inScattering;    // Light scattered INTO the viewing ray
+    float transmittance;  // How much background light passes through (0-1)
+};
+
+// ============================================================================
+// RAY MARCHING
+// ============================================================================
+
+UnderwaterFogResult rayMarchUnderwaterFog(vec3 rayOrigin, vec3 rayDir, float maxDist, float cameraDepth, vec2 screenUV) {
+    UnderwaterFogResult result;
+    result.inScattering = vec3(0.0);
+    result.transmittance = 1.0;
+
+    if (u_FogEnabled == 0) return result;
+
+    // Ray march parameters
+    int steps = clamp(u_FogSteps, 8, 64);
+    float rayLength = min(maxDist, u_Visibility * 2.0);
+
+    if (rayLength < 0.1) return result;
+
+    float stepSize = rayLength / float(steps);
+
+    // === IGN DITHERING (anti-banding) ===
+    vec2 pixelCoord = screenUV * u_ScreenSize;
+    float dither = interleavedGradientNoise(pixelCoord);
+
+    // === LIGHT SETUP ===
+    vec3 sunDir = normalize(-u_SunDirection);
+    float sunVisibility = max(0.0, sunDir.y); // Sun above water surface
+
+    // View-to-sun angle for phase function
+    float cosTheta = dot(rayDir, sunDir);
+    float phase = phaseDualLobe(cosTheta, u_FogScattering);
+
+    // Water absorption coefficients (wavelength-dependent)
+    vec3 waterAbsorption = vec3(u_AbsorptionR, u_AbsorptionG, u_AbsorptionB);
+
+    // Light colors
+    vec3 sunColor = u_GodRaysColor * sunVisibility;
+    vec3 ambientColor = u_FogColor * u_FogAmbient;
+
+    // Extinction factor for fog (separate from water absorption)
+    float extinctionFactor = 1.0;
+
+    // === RAY MARCH LOOP ===
+    for (int i = 0; i < 64; i++) {
+        if (i >= steps) break;
+        if (result.transmittance < 0.005) break; // Early termination
+
+        // Sample position with dithered offset
+        float t = (float(i) + dither) * stepSize;
+        vec3 samplePos = rayOrigin + rayDir * t;
+
+        // Skip if above water
+        if (samplePos.y > u_WaterLevel) continue;
+
+        // Depth at sample point
+        float sampleDepth = max(0.0, u_WaterLevel - samplePos.y);
+
+        // Sample fog density
+        float density = sampleUnderwaterDensity(samplePos);
+
+        if (density > 0.0001) {
+            // =====================
+            // EXTINCTION (Beer-Lambert)
+            // =====================
+            // Combined extinction from fog particles and water absorption
+            float fogExtinction = density * extinctionFactor * stepSize;
+            float sampleTransmittance = exp(-fogExtinction);
+
+            // =====================
+            // IN-SCATTERING
+            // =====================
+            // Light reaching this point from above
+
+            // Sun light attenuation through water (depth-dependent)
+            // Light travels from surface down to sample point
+            vec3 sunAttenuation = exp(-waterAbsorption * sampleDepth * 0.5);
+
+            // Overall light reduction with depth (exponential falloff)
+            float depthFalloff = exp(-sampleDepth * 0.025);
+
+            // Direct sun scattering
+            vec3 directScatter = sunColor * sunAttenuation * depthFalloff * phase;
+
+            // Ambient scattering (sky light diffused through water)
+            vec3 ambientScatter = ambientColor * exp(-waterAbsorption * sampleDepth * 0.3);
+            // Ambient is stronger deeper (no direct sun) - inverse relationship
+            ambientScatter *= (1.0 - depthFalloff * 0.5);
+
+            // Total in-scattered light at this sample
+            vec3 inScatter = (directScatter + ambientScatter) * u_FogColor;
+
+            // Energy-conserving integration
+            // The (1 - sampleTransmittance) term ensures conservation
+            vec3 scatterContrib = inScatter * (1.0 - sampleTransmittance) * result.transmittance;
+            result.inScattering += scatterContrib;
+
+            // Update transmittance
+            result.transmittance *= sampleTransmittance;
+        }
+    }
+
+    // Clamp results
+    result.transmittance = clamp(result.transmittance, 0.0, 1.0);
+
+    // Visibility hard cutoff with smooth blend
+    float visibilityFade = 1.0 - smoothstep(u_Visibility * 0.6, u_Visibility, maxDist);
+
+    // Beyond visibility: fade to fog color
+    if (visibilityFade < 1.0) {
+        float beyondVis = 1.0 - visibilityFade;
+        // Darken transmittance and add fog color
+        result.transmittance *= visibilityFade;
+        result.inScattering = mix(result.inScattering, u_FogColor * u_FogAmbient, beyondVis * 0.7);
+    }
+
+    return result;
+}
+
+// ============================================================================
+// APPLY UNDERWATER FOG
+// ============================================================================
+
+vec3 applyUnderwaterFog(vec3 sceneColor, float dist, float cameraDepth, vec3 rayOrigin, vec3 rayDir, vec2 screenUV) {
+    if (u_FogEnabled == 0) return sceneColor;
+
+    // Ray march through underwater volume
+    UnderwaterFogResult fog = rayMarchUnderwaterFog(rayOrigin, rayDir, dist, cameraDepth, screenUV);
+
+    // =====================
+    // PHYSICALLY CORRECT COMPOSITING
+    // =====================
+    // final = scene * transmittance + inScattering
+    //
+    // - transmittance < 1 means fog ABSORBS light (darkens distant objects)
+    // - inScattering adds light scattered from sun/sky
+
+    vec3 finalColor = sceneColor * fog.transmittance + fog.inScattering;
+
+    return finalColor;
 }
 
 // =============================================================================
@@ -396,13 +624,7 @@ vec3 applyUnderwaterFog(vec3 color, float dist, float depth) {
 //
 // ANTI-BANDING: Uses Interleaved Gradient Noise (IGN) for temporal/spatial
 // dithering to break up visible stepping artifacts.
-
-// Interleaved Gradient Noise - high quality dithering pattern
-// Source: http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
-float interleavedGradientNoise(vec2 screenPos) {
-    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(screenPos, magic.xy)));
-}
+// Note: interleavedGradientNoise() is defined in HELPER FUNCTIONS section above.
 
 vec3 calculateGodRays(vec3 worldPos, vec3 viewDir, float cameraDepth, vec2 screenUV) {
     if (u_GodRaysEnabled == 0) return vec3(0.0);
@@ -1250,8 +1472,8 @@ void main() {
         vec3 caustics = calculateCaustics(worldPos, pixelDepth, surfaceNormal);
         color += caustics;
 
-        // Apply full underwater fog
-        color = applyUnderwaterFog(color, dist, cameraDepth);
+        // Apply full volumetric underwater fog (ray-marched)
+        color = applyUnderwaterFog(color, dist, cameraDepth, u_CameraPos, viewDir, vTexCoord);
     }
 
     // =========================================================================

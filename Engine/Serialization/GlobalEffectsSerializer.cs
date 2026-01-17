@@ -143,6 +143,152 @@ namespace Engine.Serialization
                         effectData["sunsettemperature"] = colorGrading.SunsetTemperature;
                         effectData["transitionspeed"] = colorGrading.TransitionSpeed;
                         break;
+
+                    case VolumetricFogEffect volFog:
+                        // Source mode
+                        effectData["source"] = volFog.Source.ToString();
+                        effectData["blendfactor"] = volFog.BlendFactor;
+                        // Local fog parameters
+                        effectData["fogcolor"] = new[] { volFog.FogColor.X, volFog.FogColor.Y, volFog.FogColor.Z };
+                        effectData["density"] = volFog.Density;
+                        effectData["depthstart"] = volFog.DepthStart;
+                        effectData["depthend"] = volFog.DepthEnd;
+                        // Ray marching
+                        effectData["raymarchsteps"] = volFog.RayMarchSteps;
+                        // Height-based fog
+                        effectData["useheightfog"] = volFog.UseHeightFog;
+                        effectData["heightfalloff"] = volFog.HeightFalloff;
+                        effectData["baseheight"] = volFog.BaseHeight;
+                        effectData["maxheight"] = volFog.MaxHeight;
+                        // Scattering & god rays
+                        effectData["usesunscattering"] = volFog.UseSunScattering;
+                        effectData["scatteringintensity"] = volFog.ScatteringIntensity;
+                        effectData["mieg"] = volFog.MieG;
+                        effectData["extinctionfactor"] = volFog.ExtinctionFactor;
+                        effectData["sunscatteringcolor"] = new[] { volFog.SunScatteringColor.X, volFog.SunScatteringColor.Y, volFog.SunScatteringColor.Z };
+                        // Scatter color options
+                        effectData["scattersource"] = volFog.ScatterSource.ToString();
+                        effectData["inscattercolor"] = new[] { volFog.InScatterColor.X, volFog.InScatterColor.Y, volFog.InScatterColor.Z };
+                        effectData["ambientcolor"] = new[] { volFog.AmbientColor.X, volFog.AmbientColor.Y, volFog.AmbientColor.Z };
+                        effectData["ambientintensity"] = volFog.AmbientIntensity;
+                        effectData["useambientfromsky"] = volFog.UseAmbientFromSky;
+                        // God rays radial blur
+                        effectData["godraysintensity"] = volFog.GodRaysIntensity;
+                        effectData["godraysdensity"] = volFog.GodRaysDensity;
+                        effectData["godraysdecay"] = volFog.GodRaysDecay;
+                        // Noise/detail
+                        effectData["usenoise"] = volFog.UseNoise;
+                        effectData["noisescale"] = volFog.NoiseScale;
+                        effectData["noisespeed"] = volFog.NoiseSpeed;
+                        effectData["noisestrength"] = volFog.NoiseStrength;
+                        effectData["noiseoctaves"] = volFog.NoiseOctaves;
+                        break;
+
+                    case AtmosphericScatteringEffect atmo:
+                        // Planet geometry
+                        effectData["planetradius"] = atmo.PlanetRadius;
+                        effectData["atmosphereradius"] = atmo.AtmosphereRadius;
+                        // Scale heights
+                        effectData["rayleighscaleheight"] = atmo.RayleighScaleHeight;
+                        effectData["miescaleheight"] = atmo.MieScaleHeight;
+                        // Scattering coefficients
+                        effectData["rayleighcoefficients"] = new[] { atmo.RayleighCoefficients.X, atmo.RayleighCoefficients.Y, atmo.RayleighCoefficients.Z };
+                        effectData["miecoefficient"] = atmo.MieCoefficient;
+                        effectData["mieg"] = atmo.MieG;
+                        // Sun
+                        effectData["sunintensity"] = atmo.SunIntensity;
+                        // Quality
+                        effectData["numsamples"] = atmo.NumSamples;
+                        effectData["numlightsamples"] = atmo.NumLightSamples;
+                        // Output
+                        effectData["exposure"] = atmo.Exposure;
+                        break;
+
+                    case UnderwaterEffect uw:
+                        // Water level
+                        effectData["waterlevelsource"] = uw.Source.ToString();
+                        effectData["waterlevel"] = uw.WaterLevel;
+                        // Fog
+                        effectData["fogenabled"] = uw.FogEnabled;
+                        effectData["fogcolor"] = new[] { uw.FogColor.X, uw.FogColor.Y, uw.FogColor.Z };
+                        effectData["fogdensity"] = uw.FogDensity;
+                        effectData["visibility"] = uw.Visibility;
+                        // Absorption
+                        effectData["absorptionenabled"] = uw.AbsorptionEnabled;
+                        effectData["absorptionr"] = uw.AbsorptionR;
+                        effectData["absorptiong"] = uw.AbsorptionG;
+                        effectData["absorptionb"] = uw.AbsorptionB;
+                        // God rays
+                        effectData["godraysenabled"] = uw.GodRaysEnabled;
+                        effectData["godraysintensity"] = uw.GodRaysIntensity;
+                        effectData["godrayscolor"] = new[] { uw.GodRaysColor.X, uw.GodRaysColor.Y, uw.GodRaysColor.Z };
+                        effectData["godraysdensity"] = uw.GodRaysDensity;
+                        effectData["godraysdecay"] = uw.GodRaysDecay;
+                        effectData["godrayssamples"] = uw.GodRaysSamples;
+                        // Particles (volumetric with depth and lighting)
+                        effectData["particlesenabled"] = uw.ParticlesEnabled;
+                        effectData["particledensity"] = uw.ParticleDensity;
+                        effectData["particlecolor"] = new[] { uw.ParticleColor.X, uw.ParticleColor.Y, uw.ParticleColor.Z };
+                        effectData["particlebrightness"] = uw.ParticleBrightness;
+                        effectData["particlespeed"] = uw.ParticleSpeed;
+                        effectData["particlesizemin"] = uw.ParticleSizeMin;
+                        effectData["particlesizemax"] = uw.ParticleSizeMax;
+                        effectData["particledepthlayers"] = uw.ParticleDepthLayers;
+                        effectData["particlelighting"] = uw.ParticleLighting;
+                        effectData["particlescattering"] = uw.ParticleScattering;
+                        effectData["particleturbulence"] = uw.ParticleTurbulence;
+                        effectData["particlegodrayglow"] = uw.ParticleGodRayGlow;
+                        effectData["particlefocusdistance"] = uw.ParticleFocusDistance;
+                        effectData["particlefocusrange"] = uw.ParticleFocusRange;
+                        effectData["particlenearfade"] = uw.ParticleNearFade;
+                        effectData["particlefarfade"] = uw.ParticleFarFade;
+                        if (uw.ParticleTextureGuid.HasValue)
+                            effectData["particletextureguid"] = uw.ParticleTextureGuid.Value.ToString();
+                        // Caustics
+                        effectData["causticsenabled"] = uw.CausticsEnabled;
+                        effectData["causticsintensity"] = uw.CausticsIntensity;
+                        effectData["causticsscale"] = uw.CausticsScale;
+                        effectData["causticsspeed"] = uw.CausticsSpeed;
+                        effectData["causticsoctaves"] = uw.CausticsOctaves;
+                        effectData["causticsbrightness"] = uw.CausticsBrightness;
+                        effectData["causticssharpness"] = uw.CausticsSharpness;
+                        effectData["causticsdistortion"] = uw.CausticsDistortion;
+                        effectData["causticsdepthfalloff"] = uw.CausticsDepthFalloff;
+                        effectData["causticschromatic"] = uw.CausticsChromatic;
+                        // Tint & Ambient
+                        effectData["tintcolor"] = new[] { uw.TintColor.X, uw.TintColor.Y, uw.TintColor.Z };
+                        effectData["ambientintensity"] = uw.AmbientIntensity;
+                        effectData["ambientcolor"] = new[] { uw.AmbientColor.X, uw.AmbientColor.Y, uw.AmbientColor.Z };
+                        // Screen Distortion
+                        effectData["distortionenabled"] = uw.DistortionEnabled;
+                        effectData["distortionintensity"] = uw.DistortionIntensity;
+                        effectData["distortionscale"] = uw.DistortionScale;
+                        effectData["distortionspeed"] = uw.DistortionSpeed;
+                        effectData["distortionchromatic"] = uw.DistortionChromatic;
+                        effectData["distortionusewaves"] = uw.DistortionUseWaves;
+                        effectData["distortionwaveinfluence"] = uw.DistortionWaveInfluence;
+                        effectData["distortionnoiseinfluence"] = uw.DistortionNoiseInfluence;
+                        effectData["distortiondepthfade"] = uw.DistortionDepthFade;
+                        // Snell's Window
+                        effectData["snellwindowenabled"] = uw.SnellWindowEnabled;
+                        effectData["snellcriticalangle"] = uw.SnellCriticalAngle;
+                        effectData["snelledgesoftness"] = uw.SnellEdgeSoftness;
+                        effectData["snellreflectiontint"] = new[] { uw.SnellReflectionTint.X, uw.SnellReflectionTint.Y, uw.SnellReflectionTint.Z };
+                        effectData["snellreflectionstrength"] = uw.SnellReflectionStrength;
+                        effectData["snellfresnelpower"] = uw.SnellFresnelPower;
+                        effectData["snellwavedistortion"] = uw.SnellWaveDistortion;
+                        // Water Transition
+                        effectData["transitionenabled"] = uw.TransitionEnabled;
+                        effectData["transitionduration"] = uw.TransitionDuration;
+                        effectData["enterbubbleintensity"] = uw.EnterBubbleIntensity;
+                        effectData["enterbubblesize"] = uw.EnterBubbleSize;
+                        effectData["enterbubblecount"] = uw.EnterBubbleCount;
+                        effectData["enterdistortion"] = uw.EnterDistortion;
+                        effectData["exitdropletintensity"] = uw.ExitDropletIntensity;
+                        effectData["exitdropletsize"] = uw.ExitDropletSize;
+                        effectData["exitdropletcount"] = uw.ExitDropletCount;
+                        effectData["exitdripspeed"] = uw.ExitDripSpeed;
+                        break;
                 }
 
                 effectsData.Add(effectData);
@@ -185,6 +331,9 @@ namespace Engine.Serialization
                         "Engine.Rendering.DepthOfFieldEffect" or "DepthOfFieldEffect" => new DepthOfFieldEffect(),
                         "Engine.Rendering.MotionBlurEffect" or "MotionBlurEffect" => new MotionBlurEffect(),
                         "Engine.Rendering.ColorGradingEffect" or "ColorGradingEffect" => new ColorGradingEffect(),
+                        "Engine.Rendering.VolumetricFogEffect" or "VolumetricFogEffect" => new VolumetricFogEffect(),
+                        "Engine.Rendering.AtmosphericScatteringEffect" or "AtmosphericScatteringEffect" => new AtmosphericScatteringEffect(),
+                        "Engine.Rendering.UnderwaterEffect" or "UnderwaterEffect" => new UnderwaterEffect(),
                         _ => null
                     };
                     
@@ -404,6 +553,320 @@ namespace Engine.Serialization
                                 colorGrading.SunsetTemperature = sunsetTempElement.GetSingle();
                             if (effectObj.TryGetValue("transitionspeed", out var transSpeedElement))
                                 colorGrading.TransitionSpeed = transSpeedElement.GetSingle();
+                            break;
+
+                        case VolumetricFogEffect volFog:
+                            // Source mode
+                            if (effectObj.TryGetValue("source", out var volFogSourceElement))
+                            {
+                                if (Enum.TryParse<VolumetricFogEffect.FogSource>(volFogSourceElement.GetString(), out var volFogSource))
+                                    volFog.Source = volFogSource;
+                            }
+                            if (effectObj.TryGetValue("blendfactor", out var volFogBlendElement))
+                                volFog.BlendFactor = volFogBlendElement.GetSingle();
+                            // Local fog parameters
+                            if (effectObj.TryGetValue("fogcolor", out var volFogColorElement))
+                            {
+                                var arr = volFogColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    volFog.FogColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("density", out var volFogDensityElement))
+                                volFog.Density = volFogDensityElement.GetSingle();
+                            if (effectObj.TryGetValue("depthstart", out var volFogDepthStartElement))
+                                volFog.DepthStart = volFogDepthStartElement.GetSingle();
+                            if (effectObj.TryGetValue("depthend", out var volFogDepthEndElement))
+                                volFog.DepthEnd = volFogDepthEndElement.GetSingle();
+                            // Ray marching
+                            if (effectObj.TryGetValue("raymarchsteps", out var volFogRayMarchElement))
+                                volFog.RayMarchSteps = volFogRayMarchElement.GetInt32();
+                            // Height-based fog
+                            if (effectObj.TryGetValue("useheightfog", out var volFogUseHeightElement))
+                                volFog.UseHeightFog = volFogUseHeightElement.GetBoolean();
+                            if (effectObj.TryGetValue("heightfalloff", out var volFogHeightFalloffElement))
+                                volFog.HeightFalloff = volFogHeightFalloffElement.GetSingle();
+                            if (effectObj.TryGetValue("baseheight", out var volFogBaseHeightElement))
+                                volFog.BaseHeight = volFogBaseHeightElement.GetSingle();
+                            if (effectObj.TryGetValue("maxheight", out var volFogMaxHeightElement))
+                                volFog.MaxHeight = volFogMaxHeightElement.GetSingle();
+                            // Scattering & god rays
+                            if (effectObj.TryGetValue("usesunscattering", out var volFogUseSunElement))
+                                volFog.UseSunScattering = volFogUseSunElement.GetBoolean();
+                            if (effectObj.TryGetValue("scatteringintensity", out var volFogScatterIntElement))
+                                volFog.ScatteringIntensity = volFogScatterIntElement.GetSingle();
+                            if (effectObj.TryGetValue("mieg", out var volFogMieGElement))
+                                volFog.MieG = volFogMieGElement.GetSingle();
+                            if (effectObj.TryGetValue("extinctionfactor", out var volFogExtinctionElement))
+                                volFog.ExtinctionFactor = volFogExtinctionElement.GetSingle();
+                            if (effectObj.TryGetValue("sunscatteringcolor", out var volFogSunColorElement))
+                            {
+                                var arr = volFogSunColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    volFog.SunScatteringColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            // Scatter color options
+                            if (effectObj.TryGetValue("scattersource", out var volFogScatterSourceElement))
+                            {
+                                if (Enum.TryParse<VolumetricFogEffect.ScatterColorSource>(volFogScatterSourceElement.GetString(), out var scatterSource))
+                                    volFog.ScatterSource = scatterSource;
+                            }
+                            if (effectObj.TryGetValue("inscattercolor", out var volFogInScatterColorElement))
+                            {
+                                var arr = volFogInScatterColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    volFog.InScatterColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("ambientcolor", out var volFogAmbientColorElement))
+                            {
+                                var arr = volFogAmbientColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    volFog.AmbientColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("ambientintensity", out var volFogAmbientElement))
+                                volFog.AmbientIntensity = volFogAmbientElement.GetSingle();
+                            if (effectObj.TryGetValue("useambientfromsky", out var volFogUseAmbientFromSkyElement))
+                                volFog.UseAmbientFromSky = volFogUseAmbientFromSkyElement.GetBoolean();
+                            // God rays radial blur
+                            if (effectObj.TryGetValue("godraysintensity", out var volFogGodRaysIntElement))
+                                volFog.GodRaysIntensity = volFogGodRaysIntElement.GetSingle();
+                            if (effectObj.TryGetValue("godraysdensity", out var volFogGodRaysDensityElement))
+                                volFog.GodRaysDensity = volFogGodRaysDensityElement.GetSingle();
+                            if (effectObj.TryGetValue("godraysdecay", out var volFogGodRaysDecayElement))
+                                volFog.GodRaysDecay = volFogGodRaysDecayElement.GetSingle();
+                            // Noise/detail
+                            if (effectObj.TryGetValue("usenoise", out var volFogUseNoiseElement))
+                                volFog.UseNoise = volFogUseNoiseElement.GetBoolean();
+                            if (effectObj.TryGetValue("noisescale", out var volFogNoiseScaleElement))
+                                volFog.NoiseScale = volFogNoiseScaleElement.GetSingle();
+                            if (effectObj.TryGetValue("noisespeed", out var volFogNoiseSpeedElement))
+                                volFog.NoiseSpeed = volFogNoiseSpeedElement.GetSingle();
+                            if (effectObj.TryGetValue("noisestrength", out var volFogNoiseStrengthElement))
+                                volFog.NoiseStrength = volFogNoiseStrengthElement.GetSingle();
+                            if (effectObj.TryGetValue("noiseoctaves", out var volFogNoiseOctavesElement))
+                                volFog.NoiseOctaves = volFogNoiseOctavesElement.GetInt32();
+                            break;
+
+                        case AtmosphericScatteringEffect atmo:
+                            // Planet geometry
+                            if (effectObj.TryGetValue("planetradius", out var planetRadiusElement))
+                                atmo.PlanetRadius = planetRadiusElement.GetSingle();
+                            if (effectObj.TryGetValue("atmosphereradius", out var atmoRadiusElement))
+                                atmo.AtmosphereRadius = atmoRadiusElement.GetSingle();
+                            // Scale heights
+                            if (effectObj.TryGetValue("rayleighscaleheight", out var rayScaleElement))
+                                atmo.RayleighScaleHeight = rayScaleElement.GetSingle();
+                            if (effectObj.TryGetValue("miescaleheight", out var mieScaleElement))
+                                atmo.MieScaleHeight = mieScaleElement.GetSingle();
+                            // Scattering coefficients
+                            if (effectObj.TryGetValue("rayleighcoefficients", out var rayCoeffElement))
+                            {
+                                var arr = rayCoeffElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    atmo.RayleighCoefficients = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("miecoefficient", out var mieCoeffElement))
+                                atmo.MieCoefficient = mieCoeffElement.GetSingle();
+                            if (effectObj.TryGetValue("mieg", out var mieGElement))
+                                atmo.MieG = mieGElement.GetSingle();
+                            // Sun
+                            if (effectObj.TryGetValue("sunintensity", out var sunIntensityElement))
+                                atmo.SunIntensity = sunIntensityElement.GetSingle();
+                            // Quality
+                            if (effectObj.TryGetValue("numsamples", out var numSamplesElement))
+                                atmo.NumSamples = numSamplesElement.GetInt32();
+                            if (effectObj.TryGetValue("numlightsamples", out var numLightSamplesElement))
+                                atmo.NumLightSamples = numLightSamplesElement.GetInt32();
+                            // Output
+                            if (effectObj.TryGetValue("exposure", out var atmoExposureElement))
+                                atmo.Exposure = atmoExposureElement.GetSingle();
+                            break;
+
+                        case UnderwaterEffect uw:
+                            // Water level
+                            if (effectObj.TryGetValue("waterlevelsource", out var uwSourceElement))
+                            {
+                                if (Enum.TryParse<UnderwaterEffect.WaterLevelSource>(uwSourceElement.GetString(), out var uwSource))
+                                    uw.Source = uwSource;
+                            }
+                            if (effectObj.TryGetValue("waterlevel", out var uwWaterLevelElement))
+                                uw.WaterLevel = uwWaterLevelElement.GetSingle();
+                            // Fog
+                            if (effectObj.TryGetValue("fogenabled", out var uwFogEnabledElement))
+                                uw.FogEnabled = uwFogEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("fogcolor", out var uwFogColorElement))
+                            {
+                                var arr = uwFogColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.FogColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("fogdensity", out var uwFogDensityElement))
+                                uw.FogDensity = uwFogDensityElement.GetSingle();
+                            if (effectObj.TryGetValue("visibility", out var uwVisibilityElement))
+                                uw.Visibility = uwVisibilityElement.GetSingle();
+                            // Absorption
+                            if (effectObj.TryGetValue("absorptionenabled", out var uwAbsEnabledElement))
+                                uw.AbsorptionEnabled = uwAbsEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("absorptionr", out var uwAbsRElement))
+                                uw.AbsorptionR = uwAbsRElement.GetSingle();
+                            if (effectObj.TryGetValue("absorptiong", out var uwAbsGElement))
+                                uw.AbsorptionG = uwAbsGElement.GetSingle();
+                            if (effectObj.TryGetValue("absorptionb", out var uwAbsBElement))
+                                uw.AbsorptionB = uwAbsBElement.GetSingle();
+                            // God rays
+                            if (effectObj.TryGetValue("godraysenabled", out var uwGodRaysEnabledElement))
+                                uw.GodRaysEnabled = uwGodRaysEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("godraysintensity", out var uwGodRaysIntensityElement))
+                                uw.GodRaysIntensity = uwGodRaysIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("godrayscolor", out var uwGodRaysColorElement))
+                            {
+                                var arr = uwGodRaysColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.GodRaysColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("godraysdensity", out var uwGodRaysDensityElement))
+                                uw.GodRaysDensity = uwGodRaysDensityElement.GetSingle();
+                            if (effectObj.TryGetValue("godraysdecay", out var uwGodRaysDecayElement))
+                                uw.GodRaysDecay = uwGodRaysDecayElement.GetSingle();
+                            if (effectObj.TryGetValue("godrayssamples", out var uwGodRaysSamplesElement))
+                                uw.GodRaysSamples = uwGodRaysSamplesElement.GetInt32();
+                            // Particles (volumetric with depth and lighting)
+                            if (effectObj.TryGetValue("particlesenabled", out var uwParticlesEnabledElement))
+                                uw.ParticlesEnabled = uwParticlesEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("particledensity", out var uwParticleDensityElement))
+                                uw.ParticleDensity = uwParticleDensityElement.GetSingle();
+                            if (effectObj.TryGetValue("particlecolor", out var uwParticleColorElement))
+                            {
+                                var arr = uwParticleColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.ParticleColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("particlebrightness", out var uwParticleBrightnessElement))
+                                uw.ParticleBrightness = uwParticleBrightnessElement.GetSingle();
+                            if (effectObj.TryGetValue("particlespeed", out var uwParticleSpeedElement))
+                                uw.ParticleSpeed = uwParticleSpeedElement.GetSingle();
+                            if (effectObj.TryGetValue("particlesizemin", out var uwParticleSizeMinElement))
+                                uw.ParticleSizeMin = uwParticleSizeMinElement.GetSingle();
+                            if (effectObj.TryGetValue("particlesizemax", out var uwParticleSizeMaxElement))
+                                uw.ParticleSizeMax = uwParticleSizeMaxElement.GetSingle();
+                            if (effectObj.TryGetValue("particledepthlayers", out var uwParticleDepthLayersElement))
+                                uw.ParticleDepthLayers = uwParticleDepthLayersElement.GetInt32();
+                            if (effectObj.TryGetValue("particlelighting", out var uwParticleLightingElement))
+                                uw.ParticleLighting = uwParticleLightingElement.GetSingle();
+                            if (effectObj.TryGetValue("particlescattering", out var uwParticleScatteringElement))
+                                uw.ParticleScattering = uwParticleScatteringElement.GetSingle();
+                            if (effectObj.TryGetValue("particleturbulence", out var uwParticleTurbulenceElement))
+                                uw.ParticleTurbulence = uwParticleTurbulenceElement.GetSingle();
+                            if (effectObj.TryGetValue("particlegodrayglow", out var uwParticleGodRayGlowElement))
+                                uw.ParticleGodRayGlow = uwParticleGodRayGlowElement.GetSingle();
+                            if (effectObj.TryGetValue("particlefocusdistance", out var uwParticleFocusDistanceElement))
+                                uw.ParticleFocusDistance = uwParticleFocusDistanceElement.GetSingle();
+                            if (effectObj.TryGetValue("particlefocusrange", out var uwParticleFocusRangeElement))
+                                uw.ParticleFocusRange = uwParticleFocusRangeElement.GetSingle();
+                            if (effectObj.TryGetValue("particlenearfade", out var uwParticleNearFadeElement))
+                                uw.ParticleNearFade = uwParticleNearFadeElement.GetSingle();
+                            if (effectObj.TryGetValue("particlefarfade", out var uwParticleFarFadeElement))
+                                uw.ParticleFarFade = uwParticleFarFadeElement.GetSingle();
+                            if (effectObj.TryGetValue("particletextureguid", out var uwParticleTextureGuidElement))
+                            {
+                                var guidStr = uwParticleTextureGuidElement.GetString();
+                                if (!string.IsNullOrEmpty(guidStr) && Guid.TryParse(guidStr, out var guid))
+                                    uw.ParticleTextureGuid = guid;
+                            }
+                            // Caustics
+                            if (effectObj.TryGetValue("causticsenabled", out var uwCausticsEnabledElement))
+                                uw.CausticsEnabled = uwCausticsEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("causticsintensity", out var uwCausticsIntensityElement))
+                                uw.CausticsIntensity = uwCausticsIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("causticsscale", out var uwCausticsScaleElement))
+                                uw.CausticsScale = uwCausticsScaleElement.GetSingle();
+                            if (effectObj.TryGetValue("causticsspeed", out var uwCausticsSpeedElement))
+                                uw.CausticsSpeed = uwCausticsSpeedElement.GetSingle();
+                            if (effectObj.TryGetValue("causticsoctaves", out var uwCausticsOctavesElement))
+                                uw.CausticsOctaves = uwCausticsOctavesElement.GetInt32();
+                            if (effectObj.TryGetValue("causticsbrightness", out var uwCausticsBrightnessElement))
+                                uw.CausticsBrightness = uwCausticsBrightnessElement.GetSingle();
+                            if (effectObj.TryGetValue("causticssharpness", out var uwCausticsSharpnessElement))
+                                uw.CausticsSharpness = uwCausticsSharpnessElement.GetSingle();
+                            if (effectObj.TryGetValue("causticsdistortion", out var uwCausticsDistortionElement))
+                                uw.CausticsDistortion = uwCausticsDistortionElement.GetSingle();
+                            if (effectObj.TryGetValue("causticsdepthfalloff", out var uwCausticsDepthFalloffElement))
+                                uw.CausticsDepthFalloff = uwCausticsDepthFalloffElement.GetSingle();
+                            if (effectObj.TryGetValue("causticschromatic", out var uwCausticsChromaticElement))
+                                uw.CausticsChromatic = uwCausticsChromaticElement.GetSingle();
+                            // Tint & Ambient
+                            if (effectObj.TryGetValue("tintcolor", out var uwTintColorElement))
+                            {
+                                var arr = uwTintColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.TintColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("ambientintensity", out var uwAmbientIntensityElement))
+                                uw.AmbientIntensity = uwAmbientIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("ambientcolor", out var uwAmbientColorElement))
+                            {
+                                var arr = uwAmbientColorElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.AmbientColor = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            // Screen Distortion
+                            if (effectObj.TryGetValue("distortionenabled", out var uwDistEnabledElement))
+                                uw.DistortionEnabled = uwDistEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("distortionintensity", out var uwDistIntensityElement))
+                                uw.DistortionIntensity = uwDistIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("distortionscale", out var uwDistScaleElement))
+                                uw.DistortionScale = uwDistScaleElement.GetSingle();
+                            if (effectObj.TryGetValue("distortionspeed", out var uwDistSpeedElement))
+                                uw.DistortionSpeed = uwDistSpeedElement.GetSingle();
+                            if (effectObj.TryGetValue("distortionchromatic", out var uwDistChromaticElement))
+                                uw.DistortionChromatic = uwDistChromaticElement.GetSingle();
+                            if (effectObj.TryGetValue("distortionusewaves", out var uwDistUseWavesElement))
+                                uw.DistortionUseWaves = uwDistUseWavesElement.GetBoolean();
+                            if (effectObj.TryGetValue("distortionwaveinfluence", out var uwDistWaveInfluenceElement))
+                                uw.DistortionWaveInfluence = uwDistWaveInfluenceElement.GetSingle();
+                            if (effectObj.TryGetValue("distortionnoiseinfluence", out var uwDistNoiseInfluenceElement))
+                                uw.DistortionNoiseInfluence = uwDistNoiseInfluenceElement.GetSingle();
+                            if (effectObj.TryGetValue("distortiondepthfade", out var uwDistDepthFadeElement))
+                                uw.DistortionDepthFade = uwDistDepthFadeElement.GetSingle();
+                            // Snell's Window
+                            if (effectObj.TryGetValue("snellwindowenabled", out var uwSnellEnabledElement))
+                                uw.SnellWindowEnabled = uwSnellEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("snellcriticalangle", out var uwSnellAngleElement))
+                                uw.SnellCriticalAngle = uwSnellAngleElement.GetSingle();
+                            if (effectObj.TryGetValue("snelledgesoftness", out var uwSnellSoftnessElement))
+                                uw.SnellEdgeSoftness = uwSnellSoftnessElement.GetSingle();
+                            if (effectObj.TryGetValue("snellreflectiontint", out var uwSnellTintElement))
+                            {
+                                var arr = uwSnellTintElement.EnumerateArray().Select(e => e.GetSingle()).ToArray();
+                                if (arr.Length == 3)
+                                    uw.SnellReflectionTint = new OpenTK.Mathematics.Vector3(arr[0], arr[1], arr[2]);
+                            }
+                            if (effectObj.TryGetValue("snellreflectionstrength", out var uwSnellStrengthElement))
+                                uw.SnellReflectionStrength = uwSnellStrengthElement.GetSingle();
+                            if (effectObj.TryGetValue("snellfresnelpower", out var uwSnellFresnelElement))
+                                uw.SnellFresnelPower = uwSnellFresnelElement.GetSingle();
+                            if (effectObj.TryGetValue("snellwavedistortion", out var uwSnellWaveDistortionElement))
+                                uw.SnellWaveDistortion = uwSnellWaveDistortionElement.GetSingle();
+                            // Water Transition
+                            if (effectObj.TryGetValue("transitionenabled", out var uwTransitionEnabledElement))
+                                uw.TransitionEnabled = uwTransitionEnabledElement.GetBoolean();
+                            if (effectObj.TryGetValue("transitionduration", out var uwTransitionDurationElement))
+                                uw.TransitionDuration = uwTransitionDurationElement.GetSingle();
+                            if (effectObj.TryGetValue("enterbubbleintensity", out var uwEnterBubbleIntensityElement))
+                                uw.EnterBubbleIntensity = uwEnterBubbleIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("enterbubblesize", out var uwEnterBubbleSizeElement))
+                                uw.EnterBubbleSize = uwEnterBubbleSizeElement.GetSingle();
+                            if (effectObj.TryGetValue("enterbubblecount", out var uwEnterBubbleCountElement))
+                                uw.EnterBubbleCount = uwEnterBubbleCountElement.GetSingle();
+                            if (effectObj.TryGetValue("enterdistortion", out var uwEnterDistortionElement))
+                                uw.EnterDistortion = uwEnterDistortionElement.GetSingle();
+                            if (effectObj.TryGetValue("exitdropletintensity", out var uwExitDropletIntensityElement))
+                                uw.ExitDropletIntensity = uwExitDropletIntensityElement.GetSingle();
+                            if (effectObj.TryGetValue("exitdropletsize", out var uwExitDropletSizeElement))
+                                uw.ExitDropletSize = uwExitDropletSizeElement.GetSingle();
+                            if (effectObj.TryGetValue("exitdropletcount", out var uwExitDropletCountElement))
+                                uw.ExitDropletCount = uwExitDropletCountElement.GetSingle();
+                            if (effectObj.TryGetValue("exitdripspeed", out var uwExitDripSpeedElement))
+                                uw.ExitDripSpeed = uwExitDripSpeedElement.GetSingle();
                             break;
                     }
 

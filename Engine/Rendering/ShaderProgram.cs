@@ -21,6 +21,11 @@ namespace Engine.Rendering
         private ShaderProgram(int handle) { Handle = handle; }
 
         /// <summary>
+        /// Clear the uniform location cache. Call this if shaders are hot-reloaded.
+        /// </summary>
+        public void ClearUniformCache() => _uniforms.Clear();
+
+        /// <summary>
         /// Create a ShaderProgram wrapper from an existing OpenGL program handle (for custom shader compilation).
         /// </summary>
         public static ShaderProgram FromHandle(int programHandle)

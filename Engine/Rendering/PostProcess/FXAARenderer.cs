@@ -51,7 +51,10 @@ namespace Engine.Rendering.PostProcess
             }
 
             if (_shader == null || !(effect is FXAAEffect fxaa))
+            {
+                Engine.Rendering.PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
+            }
 
             _shader.Use();
 
@@ -62,7 +65,7 @@ namespace Engine.Rendering.PostProcess
             if (_uQuality >= 0) GL.Uniform1(_uQuality, fxaa.Quality);
             if (_uIntensity >= 0) GL.Uniform1(_uIntensity, fxaa.Intensity);
 
-            // Fullscreen triangle (project convention)
+            // Fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
 

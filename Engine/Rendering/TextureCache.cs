@@ -432,6 +432,93 @@ namespace Engine.Rendering
         }
 
         /// <summary>
+        /// Synchronously loads and uploads a texture, blocking until complete.
+        /// Use this for critical textures that must be loaded before rendering (e.g., vegetation materials).
+        /// This method bypasses the async loading queue and loads directly on the calling thread.
+        /// Must be called from the main thread with a GL context.
+        /// </summary>
+        public static int GetOrLoadSync(Guid textureGuid, Func<Guid, string?> resolvePath)
+        {
+            _currentFrame++;
+
+            if (textureGuid == Guid.Empty)
+                return White1x1;
+
+            // Check if already loaded
+            if (_textureNodes.TryGetValue(textureGuid, out var node))
+            {
+                MoveToHead(node);
+                node.Value.LastUsedFrame = _currentFrame;
+                return node.Value.GLHandle;
+            }
+
+            var path = resolvePath(textureGuid);
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return White1x1;
+            }
+
+            // Check path cache (maybe another guid already loaded it)
+            if (_pathNodes.TryGetValue(path, out node))
+            {
+                _textureNodes[textureGuid] = node;
+                MoveToHead(node);
+                node.Value.LastUsedFrame = _currentFrame;
+                return node.Value.GLHandle;
+            }
+
+            // If currently being loaded async, wait for it and flush
+            if (_pendingLoads.Contains(textureGuid))
+            {
+                // Wait for the async load to complete (max 5 seconds)
+                int waitMs = 0;
+                while (_pendingLoads.Contains(textureGuid) && waitMs < 5000)
+                {
+                    System.Threading.Thread.Sleep(10);
+                    waitMs += 10;
+                }
+                // Flush any pending uploads
+                FlushPendingUploads(100);
+                // Check if now loaded
+                if (_textureNodes.TryGetValue(textureGuid, out node))
+                {
+                    return node.Value.GLHandle;
+                }
+            }
+
+            try
+            {
+                EnsureCacheSpace();
+                var result = LoadTextureFromFile(path);
+
+                var entry = new TextureEntry
+                {
+                    GLHandle = result.Handle,
+                    Width = result.Width,
+                    Height = result.Height,
+                    SizeInBytes = result.SizeInBytes,
+                    LastUsedFrame = _currentFrame
+                };
+
+                var newNode = new LRUNode { Key = textureGuid, Value = entry };
+                AddToHead(newNode);
+                _textureNodes[textureGuid] = newNode;
+                _pathNodes[path] = newNode;
+                _totalMemoryUsed += result.SizeInBytes;
+                _pendingLoads.Remove(textureGuid);
+
+                // Notify subscribers
+                try { TextureUploaded?.Invoke(textureGuid, result.Handle); } catch { }
+
+                return result.Handle;
+            }
+            catch (Exception)
+            {
+                return White1x1;
+            }
+        }
+
+        /// <summary>
         /// Must be called from the main thread (GL context). Processes ALL pending uploads.
         /// Use this during scene loading to avoid texture pop-in over multiple frames.
         /// </summary>

@@ -101,7 +101,11 @@ namespace Editor.State
             
             // Play mode
             public string PlayPause { get; set; } = "Ctrl+P";
-            
+
+            // Build
+            public string Build { get; set; } = "Ctrl+B";
+            public string BuildSettings { get; set; } = "Ctrl+Shift+B";
+
             // Options
             public bool DisableInPlayMode { get; set; } = false;
         }
@@ -1200,7 +1204,19 @@ namespace Editor.State
             get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.PlayPause ?? "Ctrl+P"; }
             set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.PlayPause = value; SaveSettings(); } }
         }
-        
+
+        public static string ShortcutBuild
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.Build ?? "Ctrl+B"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.Build = value; SaveSettings(); } }
+        }
+
+        public static string ShortcutBuildSettings
+        {
+            get { LoadSettingsIfNeeded(); return _currentSettings?.Shortcuts?.BuildSettings ?? "Ctrl+Shift+B"; }
+            set { LoadSettingsIfNeeded(); if (_currentSettings != null) { _currentSettings.Shortcuts.BuildSettings = value; SaveSettings(); } }
+        }
+
         public static void ResetShortcutsToDefaults()
         {
             LoadSettingsIfNeeded();

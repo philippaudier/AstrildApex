@@ -16,6 +16,7 @@ namespace Engine.Rendering
     {
         private ShaderProgram? _grassShader = null;
         private bool _disposed = false;
+        private int _debugFrameCount = 0;
 
         /// <summary>
         /// Stores grass data per terrain + layer combination
@@ -182,6 +183,7 @@ namespace Engine.Rendering
         /// Render all grass layers
         /// </summary>
         public void Render(Vector3 cameraPos, float time, Vector3 ambientColor, float ambientIntensity,
+            float lightIntensity = 1.0f,
             bool useShadows = false, int shadowTexture = 0, Matrix4? shadowMatrix = null,
             float shadowBias = 0.005f, float shadowMapSize = 2048f, float shadowStrength = 0.8f)
         {
@@ -236,6 +238,9 @@ namespace Engine.Rendering
             // Ambient lighting (common to all layers)
             _grassShader.SetVec3("u_AmbientColor", ambientColor);
             _grassShader.SetFloat("u_AmbientIntensity", ambientIntensity);
+
+            // Directional light intensity (time-based: bright during day, dim at night)
+            _grassShader.SetFloat("uDirLightIntensity", lightIntensity);
 
             // Render each grass layer with its own transform
             int layersRendered = 0;
@@ -332,7 +337,17 @@ namespace Engine.Rendering
                         // else WindMode == 1 (Local): use props values directly (already set)
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[GrassRenderer] Exception getting weather: {ex.Message}");
+                }
+
+                // Debug: Log effective wind values (first few frames only)
+                if (layersRendered == 1 && _debugFrameCount < 3)
+                {
+                    Console.WriteLine($"[GrassRenderer] Effective wind: Strength={effectiveWindStrength}, Speed={effectiveWindSpeed}, Dir=({effectiveWindDirection.X:F2},{effectiveWindDirection.Y:F2}), Turbulence={effectiveWindTurbulence}, WindMode={props.WindMode}");
+                    _debugFrameCount++;
+                }
 
                 _grassShader.SetFloat("u_WindStrength", effectiveWindStrength);
                 _grassShader.SetFloat("u_WindSpeed", effectiveWindSpeed);
@@ -394,26 +409,50 @@ namespace Engine.Rendering
                 }
 
                 // Albedo texture (optional)
+                bool hasAlbedoTex = false;
                 if (props.AlbedoTexture.HasValue)
                 {
                     int texHandle = TextureCache.GetOrLoad(props.AlbedoTexture.Value,
                         guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
-                    
-                    if (texHandle != 0)
+
+                    if (texHandle != 0 && texHandle != TextureCache.White1x1)
                     {
                         GL.ActiveTexture(TextureUnit.Texture0);
                         GL.BindTexture(TextureTarget.Texture2D, texHandle);
                         _grassShader.SetInt("u_AlbedoTex", 0);
-                        _grassShader.SetInt("u_HasAlbedoTex", 1);
+                        hasAlbedoTex = true;
+                    }
+                }
+                _grassShader.SetInt("u_HasAlbedoTex", hasAlbedoTex ? 1 : 0);
+
+                // === PBR Parameters ===
+                _grassShader.SetFloat("u_GrassRoughness", props.Roughness);
+                _grassShader.SetFloat("u_SubsurfaceStrength", props.SubsurfaceStrength);
+                _grassShader.SetFloat("u_AmbientOcclusionBase", props.AmbientOcclusionBase);
+
+                // Terrain color texture (optional - for matching grass to terrain)
+                if (props.TerrainColorTexture.HasValue)
+                {
+                    int terrainColorHandle = TextureCache.GetOrLoad(props.TerrainColorTexture.Value,
+                        guid => AssetDatabase.TryGet(guid, out var r) ? r.Path : null);
+
+                    if (terrainColorHandle != 0)
+                    {
+                        GL.ActiveTexture(TextureUnit.Texture2);
+                        GL.BindTexture(TextureTarget.Texture2D, terrainColorHandle);
+                        _grassShader.SetInt("u_TerrainColorTex", 2);
+                        _grassShader.SetInt("u_HasTerrainColorTex", 1);
+                        _grassShader.SetFloat("u_TerrainColorScale", props.TerrainColorScale);
+                        _grassShader.SetFloat("u_TerrainColorInfluence", props.TerrainColorInfluence);
                     }
                     else
                     {
-                        _grassShader.SetInt("u_HasAlbedoTex", 0);
+                        _grassShader.SetInt("u_HasTerrainColorTex", 0);
                     }
                 }
                 else
                 {
-                    _grassShader.SetInt("u_HasAlbedoTex", 0);
+                    _grassShader.SetInt("u_HasTerrainColorTex", 0);
                 }
 
                 // Draw using terrain's VAO/indices

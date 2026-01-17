@@ -814,107 +814,136 @@ void main() {
     {
         public override string EffectName => "Volumetric Fog";
 
-        // Source mode
-        public enum FogSource
-        {
-            Local,       // Use local parameters only
-            Global,      // Use WeatherComponent fog parameters
-            Blend        // Blend between local and global
-        }
+        // ═══════════════════════════════════════════════════════════════════
+        // SOURCE MODE
+        // ═══════════════════════════════════════════════════════════════════
+
+        public enum FogSource { Local, Global, Blend }
 
         [Engine.Serialization.SerializableAttribute("source")]
         public FogSource Source { get; set; } = FogSource.Global;
 
         [Engine.Serialization.SerializableAttribute("blendFactor")]
-        public float BlendFactor { get; set; } = 1.0f; // 0 = local, 1 = global
+        public float BlendFactor { get; set; } = 1.0f;
 
-        // === LOCAL FOG PARAMETERS ===
+        // ═══════════════════════════════════════════════════════════════════
+        // FOG APPEARANCE
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("fogColor")]
         public Vector3 FogColor { get; set; } = new Vector3(0.7f, 0.7f, 0.8f);
 
         [Engine.Serialization.SerializableAttribute("density")]
-        public float Density { get; set; } = 0.05f; // Base fog density (0.02-0.1 typical)
+        public float Density { get; set; } = 0.05f;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // DISTANCE
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("depthStart")]
-        public float DepthStart { get; set; } = 0.0f; // Distance where fog starts
+        public float DepthStart { get; set; } = 0.0f;
 
         [Engine.Serialization.SerializableAttribute("depthEnd")]
-        public float DepthEnd { get; set; } = 500.0f; // Maximum fog distance
+        public float DepthEnd { get; set; } = 500.0f;
 
-        // === RAY MARCHING ===
-
-        [Engine.Serialization.SerializableAttribute("rayMarchSteps")]
-        public int RayMarchSteps { get; set; } = 32; // Number of ray march steps (8-64, higher = better quality)
-
-        [Engine.Serialization.SerializableAttribute("maxRayDistance")]
-        public float MaxRayDistance { get; set; } = 500.0f; // Maximum ray march distance
-
-        // === HEIGHT-BASED FOG ===
+        // ═══════════════════════════════════════════════════════════════════
+        // HEIGHT FOG
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("useHeightFog")]
         public bool UseHeightFog { get; set; } = true;
 
         [Engine.Serialization.SerializableAttribute("heightFalloff")]
-        public float HeightFalloff { get; set; } = 0.05f; // How quickly fog density decreases with height
+        public float HeightFalloff { get; set; } = 0.05f;
 
         [Engine.Serialization.SerializableAttribute("baseHeight")]
-        public float BaseHeight { get; set; } = 0.0f; // World height where fog is thickest
+        public float BaseHeight { get; set; } = 0.0f;
 
         [Engine.Serialization.SerializableAttribute("maxHeight")]
-        public float MaxHeight { get; set; } = 100.0f; // World height where fog is thinnest
+        public float MaxHeight { get; set; } = 100.0f;
 
-        // === SCATTERING & GOD RAYS ===
-
-        [Engine.Serialization.SerializableAttribute("useSunScattering")]
-        public bool UseSunScattering { get; set; } = true; // Enable god rays (Mie scattering)
-
-        [Engine.Serialization.SerializableAttribute("scatteringIntensity")]
-        public float ScatteringIntensity { get; set; } = 1.0f; // God rays intensity
-
-        [Engine.Serialization.SerializableAttribute("mieG")]
-        public float MieG { get; set; } = 0.8f; // Henyey-Greenstein anisotropy (-1 to 1, 0.7-0.9 = forward scatter for god rays)
+        // ═══════════════════════════════════════════════════════════════════
+        // LIGHT SCATTERING
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("extinctionFactor")]
-        public float ExtinctionFactor { get; set; } = 1.0f; // Light absorption coefficient (Beer-Lambert)
+        public float ExtinctionFactor { get; set; } = 1.0f;
+
+        public enum ScatterColorSource { FogColor, SunColor, Atmospheric, Custom }
+
+        [Engine.Serialization.SerializableAttribute("scatterColorSource")]
+        public ScatterColorSource ScatterSource { get; set; } = ScatterColorSource.SunColor;
+
+        [Engine.Serialization.SerializableAttribute("inScatterColor")]
+        public Vector3 InScatterColor { get; set; } = new Vector3(0.9f, 0.85f, 0.7f);
+
+        [Engine.Serialization.SerializableAttribute("useSunScattering")]
+        public bool UseSunScattering { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("scatteringIntensity")]
+        public float ScatteringIntensity { get; set; } = 1.0f;
+
+        [Engine.Serialization.SerializableAttribute("mieG")]
+        public float MieG { get; set; } = 0.8f;
 
         [Engine.Serialization.SerializableAttribute("sunScatteringColor")]
-        public Vector3 SunScatteringColor { get; set; } = new Vector3(1.0f, 0.95f, 0.8f); // Sun light color
+        public Vector3 SunScatteringColor { get; set; } = new Vector3(1.0f, 0.95f, 0.8f);
+
+        // ═══════════════════════════════════════════════════════════════════
+        // AMBIENT
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("useAmbientFromSky")]
+        public bool UseAmbientFromSky { get; set; } = true;
+
+        [Engine.Serialization.SerializableAttribute("ambientColor")]
+        public Vector3 AmbientColor { get; set; } = new Vector3(0.5f, 0.6f, 0.8f);
 
         [Engine.Serialization.SerializableAttribute("ambientIntensity")]
-        public float AmbientIntensity { get; set; } = 0.3f; // Ambient light in fog (fills shadows, 0-1)
+        public float AmbientIntensity { get; set; } = 0.3f;
 
-        // === GOD RAYS (Radial Blur with Occlusion) ===
+        // ═══════════════════════════════════════════════════════════════════
+        // GOD RAYS
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("godRaysIntensity")]
-        public float GodRaysIntensity { get; set; } = 1.0f; // God rays intensity (0-3)
+        public float GodRaysIntensity { get; set; } = 1.0f;
 
         [Engine.Serialization.SerializableAttribute("godRaysDensity")]
-        public float GodRaysDensity { get; set; } = 1.0f; // Radial blur density (0.5-2.0)
+        public float GodRaysDensity { get; set; } = 1.0f;
 
         [Engine.Serialization.SerializableAttribute("godRaysDecay")]
-        public float GodRaysDecay { get; set; } = 0.97f; // Decay per sample (0.9-0.99)
+        public float GodRaysDecay { get; set; } = 0.97f;
 
-        // === NOISE/DETAIL ===
+        // ═══════════════════════════════════════════════════════════════════
+        // NOISE
+        // ═══════════════════════════════════════════════════════════════════
 
         [Engine.Serialization.SerializableAttribute("useNoise")]
-        public bool UseNoise { get; set; } = false; // Add animated 3D noise to fog density
+        public bool UseNoise { get; set; } = false;
 
         [Engine.Serialization.SerializableAttribute("noiseScale")]
-        public float NoiseScale { get; set; } = 0.02f; // 3D noise scale (smaller = larger clouds)
+        public float NoiseScale { get; set; } = 0.02f;
 
         [Engine.Serialization.SerializableAttribute("noiseSpeed")]
-        public float NoiseSpeed { get; set; } = 0.1f; // Noise animation speed
+        public float NoiseSpeed { get; set; } = 0.1f;
 
         [Engine.Serialization.SerializableAttribute("noiseStrength")]
-        public float NoiseStrength { get; set; } = 0.5f; // How much noise affects fog density (0-1)
+        public float NoiseStrength { get; set; } = 0.5f;
 
         [Engine.Serialization.SerializableAttribute("noiseOctaves")]
-        public int NoiseOctaves { get; set; } = 3; // FBM noise octaves (1-6, higher = more detail)
+        public int NoiseOctaves { get; set; } = 3;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // QUALITY
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("rayMarchSteps")]
+        public int RayMarchSteps { get; set; } = 32;
 
         public VolumetricFogEffect()
         {
-            Priority = 11; // After tone mapping (10), before color grading (12)
+            Priority = 11;
         }
 
         public override void Apply(PostProcessContext context)
@@ -947,6 +976,147 @@ void main() {
             float end = MathHelper.Lerp(DepthEnd, weather.FogEnd, BlendFactor);
 
             return (color, density, start, end);
+        }
+    }
+
+    /// <summary>
+    /// Atmospheric Scattering post-process effect - Triple A Quality
+    /// Based on GPU Gems 2, Chapter 16: Accurate Atmospheric Scattering
+    ///
+    /// Features:
+    /// - Rayleigh scattering (blue sky, wavelength-dependent)
+    /// - Mie scattering (sun glow, haze, aerosols)
+    /// - Single scattering with ray marching
+    /// - Optical depth calculation (out-scattering)
+    /// - Phase functions (Rayleigh + Henyey-Greenstein)
+    /// - HDR exposure tone mapping
+    /// - Aerial perspective for distant objects
+    /// </summary>
+    public class AtmosphericScatteringEffect : PostProcessEffect
+    {
+        public override string EffectName => "Atmospheric Scattering";
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PRESETS
+        // ═══════════════════════════════════════════════════════════════════
+
+        public enum AtmospherePreset { Custom, Earth, Mars, Alien }
+
+        public AtmospherePreset CurrentPreset { get; set; } = AtmospherePreset.Earth;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // ATMOSPHERE
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("atmosphereRadius")]
+        public float AtmosphereThickness { get; set; } = 100.0f;
+
+        [Engine.Serialization.SerializableAttribute("rayleighScaleHeight")]
+        public float RayleighScaleHeight { get; set; } = 8.0f;
+
+        [Engine.Serialization.SerializableAttribute("mieScaleHeight")]
+        public float MieScaleHeight { get; set; } = 1.2f;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SCATTERING
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("rayleighCoefficients")]
+        public Vector3 RayleighCoefficients { get; set; } = new Vector3(5.8e-6f, 13.5e-6f, 33.1e-6f);
+
+        [Engine.Serialization.SerializableAttribute("mieCoefficient")]
+        public float MieCoefficient { get; set; } = 21e-6f;
+
+        [Engine.Serialization.SerializableAttribute("mieG")]
+        public float MieG { get; set; } = 0.76f;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // SUN
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("sunIntensity")]
+        public float SunIntensity { get; set; } = 22.0f;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // QUALITY
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("numSamples")]
+        public int NumSamples { get; set; } = 16;
+
+        [Engine.Serialization.SerializableAttribute("numLightSamples")]
+        public int NumLightSamples { get; set; } = 8;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // OUTPUT
+        // ═══════════════════════════════════════════════════════════════════
+
+        [Engine.Serialization.SerializableAttribute("exposure")]
+        public float Exposure { get; set; } = 2.0f;
+
+        // Legacy compatibility - maps to AtmosphereThickness
+        public float AtmosphereRadius { get => AtmosphereThickness; set => AtmosphereThickness = value; }
+        public float PlanetRadius { get => 0.0f; set { } }
+
+        public AtmosphericScatteringEffect()
+        {
+            Priority = 5;
+            Intensity = 1.0f;
+        }
+
+        public override void Apply(PostProcessContext context) { }
+
+        public void ApplyPreset(AtmospherePreset preset)
+        {
+            CurrentPreset = preset;
+            switch (preset)
+            {
+                case AtmospherePreset.Earth:
+                    SetEarthPreset();
+                    break;
+                case AtmospherePreset.Mars:
+                    SetMarsPreset();
+                    break;
+                case AtmospherePreset.Alien:
+                    SetAlienPreset();
+                    break;
+            }
+        }
+
+        public void SetEarthPreset()
+        {
+            AtmosphereThickness = 100.0f;
+            RayleighScaleHeight = 8.0f;
+            MieScaleHeight = 1.2f;
+            RayleighCoefficients = new Vector3(5.8e-6f, 13.5e-6f, 33.1e-6f);
+            MieCoefficient = 21e-6f;
+            MieG = 0.76f;
+            SunIntensity = 22.0f;
+            Exposure = 2.0f;
+        }
+
+        public void SetMarsPreset()
+        {
+            AtmosphereThickness = 80.0f;
+            RayleighScaleHeight = 11.0f;
+            MieScaleHeight = 2.0f;
+            RayleighCoefficients = new Vector3(19.9e-6f, 13.5e-6f, 5.5e-6f);
+            MieCoefficient = 40e-6f;
+            MieG = 0.65f;
+            SunIntensity = 15.0f;
+            Exposure = 2.5f;
+        }
+
+        public void SetAlienPreset()
+        {
+            AtmosphereThickness = 120.0f;
+            RayleighScaleHeight = 12.0f;
+            MieScaleHeight = 1.5f;
+            RayleighCoefficients = new Vector3(25e-6f, 8e-6f, 30e-6f);
+            MieCoefficient = 15e-6f;
+            MieG = 0.85f;
+            SunIntensity = 18.0f;
+            Exposure = 2.0f;
         }
     }
 
@@ -3662,10 +3832,28 @@ void main() {
         public Vector3 FogColor { get; set; } = new Vector3(0.01f, 0.05f, 0.12f);
 
         [Engine.Serialization.SerializableAttribute("fogDensity")]
-        public float FogDensity { get; set; } = 0.02f;
+        public float FogDensity { get; set; } = 0.015f; // Base fog density (slightly lower for cleaner look)
 
         [Engine.Serialization.SerializableAttribute("visibility")]
-        public float Visibility { get; set; } = 50.0f; // Max visibility distance
+        public float Visibility { get; set; } = 80.0f; // Max visibility distance (increased for AAA quality)
+
+        [Engine.Serialization.SerializableAttribute("fogSteps")]
+        public int FogSteps { get; set; } = 32; // Ray march steps (8-64)
+
+        [Engine.Serialization.SerializableAttribute("fogScattering")]
+        public float FogScattering { get; set; } = 0.7f; // Forward scattering (Mie g parameter, 0.6-0.8 is realistic for water)
+
+        [Engine.Serialization.SerializableAttribute("fogAmbient")]
+        public float FogAmbient { get; set; } = 0.2f; // Ambient light in fog (slightly higher for better deep water visibility)
+
+        [Engine.Serialization.SerializableAttribute("fogHeightFalloff")]
+        public float FogHeightFalloff { get; set; } = 0.01f; // Density increase with depth (subtle)
+
+        [Engine.Serialization.SerializableAttribute("fogNoiseScale")]
+        public float FogNoiseScale { get; set; } = 0.03f; // 3D noise scale (smaller = larger patterns)
+
+        [Engine.Serialization.SerializableAttribute("fogNoiseStrength")]
+        public float FogNoiseStrength { get; set; } = 0.2f; // How much noise affects density (subtle variation)
 
         // === LIGHT ABSORPTION (Beer-Lambert) ===
         [Engine.Serialization.SerializableAttribute("absorptionEnabled")]

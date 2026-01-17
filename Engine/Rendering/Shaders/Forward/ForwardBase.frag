@@ -46,6 +46,7 @@ uniform float u_NormalStrength;
 
 // === PBR PARAMETERS ===
 uniform float u_Metallic;
+
 uniform float u_Smoothness;
 uniform float u_OcclusionStrength;
 uniform vec3  u_EmissiveColor;

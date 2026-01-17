@@ -67,7 +67,10 @@ namespace Engine.Rendering.PostProcess
             }
 
             if (_shader == null || !(effect is ColorGradingEffect grading))
+            {
+                Engine.Rendering.PostProcessHelper.PassThrough(context);  // Pass through to not break the chain
                 return;
+            }
 
             _shader.Use();
 
@@ -110,7 +113,7 @@ namespace Engine.Rendering.PostProcess
             if (_uHueShift >= 0) GL.Uniform1(_uHueShift, hueShift);
             if (_uVibrance >= 0) GL.Uniform1(_uVibrance, vibrance);
 
-            // Fullscreen triangle (project convention)
+            // Fullscreen triangle
             GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
         }
 

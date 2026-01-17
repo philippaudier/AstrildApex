@@ -109,6 +109,46 @@ namespace Engine.Rendering
             }
         }
 
+        /// <summary>
+        /// Gets a MaterialRuntime by GUID. Returns cached version if available,
+        /// otherwise loads from disk and caches it.
+        /// Use this instead of FromAsset when you only have a GUID.
+        /// </summary>
+        public static MaterialRuntime? GetByGuid(Guid guid)
+        {
+            if (guid == Guid.Empty)
+            {
+                return null;
+            }
+
+            // Check cache first
+            lock (_globalCacheLock)
+            {
+                if (_globalCache.TryGetValue(guid, out var cached))
+                {
+                    return cached;
+                }
+            }
+
+            // Not in cache - load from disk
+            try
+            {
+                if (Engine.Assets.AssetDatabase.TryGet(guid, out var record) && !string.IsNullOrEmpty(record.Path))
+                {
+                    var asset = MaterialAsset.Load(record.Path);
+                    Func<Guid, string?> resolver = g => Engine.Assets.AssetDatabase.TryGet(g, out var rec) ? rec.Path : null;
+                    var runtime = FromAsset(asset, resolver);
+                    return runtime;
+                }
+            }
+            catch (Exception ex)
+            {
+                try { Engine.Utils.DebugLogger.Log($"[MaterialRuntime] ✗ Error loading material by GUID: {ex.Message}"); } catch { }
+            }
+
+            return null;
+        }
+
         public Guid AssetGuid;
         
         // === BASE TEXTURES ===
@@ -288,7 +328,7 @@ namespace Engine.Rendering
         public float VegetationLeafFlutter = 0.6f;
         public float VegetationLeafFlutterSpeed = 8.0f;
 
-        public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath)
+        public static MaterialRuntime FromAsset(MaterialAsset a, Func<Guid, string?> resolvePath, bool useSyncTextureLoading = false)
         {
             TextureCache.Initialize();
             // Return cached runtime if available
@@ -298,7 +338,17 @@ namespace Engine.Rendering
                 {
                     if (_globalCache.TryGetValue(a.Guid, out var cached))
                     {
-                        return cached;
+                        // When sync loading is requested, check if the cached entry has placeholder textures
+                        // If so, invalidate the cache and reload to get the real textures
+                        if (useSyncTextureLoading && a.AlbedoTexture.HasValue && cached.AlbedoTex == TextureCache.White1x1)
+                        {
+                            _globalCache.Remove(a.Guid);
+                            // Fall through to reload
+                        }
+                        else
+                        {
+                            return cached;
+                        }
                     }
                 }
             }
@@ -307,29 +357,34 @@ namespace Engine.Rendering
         // (previous misplaced initialization removed) - Water properties are applied below after mr is created
             // For Water shader, use default white textures initially (will be overridden by WaterProperties)
             bool isWaterShader = string.Equals(a?.Shader, "Water", StringComparison.OrdinalIgnoreCase);
-            
+
+            // Use sync or async texture loading based on parameter
+            Func<Guid, int> loadTexture = useSyncTextureLoading
+                ? (g => TextureCache.GetOrLoadSync(g, resolvePath))
+                : (g => TextureCache.GetOrLoad(g, resolvePath));
+
             var mr = new MaterialRuntime
             {
                 AssetGuid = a?.Guid ?? Guid.Empty,
-                
+
                 // === BASE TEXTURES ===
-                AlbedoTex = !isWaterShader && a?.AlbedoTexture.HasValue == true ? TextureCache.GetOrLoad(a.AlbedoTexture.Value, resolvePath) : TextureCache.White1x1,
+                AlbedoTex = !isWaterShader && a?.AlbedoTexture.HasValue == true ? loadTexture(a.AlbedoTexture.Value) : TextureCache.White1x1,
                 AlbedoColor = !isWaterShader ? (a?.AlbedoColor ?? new[] { 1f, 1f, 1f, 1f }) : new[] { 1f, 1f, 1f, 1f },
-                NormalTex = !isWaterShader && a?.NormalTexture.HasValue == true ? TextureCache.GetOrLoad(a.NormalTexture.Value, resolvePath) : TextureCache.White1x1,
+                NormalTex = !isWaterShader && a?.NormalTexture.HasValue == true ? loadTexture(a.NormalTexture.Value) : TextureCache.White1x1,
                 NormalStrength = !isWaterShader ? Math.Clamp(a?.NormalStrength ?? 1.0f, 0.0f, 10.0f) : 1.0f,
-                
+
                 // === PBR TEXTURES ===
-                MetallicTex = !isWaterShader && a?.MetallicTexture.HasValue == true ? TextureCache.GetOrLoad(a.MetallicTexture.Value, resolvePath) : TextureCache.White1x1,
-                RoughnessTex = !isWaterShader && a?.RoughnessTexture.HasValue == true ? TextureCache.GetOrLoad(a.RoughnessTexture.Value, resolvePath) : TextureCache.White1x1,
-                MetallicRoughnessTex = !isWaterShader && a?.MetallicRoughnessTexture.HasValue == true ? TextureCache.GetOrLoad(a.MetallicRoughnessTexture.Value, resolvePath) : TextureCache.White1x1,
-                OcclusionTex = !isWaterShader && a?.OcclusionTexture.HasValue == true ? TextureCache.GetOrLoad(a.OcclusionTexture.Value, resolvePath) : TextureCache.White1x1,
-                EmissiveTex = !isWaterShader && a?.EmissiveTexture.HasValue == true ? TextureCache.GetOrLoad(a.EmissiveTexture.Value, resolvePath) : TextureCache.White1x1,
-                HeightTex = !isWaterShader && a?.HeightTexture.HasValue == true ? TextureCache.GetOrLoad(a.HeightTexture.Value, resolvePath) : TextureCache.White1x1,
-                
+                MetallicTex = !isWaterShader && a?.MetallicTexture.HasValue == true ? loadTexture(a.MetallicTexture.Value) : TextureCache.White1x1,
+                RoughnessTex = !isWaterShader && a?.RoughnessTexture.HasValue == true ? loadTexture(a.RoughnessTexture.Value) : TextureCache.White1x1,
+                MetallicRoughnessTex = !isWaterShader && a?.MetallicRoughnessTexture.HasValue == true ? loadTexture(a.MetallicRoughnessTexture.Value) : TextureCache.White1x1,
+                OcclusionTex = !isWaterShader && a?.OcclusionTexture.HasValue == true ? loadTexture(a.OcclusionTexture.Value) : TextureCache.White1x1,
+                EmissiveTex = !isWaterShader && a?.EmissiveTexture.HasValue == true ? loadTexture(a.EmissiveTexture.Value) : TextureCache.White1x1,
+                HeightTex = !isWaterShader && a?.HeightTexture.HasValue == true ? loadTexture(a.HeightTexture.Value) : TextureCache.White1x1,
+
                 // === DETAIL TEXTURES ===
-                DetailMaskTex = !isWaterShader && a?.DetailMaskTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailMaskTexture.Value, resolvePath) : TextureCache.White1x1,
-                DetailAlbedoTex = !isWaterShader && a?.DetailAlbedoTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailAlbedoTexture.Value, resolvePath) : TextureCache.White1x1,
-                DetailNormalTex = !isWaterShader && a?.DetailNormalTexture.HasValue == true ? TextureCache.GetOrLoad(a.DetailNormalTexture.Value, resolvePath) : TextureCache.White1x1,
+                DetailMaskTex = !isWaterShader && a?.DetailMaskTexture.HasValue == true ? loadTexture(a.DetailMaskTexture.Value) : TextureCache.White1x1,
+                DetailAlbedoTex = !isWaterShader && a?.DetailAlbedoTexture.HasValue == true ? loadTexture(a.DetailAlbedoTexture.Value) : TextureCache.White1x1,
+                DetailNormalTex = !isWaterShader && a?.DetailNormalTexture.HasValue == true ? loadTexture(a.DetailNormalTexture.Value) : TextureCache.White1x1,
                 
                 // === PBR PARAMETERS ===
                 Metallic = !isWaterShader ? (a?.Metallic ?? 0f) : 0f,

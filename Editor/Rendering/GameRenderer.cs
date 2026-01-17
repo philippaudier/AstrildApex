@@ -94,9 +94,11 @@ namespace Editor.Rendering
             public Vector3 SkyboxTint; public float SkyboxExposure;
 
             // === FOG (from WeatherComponent) ===
-            public int FogEnabled; public float FogDensity; public float _pad13; public float _pad14;
+            public int FogEnabled; public float FogDensity; public float FogOpacity; public float FogNoiseScale;
             public Vector3 FogColor; public float FogStart;
-            public float FogEnd; public Vector3 _pad15;
+            public float FogEnd; public float FogNoiseSpeed; public float FogLayerHeight; public float FogThickness;
+            public int FogFBMOctaves; public float FogFBMLacunarity; public float FogFBMGain; public float FogScattering;
+            public int FogColorMode; private float _fogpad1; private float _fogpad2; private float _fogpad3;
 
             // === CLIP PLANE ===
             public float ClipPlaneEnabled; public float _pad16; public float _pad17; public float _pad18;
@@ -903,9 +905,19 @@ void main()
                 AmbientIntensity = 1.0f,
                 FogEnabled = 0,
                 FogDensity = 0.0f,
+                FogOpacity = 1.0f,
+                FogNoiseScale = 0.1f,
                 FogColor = new Vector3(0.7f, 0.7f, 0.8f),
                 FogStart = 0.0f,
                 FogEnd = 300.0f,
+                FogNoiseSpeed = 0.5f,
+                FogLayerHeight = 0.0f,
+                FogThickness = 0.5f,
+                FogFBMOctaves = 4,
+                FogFBMLacunarity = 2.0f,
+                FogFBMGain = 0.5f,
+                FogScattering = 0.5f,
+                FogColorMode = 0,
                 ClipPlaneEnabled = 0,
 
                 // Time & Weather (defaults)
@@ -978,6 +990,8 @@ void main()
                 {
                     globalUniforms.FogEnabled = 1;
                     globalUniforms.FogDensity = weatherComponent.FogDensity;
+                    globalUniforms.FogOpacity = weatherComponent.FogOpacity;
+                    globalUniforms.FogNoiseScale = weatherComponent.FogNoiseScale;
                     globalUniforms.FogColor = new Vector3(
                         weatherComponent.FogColor.X,
                         weatherComponent.FogColor.Y,
@@ -985,6 +999,14 @@ void main()
                     );
                     globalUniforms.FogStart = weatherComponent.FogStart;
                     globalUniforms.FogEnd = weatherComponent.FogEnd;
+                    globalUniforms.FogNoiseSpeed = weatherComponent.FogNoiseSpeed;
+                    globalUniforms.FogLayerHeight = weatherComponent.FogLayerHeight;
+                    globalUniforms.FogThickness = weatherComponent.FogThickness;
+                    globalUniforms.FogFBMOctaves = weatherComponent.FogFBMOctaves;
+                    globalUniforms.FogFBMLacunarity = weatherComponent.FogFBMLacunarity;
+                    globalUniforms.FogFBMGain = weatherComponent.FogFBMGain;
+                    globalUniforms.FogScattering = weatherComponent.FogScattering;
+                    globalUniforms.FogColorMode = (int)weatherComponent.FogColorMode;
                 }
             }
 
